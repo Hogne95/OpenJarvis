@@ -30,7 +30,7 @@ from openjarvis.intelligence import (
 @click.option("-m", "--model", "model_name", default=None, help="Default model.")
 @click.option(
     "-a", "--agent", "agent_name", default=None,
-    help="Agent for non-streaming requests (simple, orchestrator).",
+    help="Agent for non-streaming requests (simple, orchestrator, react, openhands).",
 )
 def serve(
     host: str | None,
@@ -65,6 +65,17 @@ def serve(
     # Set up engine
     register_builtin_models()
     bus = EventBus(record_history=False)
+
+    # Set up telemetry
+    telem_store = None
+    if config.telemetry.enabled:
+        try:
+            from openjarvis.telemetry.store import TelemetryStore
+
+            telem_store = TelemetryStore(config.telemetry.db_path)
+            telem_store.subscribe_to_bus(bus)
+        except Exception:
+            pass  # telemetry is best-effort
 
     resolved = get_engine(config, engine_key)
     if resolved is None:
@@ -104,8 +115,27 @@ def serve(
             if AgentRegistry.contains(agent_key):
                 agent_cls = AgentRegistry.get(agent_key)
                 agent_kwargs = {"bus": bus}
-                if agent_key == "orchestrator":
+
+                # Load tools for agents that support them
+                tools_agents = ("orchestrator", "react", "openhands")
+                if agent_key in tools_agents:
+                    from openjarvis.tools._stubs import BaseTool
+                    from openjarvis.core.registry import ToolRegistry
+                    import openjarvis.tools  # noqa: F401  # trigger registration
+
+                    tools = []
+                    for name in ToolRegistry.list_keys():
+                        tool_cls = ToolRegistry.get(name)
+                        if isinstance(tool_cls, type) and issubclass(tool_cls, BaseTool):
+                            tools.append(tool_cls())
+                        elif isinstance(tool_cls, BaseTool):
+                            tools.append(tool_cls)
+                    if tools:
+                        agent_kwargs["tools"] = tools
+
+                if agent_key in ("orchestrator", "react", "openhands"):
                     agent_kwargs["max_turns"] = config.agent.max_turns
+
                 agent = agent_cls(engine, model_name, **agent_kwargs)
         except Exception:
             pass  # agent is optional for serve
@@ -113,7 +143,10 @@ def serve(
     # Create app
     from openjarvis.server.app import create_app
 
-    app = create_app(engine, model_name, agent=agent, bus=bus)
+    app = create_app(
+        engine, model_name, agent=agent, bus=bus,
+        engine_name=engine_name, agent_name=agent_key or "",
+    )
 
     console.print(
         f"[green]Starting OpenJarvis API server[/green]\n"

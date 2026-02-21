@@ -12,9 +12,10 @@ class ProviderPlugin:
     ``generate()`` for inference and ``list_models()`` for model discovery.
     """
 
-    def __init__(self, engine: Any = None, model: str = "") -> None:
+    def __init__(self, engine: Any = None, model: str = "", bus: Any = None) -> None:
         self._engine = engine
         self._model = model
+        self._bus = bus
 
     def generate(self, prompt: str, **kwargs: Any) -> Dict[str, Any]:
         """Generate a response using the wrapped OpenJarvis engine."""
@@ -24,6 +25,13 @@ class ProviderPlugin:
         from openjarvis.core.types import Message, Role
 
         messages = [Message(role=Role.USER, content=prompt)]
+        if self._bus:
+            from openjarvis.telemetry.wrapper import instrumented_generate
+
+            return instrumented_generate(
+                self._engine, messages, model=self._model,
+                bus=self._bus, **kwargs,
+            )
         return self._engine.generate(messages, model=self._model, **kwargs)
 
     def list_models(self) -> List[str]:

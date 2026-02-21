@@ -88,7 +88,7 @@ BUILTIN_MODELS: List[ModelSpec] = [
         active_parameter_count_b=3.0,
         context_length=131072,
         min_vram_gb=8.0,
-        supported_engines=("vllm", "sglang"),
+        supported_engines=("vllm", "sglang", "llamacpp"),
         provider="zhipu",
         metadata={"architecture": "moe"},
     ),

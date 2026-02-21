@@ -9,6 +9,7 @@ from openjarvis.core.events import EventBus, EventType
 from openjarvis.core.registry import AgentRegistry
 from openjarvis.core.types import Message, Role, ToolCall, ToolResult
 from openjarvis.engine._stubs import InferenceEngine
+from openjarvis.telemetry.wrapper import instrumented_generate
 from openjarvis.tools._stubs import BaseTool, ToolExecutor
 
 
@@ -80,28 +81,20 @@ class OrchestratorAgent(BaseAgent):
             if openai_tools:
                 gen_kwargs["tools"] = openai_tools
 
-            # Emit inference start
             if bus:
-                bus.publish(EventType.INFERENCE_START, {
-                    "model": self._model,
-                    "engine": self._engine.engine_id,
-                    "turn": turns,
-                })
-
-            result = self._engine.generate(
-                messages,
-                model=self._model,
-                temperature=self._temperature,
-                max_tokens=self._max_tokens,
-                **gen_kwargs,
-            )
-
-            if bus:
-                bus.publish(EventType.INFERENCE_END, {
-                    "model": self._model,
-                    "engine": self._engine.engine_id,
-                    "turn": turns,
-                })
+                result = instrumented_generate(
+                    self._engine, messages, model=self._model,
+                    bus=bus, temperature=self._temperature,
+                    max_tokens=self._max_tokens, **gen_kwargs,
+                )
+            else:
+                result = self._engine.generate(
+                    messages,
+                    model=self._model,
+                    temperature=self._temperature,
+                    max_tokens=self._max_tokens,
+                    **gen_kwargs,
+                )
 
             content = result.get("content", "")
             raw_tool_calls = result.get("tool_calls", [])

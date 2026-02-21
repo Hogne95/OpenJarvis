@@ -10,6 +10,7 @@ from openjarvis.core.events import EventBus, EventType
 from openjarvis.core.registry import AgentRegistry
 from openjarvis.core.types import Message, Role, ToolCall, ToolResult
 from openjarvis.engine._stubs import InferenceEngine
+from openjarvis.telemetry.wrapper import instrumented_generate
 from openjarvis.tools._stubs import BaseTool, ToolExecutor
 
 REACT_SYSTEM_PROMPT = """\
@@ -115,22 +116,17 @@ class ReActAgent(BaseAgent):
             turns += 1
 
             if bus:
-                bus.publish(
-                    EventType.INFERENCE_START,
-                    {"model": self._model, "turn": turns},
+                result = instrumented_generate(
+                    self._engine, messages, model=self._model,
+                    bus=bus, temperature=self._temperature,
+                    max_tokens=self._max_tokens,
                 )
-
-            result = self._engine.generate(
-                messages,
-                model=self._model,
-                temperature=self._temperature,
-                max_tokens=self._max_tokens,
-            )
-
-            if bus:
-                bus.publish(
-                    EventType.INFERENCE_END,
-                    {"model": self._model, "turn": turns},
+            else:
+                result = self._engine.generate(
+                    messages,
+                    model=self._model,
+                    temperature=self._temperature,
+                    max_tokens=self._max_tokens,
                 )
 
             content = result.get("content", "")

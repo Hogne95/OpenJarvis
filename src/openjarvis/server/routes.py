@@ -47,30 +47,43 @@ async def chat_completions(request_body: ChatCompletionRequest, request: Request
     model = request_body.model
 
     if request_body.stream:
+        bus = getattr(request.app.state, "bus", None)
+        if agent is not None and bus is not None:
+            return await _handle_agent_stream(agent, bus, model, request_body)
         return await _handle_stream(engine, model, request_body)
 
     # Non-streaming: use agent if available, otherwise direct engine call
     if agent is not None:
         return _handle_agent(agent, model, request_body)
 
-    return _handle_direct(engine, model, request_body)
+    bus = getattr(request.app.state, "bus", None)
+    return _handle_direct(engine, model, request_body, bus=bus)
 
 
 def _handle_direct(
-    engine, model: str, req: ChatCompletionRequest,
+    engine, model: str, req: ChatCompletionRequest, bus=None,
 ) -> ChatCompletionResponse:
     """Direct engine call without agent."""
     messages = _to_messages(req.messages)
     kwargs: dict[str, Any] = {}
     if req.tools:
         kwargs["tools"] = req.tools
-    result = engine.generate(
-        messages,
-        model=model,
-        temperature=req.temperature,
-        max_tokens=req.max_tokens,
-        **kwargs,
-    )
+    if bus:
+        from openjarvis.telemetry.wrapper import instrumented_generate
+
+        result = instrumented_generate(
+            engine, messages, model=model, bus=bus,
+            temperature=req.temperature, max_tokens=req.max_tokens,
+            **kwargs,
+        )
+    else:
+        result = engine.generate(
+            messages,
+            model=model,
+            temperature=req.temperature,
+            max_tokens=req.max_tokens,
+            **kwargs,
+        )
     content = result.get("content", "")
     usage = result.get("usage", {})
 
@@ -128,6 +141,13 @@ def _handle_agent(
             finish_reason="stop",
         )],
     )
+
+
+async def _handle_agent_stream(agent, bus, model, req):
+    """Stream agent response with EventBus events via SSE."""
+    from openjarvis.server.stream_bridge import create_agent_stream
+
+    return await create_agent_stream(agent, bus, model, req)
 
 
 async def _handle_stream(engine, model: str, req: ChatCompletionRequest):
@@ -189,6 +209,46 @@ async def list_models(request: Request) -> ModelListResponse:
     return ModelListResponse(
         data=[ModelObject(id=mid) for mid in model_ids],
     )
+
+
+@router.get("/v1/savings")
+async def savings(request: Request):
+    """Return savings summary compared to cloud providers."""
+    from openjarvis.core.config import DEFAULT_CONFIG_DIR
+    from openjarvis.server.savings import compute_savings, savings_to_dict
+    from openjarvis.telemetry.aggregator import TelemetryAggregator
+
+    db_path = DEFAULT_CONFIG_DIR / "telemetry.db"
+    if not db_path.exists():
+        empty = compute_savings(0, 0, 0)
+        return savings_to_dict(empty)
+
+    agg = TelemetryAggregator(db_path)
+    try:
+        summary = agg.summary()
+        result = compute_savings(
+            prompt_tokens=sum(m.prompt_tokens for m in summary.per_model),
+            completion_tokens=sum(m.completion_tokens for m in summary.per_model),
+            total_calls=summary.total_calls,
+        )
+        return savings_to_dict(result)
+    finally:
+        agg.close()
+
+
+@router.get("/v1/info")
+async def server_info(request: Request):
+    """Return server configuration: model, agent, engine."""
+    agent = getattr(request.app.state, "agent", None)
+    agent_id = getattr(agent, "agent_id", None) if agent else None
+    # Fall back to configured agent name if agent didn't instantiate
+    if agent_id is None:
+        agent_id = getattr(request.app.state, "agent_name", None)
+    return {
+        "model": getattr(request.app.state, "model", ""),
+        "agent": agent_id,
+        "engine": getattr(request.app.state, "engine_name", ""),
+    }
 
 
 @router.get("/health")

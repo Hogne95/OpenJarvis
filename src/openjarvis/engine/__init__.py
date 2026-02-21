@@ -6,6 +6,7 @@ import openjarvis.engine.llamacpp  # noqa: F401
 
 # Import engine modules to trigger @EngineRegistry.register() decorators
 import openjarvis.engine.ollama  # noqa: F401
+import openjarvis.engine.sglang  # noqa: F401
 import openjarvis.engine.vllm  # noqa: F401
 from openjarvis.engine._base import (
     EngineConnectionError,

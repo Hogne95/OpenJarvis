@@ -198,6 +198,7 @@ class EngineConfig:
     vllm_host: str = "http://localhost:8000"
     llamacpp_host: str = "http://localhost:8080"
     llamacpp_path: str = ""
+    sglang_host: str = "http://localhost:30000"
 
 
 @dataclass(slots=True)
@@ -336,6 +337,7 @@ def generate_default_toml(hw: HardwareInfo) -> str:
 default = "{engine}"
 ollama_host = "http://localhost:11434"
 vllm_host = "http://localhost:8000"
+sglang_host = "http://localhost:30000"
 
 [intelligence]
 default_model = ""
