@@ -1,10 +1,20 @@
 # OpenJarvis
 
-**Your AI stack, your rules.**
+**Programming abstractions for on-device AI.**
 
-OpenJarvis is a modular, pluggable AI assistant backend. Instead of locking you into one model, one memory system, or one inference engine, OpenJarvis lets you compose your own stack across five pillars — then swap any piece without touching the rest.
+OpenJarvis defines the abstractions needed to study and build AI systems that run entirely on local hardware. Instead of locking you into one model, one memory system, or one inference engine, OpenJarvis lets you compose your own stack across four core abstractions — then swap any piece without touching the rest.
 
-Built for developers who want full control and researchers who need reproducible, measurable AI systems.
+Built for researchers studying local AI systems and developers who want full control over their AI stack. Every interaction generates a trace; the system learns from its own usage to improve over time.
+
+## Why Local AI Needs New Abstractions
+
+Cloud AI treats intelligence as a **service** — you send a request, get a response, pay per token. Local AI treats intelligence as a **resource** — it lives on your machine, it's always available, it has fixed capabilities, it can be modified, and it accumulates state over time. This inversion changes everything:
+
+- **Fixed resource budget** — You have 8-24GB VRAM, period. Scheduling and allocation are first-class problems.
+- **Persistent state is free, compute is expensive** — The opposite of cloud. You can store everything forever but can only run one model at a time.
+- **You own the weights** — Fine-tuning, RL, prompt compilation are all possible on your data, your hardware, with immediate feedback loops.
+- **Hardware heterogeneity** — Apple Silicon, NVIDIA consumer GPUs, AMD, CPU-only — each with different optimal strategies.
+- **Every interaction is a learning signal** — Traces accumulate locally, enabling the system to learn routing, tool selection, and memory strategies from personal usage patterns.
 
 ---
 
@@ -61,16 +71,17 @@ OpenJarvis is organized around five composable pillars. Each pillar defines a cl
 
 ### 2. Learning Approach (Router Policy)
 
-**What it does:** Determines *which* model handles a given query. V1 is heuristic; future versions will learn from usage data.
+**What it does:** Determines *which* model handles a given query. Static policies use rules; learned policies update from interaction traces.
 
-**What's pluggable:** Routing policy, reward functions, training pipeline.
+**What's pluggable:** Routing policy, reward functions, training pipeline, trace analyzers.
 
-**V1 (Placeholder):**
-- Heuristic routing based on query characteristics (length, complexity keywords, domain detection)
-- Rule-based fallback chains
-- All telemetry logged to SQLite for future training
+**Implemented:**
+- **Heuristic routing** — rule-based routing based on query characteristics (length, complexity keywords, domain detection), fallback chains
+- **Trace-driven routing** — learns from accumulated interaction traces which model/agent/tool combinations produce the best outcomes for different query types. Registered as `"learned"` policy.
+- **Trace system** — every interaction generates a `Trace` recording the full sequence of steps (route, retrieve, generate, tool_call, respond) with timing, inputs, outputs, and outcomes. Stored in SQLite via `TraceStore`.
+- **Trace analysis** — `TraceAnalyzer` computes per-route stats, per-tool stats, success rates, and query-type distributions from stored traces.
 
-**Future (Post-V1):**
+**Future:**
 - Learned router via GRPO (Group Relative Policy Optimization)
 - Preference learning from user feedback
 - Continual fine-tuning on accumulated trajectories
@@ -188,9 +199,10 @@ User query
 1. **Agentic Logic** receives the user query, determines if tools or memory are needed
 2. **Memory** retrieves relevant context (conversation history, documents, notes)
 3. **Context Injection** assembles the full prompt with retrieved content and source attribution
-4. **Learning/Router** selects the best model for this query based on routing policy
+4. **Learning/Router** selects the best model for this query based on routing policy (heuristic or trace-driven)
 5. **Inference Engine** runs the selected model and streams the response
-6. **Telemetry** records timing, token counts, energy (if available), and cost
+6. **Trace** records the full interaction sequence: every routing decision, memory retrieval, tool call, and generation step with timing and outcomes
+7. **Learning** periodically updates routing policies from accumulated traces
 
 ---
 

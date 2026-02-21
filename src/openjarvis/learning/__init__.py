@@ -26,6 +26,12 @@ def ensure_registered() -> None:
     except ImportError:
         pass
 
+    from openjarvis.learning.trace_policy import (
+        ensure_registered as _reg_trace,
+    )
+
+    _reg_trace()
+
 
 __all__ = [
     "HeuristicRewardFunction",

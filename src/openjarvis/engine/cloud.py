@@ -1,4 +1,4 @@
-"""Cloud inference engine — OpenAI and Anthropic API backends."""
+"""Cloud inference engine — OpenAI, Anthropic, and Google API backends."""
 
 from __future__ import annotations
 
@@ -19,23 +19,44 @@ PRICING: Dict[str, tuple[float, float]] = {
     "gpt-4o": (2.50, 10.00),
     "gpt-4o-mini": (0.15, 0.60),
     "gpt-5": (10.00, 30.00),
+    "gpt-5-mini": (0.25, 2.00),
     "o3-mini": (1.10, 4.40),
     "claude-sonnet-4-20250514": (3.00, 15.00),
     "claude-opus-4-20250514": (15.00, 75.00),
     "claude-haiku-3-5-20241022": (0.80, 4.00),
+    "claude-opus-4-6": (5.00, 25.00),
+    "claude-sonnet-4-6": (3.00, 15.00),
+    "claude-haiku-4-5": (1.00, 5.00),
+    "gemini-2.5-pro": (1.25, 10.00),
+    "gemini-2.5-flash": (0.30, 2.50),
+    "gemini-3-pro": (2.00, 12.00),
+    "gemini-3-flash": (0.50, 3.00),
 }
 
 # Well-known model IDs per provider
-_OPENAI_MODELS = ["gpt-4o", "gpt-4o-mini", "gpt-5", "o3-mini"]
+_OPENAI_MODELS = ["gpt-4o", "gpt-4o-mini", "gpt-5", "gpt-5-mini", "o3-mini"]
 _ANTHROPIC_MODELS = [
     "claude-sonnet-4-20250514",
     "claude-opus-4-20250514",
     "claude-haiku-3-5-20241022",
+    "claude-opus-4-6",
+    "claude-sonnet-4-6",
+    "claude-haiku-4-5",
+]
+_GOOGLE_MODELS = [
+    "gemini-2.5-pro",
+    "gemini-2.5-flash",
+    "gemini-3-pro",
+    "gemini-3-flash",
 ]
 
 
 def _is_anthropic_model(model: str) -> bool:
     return "claude" in model.lower()
+
+
+def _is_google_model(model: str) -> bool:
+    return "gemini" in model.lower()
 
 
 def estimate_cost(model: str, prompt_tokens: int, completion_tokens: int) -> float:
@@ -56,13 +77,14 @@ def estimate_cost(model: str, prompt_tokens: int, completion_tokens: int) -> flo
 
 @EngineRegistry.register("cloud")
 class CloudEngine(InferenceEngine):
-    """Cloud inference via OpenAI and Anthropic SDKs."""
+    """Cloud inference via OpenAI, Anthropic, and Google SDKs."""
 
     engine_id = "cloud"
 
     def __init__(self) -> None:
         self._openai_client: Any = None
         self._anthropic_client: Any = None
+        self._google_client: Any = None
         self._init_clients()
 
     def _init_clients(self) -> None:
@@ -76,6 +98,16 @@ class CloudEngine(InferenceEngine):
             try:
                 import anthropic
                 self._anthropic_client = anthropic.Anthropic()
+            except ImportError:
+                pass
+        gemini_key = (
+            os.environ.get("GEMINI_API_KEY")
+            or os.environ.get("GOOGLE_API_KEY")
+        )
+        if gemini_key:
+            try:
+                from google import genai
+                self._google_client = genai.Client(api_key=gemini_key)
             except ImportError:
                 pass
 
@@ -164,6 +196,66 @@ class CloudEngine(InferenceEngine):
             "cost_usd": estimate_cost(model, prompt_tokens, completion_tokens),
         }
 
+    def _generate_google(
+        self,
+        messages: Sequence[Message],
+        *,
+        model: str,
+        temperature: float,
+        max_tokens: int,
+        **kwargs: Any,
+    ) -> Dict[str, Any]:
+        if self._google_client is None:
+            raise EngineConnectionError(
+                "Google client not available — set "
+                "GEMINI_API_KEY or GOOGLE_API_KEY and install "
+                "openjarvis[inference-google]"
+            )
+        # Build contents from messages
+        system_text = ""
+        contents: List[Dict[str, Any]] = []
+        for m in messages:
+            if m.role.value == "system":
+                system_text = m.content
+            elif m.role.value == "assistant":
+                contents.append({"role": "model", "parts": [{"text": m.content}]})
+            else:
+                contents.append({"role": "user", "parts": [{"text": m.content}]})
+
+        from google.genai import types as genai_types
+
+        config = genai_types.GenerateContentConfig(
+            temperature=temperature,
+            max_output_tokens=max_tokens,
+        )
+        if system_text:
+            config.system_instruction = system_text
+
+        resp = self._google_client.models.generate_content(
+            model=model,
+            contents=contents,
+            config=config,
+        )
+        content = resp.text or ""
+        um = resp.usage_metadata
+        prompt_tokens = (
+            getattr(um, "prompt_token_count", 0) if um else 0
+        )
+        completion_tokens = (
+            getattr(um, "candidates_token_count", 0) if um else 0
+        )
+        return {
+            "content": content,
+            "usage": {
+                "prompt_tokens": prompt_tokens,
+                "completion_tokens": completion_tokens,
+                "total_tokens": prompt_tokens + completion_tokens,
+            },
+            "model": model,
+            "finish_reason": "stop",
+            "cost_usd": estimate_cost(model, prompt_tokens, completion_tokens),
+        }
+
     def generate(
         self,
         messages: Sequence[Message],
@@ -181,6 +273,8 @@ class CloudEngine(InferenceEngine):
         )
         if _is_anthropic_model(model):
             return self._generate_anthropic(messages, **kw)
+        if _is_google_model(model):
+            return self._generate_google(messages, **kw)
         return self._generate_openai(messages, **kw)
 
     async def stream(
@@ -200,6 +294,11 @@ class CloudEngine(InferenceEngine):
         )
         if _is_anthropic_model(model):
             async for token in self._stream_anthropic(
+                messages, **kw
+            ):
+                yield token
+        elif _is_google_model(model):
+            async for token in self._stream_google(
                 messages, **kw
             ):
                 yield token
@@ -263,16 +362,60 @@ class CloudEngine(InferenceEngine):
             for text in stream.text_stream:
                 yield text
 
+    async def _stream_google(
+        self,
+        messages: Sequence[Message],
+        *,
+        model: str,
+        temperature: float,
+        max_tokens: int,
+        **kwargs: Any,
+    ) -> AsyncIterator[str]:
+        if self._google_client is None:
+            raise EngineConnectionError("Google client not available")
+        system_text = ""
+        contents: List[Dict[str, Any]] = []
+        for m in messages:
+            if m.role.value == "system":
+                system_text = m.content
+            elif m.role.value == "assistant":
+                contents.append({"role": "model", "parts": [{"text": m.content}]})
+            else:
+                contents.append({"role": "user", "parts": [{"text": m.content}]})
+
+        from google.genai import types as genai_types
+
+        config = genai_types.GenerateContentConfig(
+            temperature=temperature,
+            max_output_tokens=max_tokens,
+        )
+        if system_text:
+            config.system_instruction = system_text
+
+        for chunk in self._google_client.models.generate_content_stream(
+            model=model,
+            contents=contents,
+            config=config,
+        ):
+            if chunk.text:
+                yield chunk.text
+
     def list_models(self) -> List[str]:
         models: List[str] = []
         if self._openai_client is not None:
             models.extend(_OPENAI_MODELS)
         if self._anthropic_client is not None:
             models.extend(_ANTHROPIC_MODELS)
+        if self._google_client is not None:
+            models.extend(_GOOGLE_MODELS)
         return models
 
     def health(self) -> bool:
-        return self._openai_client is not None or self._anthropic_client is not None
+        return (
+            self._openai_client is not None
+            or self._anthropic_client is not None
+            or self._google_client is not None
+        )
 
 
 __all__ = ["CloudEngine", "PRICING", "estimate_cost"]

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import uuid
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Dict, List, Optional, Sequence  # noqa: I001
@@ -30,6 +31,16 @@ class Quantization(str, Enum):
     INT4 = "int4"
     GGUF_Q4 = "gguf_q4"
     GGUF_Q8 = "gguf_q8"
+
+
+class StepType(str, Enum):
+    """Types of steps within an agent trace."""
+
+    ROUTE = "route"
+    RETRIEVE = "retrieve"
+    GENERATE = "generate"
+    TOOL_CALL = "tool_call"
+    RESPOND = "respond"
 
 
 # ---------------------------------------------------------------------------
@@ -130,13 +141,74 @@ class TelemetryRecord:
     metadata: Dict[str, Any] = field(default_factory=dict)
 
 
+# ---------------------------------------------------------------------------
+# Trace types — full interaction-level recording
+# ---------------------------------------------------------------------------
+
+
+def _trace_id() -> str:
+    return uuid.uuid4().hex[:16]
+
+
+@dataclass(slots=True)
+class TraceStep:
+    """A single step within an agent trace.
+
+    Each step records what the agent did (route, retrieve, generate,
+    tool_call, respond), its inputs and outputs, and timing.
+    """
+
+    step_type: StepType
+    timestamp: float
+    duration_seconds: float = 0.0
+    input: Dict[str, Any] = field(default_factory=dict)
+    output: Dict[str, Any] = field(default_factory=dict)
+    metadata: Dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(slots=True)
+class Trace:
+    """Complete trace of an agent handling a query.
+
+    A trace captures the full sequence of steps an agent took to handle a
+    query — which model was selected, what memory was retrieved, which tools
+    were called, and the final response.  Traces are the primary input to the
+    learning system: by analyzing which decisions led to good outcomes, the
+    system can improve routing, tool selection, and memory strategies.
+    """
+
+    trace_id: str = field(default_factory=_trace_id)
+    query: str = ""
+    agent: str = ""
+    model: str = ""
+    engine: str = ""
+    steps: List[TraceStep] = field(default_factory=list)
+    result: str = ""
+    outcome: Optional[str] = None  # None=unknown, "success", "failure"
+    feedback: Optional[float] = None  # user quality score [0, 1]
+    started_at: float = 0.0
+    ended_at: float = 0.0
+    total_tokens: int = 0
+    total_latency_seconds: float = 0.0
+    metadata: Dict[str, Any] = field(default_factory=dict)
+
+    def add_step(self, step: TraceStep) -> None:
+        """Append a step and update running totals."""
+        self.steps.append(step)
+        self.total_latency_seconds += step.duration_seconds
+        self.total_tokens += step.output.get("tokens", 0)
+
+
 __all__ = [
     "Conversation",
     "Message",
     "ModelSpec",
     "Quantization",
     "Role",
+    "StepType",
     "TelemetryRecord",
     "ToolCall",
     "ToolResult",
+    "Trace",
+    "TraceStep",
 ]

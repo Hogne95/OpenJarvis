@@ -333,6 +333,34 @@ OpenJarvis/
 
 ---
 
+## Phase 6 — Trace System & Learning (~ongoing)
+
+**Goal:** Full interaction-level trace recording, trace-driven learning, and pluggable agentic architectures. The foundation for studying local AI systems.
+
+**Version milestone:** v1.1
+
+### Trace System (complete)
+
+- [x] **`Trace` and `TraceStep` types** — full interaction recording with step types: route, retrieve, generate, tool_call, respond
+- [x] **`TraceStore`** — SQLite-backed append-only store with filtering (by agent, model, outcome, time range)
+- [x] **`TraceCollector`** — wraps any `BaseAgent`, subscribes to EventBus, records steps automatically
+- [x] **`TraceAnalyzer`** — read-only query layer: per-route stats, per-tool stats, summaries, query-type filtering, export
+- [x] **`TraceDrivenPolicy`** — learns routing from trace outcomes, batch and online updates, registered as `"learned"` policy
+- [x] **Event bus integration** — `TRACE_STEP` and `TRACE_COMPLETE` event types
+
+### Next Steps
+
+- [ ] Wire `TraceCollector` into SDK/CLI for automatic trace collection
+- [ ] `jarvis trace` CLI subcommand (list, inspect, export traces)
+- [ ] User feedback mechanisms (thumbs up/down, quality scores)
+- [ ] Hierarchical memory (episodic/semantic/procedural layers)
+- [ ] Pluggable agentic architectures (ReAct, tree-of-thought, custom loops)
+- [ ] Prompt optimization from traces (DSPy-style compilation for local models)
+- [ ] Model weight updates from traces (LoRA/QLoRA finetuning)
+- [ ] GAIA benchmark evaluation with local models
+
+---
+
 ## Version Summary
 
 | Version | Phase | What you get |
@@ -343,3 +371,4 @@ OpenJarvis/
 | **v0.4** | Phase 3 | Agents + tools + OpenAI-compatible API server |
 | **v0.5** | Phase 4 | Learning stubs — router policy interface, telemetry aggregation |
 | **v1.0** | Phase 5 | Production — SDK, OpenClaw plugin, Docker, benchmarks, docs |
+| **v1.1** | Phase 6 | Trace system, trace-driven learning, pluggable agent architectures |

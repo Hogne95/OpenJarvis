@@ -1,20 +1,23 @@
 # OpenJarvis
 
-**Your AI stack, your rules.**
+**Programming abstractions for on-device AI.**
 
-A modular, pluggable AI assistant backend. Compose your own stack across five pillars — Intelligence, Learning, Memory, Agents, and Inference — then swap any piece without touching the rest.
+OpenJarvis defines the abstractions needed to study and build AI systems that run entirely on local hardware. It provides four composable pillars — Intelligence, Engine, Agentic Logic, and Memory — with a trace-driven learning system that improves over time.
 
-> **Status: v1.0** — All five pillars implemented. SDK, benchmarks, OpenClaw infrastructure, and Docker deployment ready.
+> **Status: v1.0+** — All pillars implemented. Trace system, trace-driven learning, SDK, benchmarks, and Docker deployment ready. 576 tests passing.
 
 ## What is this?
 
-OpenJarvis lets you build a personal AI assistant from composable parts:
+Local AI is a new computing paradigm: intelligence as a *resource you own*, not a *service you rent*. Existing frameworks (LangChain, DSPy, CrewAI) assume cloud-class models and infinite compute. OpenJarvis provides the abstractions for building AI systems against local hardware constraints.
 
-- **Intelligence** — multi-model management with automatic routing (Qwen3, GPT OSS, Kimi-K2.5, Claude, GPT-5, Gemini)
+**Four core abstractions:**
+
+- **Intelligence** — the local LM being run (Qwen3 8B, GPT OSS 120B, Kimi 2.5, etc.) with multi-model management and automatic routing
+- **Engine** — the local inference engine (Ollama, SGLang, vLLM, llama.cpp, MLX) with hardware-aware selection
+- **Agentic Logic** — pluggable logic for handling queries, making tool/API calls, managing memory. Can be static (rules, ReAct) or learned from traces
 - **Memory** — persistent, searchable storage with multiple backends (SQLite, FAISS, ColBERTv2, BM25, hybrid)
-- **Agents** — pluggable reasoning and tool use (OpenClaw Pi agent, simple, orchestrator, custom)
-- **Inference** — hardware-aware engine selection (vLLM, SGLang, Ollama, llama.cpp, MLX)
-- **Learning** — router that improves over time (heuristic now, learned later)
+
+**Cross-cutting: Learning** — every interaction generates a trace. The system learns better routing, tool selection, and memory strategies from accumulated trace data.
 
 ## Quick Start — Python SDK
 
@@ -65,12 +68,14 @@ curl http://localhost:8000/health
 src/openjarvis/
 ├── core/          # Registry, types, config, event bus
 ├── intelligence/  # Model management, routing
+├── engine/        # Inference engine wrappers (Ollama, vLLM, SGLang, llama.cpp, MLX)
+├── agents/        # Pluggable agent implementations + tool system
 ├── memory/        # Storage backends (SQLite, FAISS, ColBERT, BM25, hybrid)
-├── agents/        # Agent implementations + tool system + OpenClaw
-├── engine/        # Inference engine wrappers
-├── learning/      # Router policy (heuristic, GRPO stub)
+├── traces/        # Full interaction traces — store, collector, analyzer
+├── learning/      # Router policies (heuristic, trace-driven, GRPO stub)
+├── telemetry/     # Per-inference telemetry store + aggregator
+├── tools/         # Built-in tools (calculator, think, retrieval, LLM, file read)
 ├── bench/         # Benchmarking framework (latency, throughput)
-├── telemetry/     # Telemetry store + aggregator
 ├── server/        # OpenAI-compatible API server
 ├── cli/           # CLI entry points
 └── sdk.py         # Python SDK (Jarvis class)

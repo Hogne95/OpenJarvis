@@ -4,13 +4,13 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Status
 
-OpenJarvis Phase 5 (v1.0) is complete — Python SDK (`Jarvis` class with `ask()`, `ask_full()`, `MemoryHandle`), OpenClaw agent infrastructure (protocol, transport ABC with HTTP/subprocess, plugin skeleton), benchmarking framework (`jarvis bench run` with latency/throughput benchmarks, `BenchmarkRegistry`), Docker deployment (Dockerfile, Dockerfile.gpu, docker-compose.yml, systemd/launchd), and full documentation updates. ~520 tests pass (8 skipped for optional deps).
+OpenJarvis is a research framework for studying on-device AI systems. Phase 5 (v1.0) complete, Phase 6 (trace system + learning) in progress. Core abstractions: Intelligence, Engine, Agentic Logic, Memory — with trace-driven learning as a cross-cutting concern. Python SDK (`Jarvis` class), OpenClaw agent infrastructure, benchmarking framework, Docker deployment all ready. ~576 tests pass (8 skipped for optional deps).
 
 ## Build & Development Commands
 
 ```bash
 uv sync --extra dev          # Install deps + dev tools
-uv run pytest tests/ -v      # Run ~520 tests (8 skipped if optional deps missing)
+uv run pytest tests/ -v      # Run ~576 tests (8 skipped if optional deps missing)
 uv run ruff check src/ tests/ # Lint
 uv run jarvis --version      # 1.0.0
 uv run jarvis ask "Hello"    # Query via discovered engine (direct mode)
@@ -66,15 +66,19 @@ j.close()                             # Release resources
 
 ## Architecture
 
-OpenJarvis is a modular AI assistant backend organized around **five composable pillars**, each with a clear ABC interface and a decorator-based registry for runtime discovery.
+OpenJarvis is a research framework for on-device AI organized around **four core abstractions** plus a cross-cutting learning system, each with a clear ABC interface and a decorator-based registry for runtime discovery.
 
-### Five Pillars
+### Four Core Abstractions
 
-1. **Intelligence** (`src/openjarvis/intelligence/`) — Model management and query routing. `ModelRegistry` maps model keys to `ModelSpec`. Heuristic router selects model based on query characteristics.
-2. **Learning** (`src/openjarvis/learning/`) — Router policy that determines which model handles a query. `RouterPolicyRegistry` enables pluggable policies. Implementations: `HeuristicRouter` (6 priority rules, registered as "heuristic"), `GRPORouterPolicy` (stub for training, registered as "grpo"). `HeuristicRewardFunction` scores inference results on latency/cost/efficiency.
-3. **Memory** (`src/openjarvis/memory/`) — Persistent searchable storage. Backends: SQLite/FTS5 (default), FAISS, ColBERTv2, BM25, Hybrid (RRF fusion). All implement `MemoryBackend` ABC with `store()`, `retrieve()`, `delete()`, `clear()`.
-4. **Agents** (`src/openjarvis/agents/`) — Multi-turn reasoning and tool use. `SimpleAgent` (single-turn, no tools), `OrchestratorAgent` (multi-turn tool-calling loop with `ToolExecutor`), `CustomAgent` (template for user-defined agents), `OpenClawAgent` (HTTP/subprocess transport to OpenClaw Pi agent). All implement `BaseAgent` ABC with `run()`.
-5. **Inference Engine** (`src/openjarvis/engine/`) — LLM runtime management. Backends: vLLM, SGLang, Ollama, llama.cpp, MLX. All implement `InferenceEngine` ABC with `generate()`, `stream()`, `list_models()`, `health()`. Engines extract and pass through `tool_calls` in OpenAI format.
+1. **Intelligence** (`src/openjarvis/intelligence/`) — The local LM. Model management and query routing. `ModelRegistry` maps model keys to `ModelSpec`. Heuristic router selects model based on query characteristics.
+2. **Engine** (`src/openjarvis/engine/`) — The inference runtime. Backends: vLLM, SGLang, Ollama, llama.cpp, MLX. All implement `InferenceEngine` ABC with `generate()`, `stream()`, `list_models()`, `health()`. Engines extract and pass through `tool_calls` in OpenAI format.
+3. **Agentic Logic** (`src/openjarvis/agents/`) — Pluggable logic for handling queries, making tool/API calls, managing memory. `SimpleAgent` (single-turn, no tools), `OrchestratorAgent` (multi-turn tool-calling loop with `ToolExecutor`), `CustomAgent` (template for user-defined agents), `OpenClawAgent` (HTTP/subprocess transport). All implement `BaseAgent` ABC with `run()`. Can be static or learned from traces.
+4. **Memory** (`src/openjarvis/memory/`) — Persistent searchable storage. Backends: SQLite/FTS5 (default), FAISS, ColBERTv2, BM25, Hybrid (RRF fusion). All implement `MemoryBackend` ABC with `store()`, `retrieve()`, `delete()`, `clear()`.
+
+### Cross-cutting: Learning & Traces
+
+- **Traces** (`src/openjarvis/traces/`) — Full interaction-level recording. Every agent interaction produces a `Trace` capturing the sequence of `TraceStep`s (route, retrieve, generate, tool_call, respond) with timing, inputs, outputs, and outcomes. `TraceStore` persists to SQLite. `TraceCollector` wraps any `BaseAgent` to record traces automatically. `TraceAnalyzer` provides aggregated stats for the learning system.
+- **Learning** (`src/openjarvis/learning/`) — Router policy that determines which model handles a query. `RouterPolicyRegistry` enables pluggable policies. Implementations: `HeuristicRouter` (6 priority rules, registered as "heuristic"), `TraceDrivenPolicy` (learns from trace outcomes, registered as "learned"), `GRPORouterPolicy` (stub for RL training, registered as "grpo"). `HeuristicRewardFunction` scores inference results on latency/cost/efficiency.
 
 ### Python SDK (`src/openjarvis/sdk.py`)
 
@@ -112,6 +116,13 @@ OpenJarvis is a modular AI assistant backend organized around **five composable 
 - `GET /health` — health check
 - Pydantic request/response models matching OpenAI API format
 
+### Trace System (`src/openjarvis/traces/`)
+
+- `store.py` — `TraceStore` writes complete `Trace` objects (with `TraceStep` lists) to SQLite. Supports filtering by agent, model, outcome, time range. Subscribes to `TRACE_COMPLETE` events on EventBus.
+- `collector.py` — `TraceCollector` wraps any `BaseAgent` and records a `Trace` for every `run()`. Subscribes to EventBus events (inference, tool, memory) during agent execution, converting them to `TraceStep` objects. Automatically persists traces and publishes `TRACE_COMPLETE`.
+- `analyzer.py` — `TraceAnalyzer` read-only query layer: `summary()`, `per_route_stats()`, `per_tool_stats()`, `traces_for_query_type()`, `export_traces()`. Time-range filtering. Provides inputs for the learning system.
+- Dataclasses: `RouteStats`, `ToolStats`, `TraceSummary`
+
 ### Telemetry (`src/openjarvis/telemetry/`)
 
 - `store.py` — `TelemetryStore` writes records to SQLite via EventBus subscription (append-only)
@@ -122,7 +133,7 @@ OpenJarvis is a modular AI assistant backend organized around **five composable 
 ### Core Module (`src/openjarvis/core/`)
 
 - `registry.py` — `RegistryBase[T]` generic base class adapted from IPW. Typed subclasses: `ModelRegistry`, `EngineRegistry`, `MemoryRegistry`, `AgentRegistry`, `ToolRegistry`, `RouterPolicyRegistry`, `BenchmarkRegistry`.
-- `types.py` — `Message`, `Conversation`, `ModelSpec`, `ToolResult`, `TelemetryRecord`.
+- `types.py` — `Message`, `Conversation`, `ModelSpec`, `ToolResult`, `TelemetryRecord`, `StepType`, `TraceStep`, `Trace`.
 - `config.py` — `JarvisConfig` dataclass hierarchy with TOML loader. Includes `LearningConfig` (default_policy, reward_weights). User config lives at `~/.openjarvis/config.toml`. Hardware auto-detection populates defaults.
 - `events.py` — Pub/sub event bus for inter-pillar telemetry (synchronous dispatch).
 
@@ -136,7 +147,7 @@ OpenJarvis is a modular AI assistant backend organized around **five composable 
 
 ### Query Flow
 
-User query &rarr; Agentic Logic (determine tools/memory needs) &rarr; Memory retrieval &rarr; Context injection with source attribution &rarr; Learning/Router selects model (via RouterPolicyRegistry) &rarr; Inference Engine generates response &rarr; Telemetry recorded to SQLite.
+User query &rarr; Agentic Logic (determine tools/memory needs) &rarr; Memory retrieval &rarr; Context injection with source attribution &rarr; Learning/Router selects model (via RouterPolicyRegistry, heuristic or trace-driven) &rarr; Inference Engine generates response &rarr; Trace recorded to SQLite (full interaction sequence) &rarr; Telemetry recorded &rarr; Learning policies update from accumulated traces.
 
 ### API Surface
 
@@ -161,3 +172,4 @@ OpenAI-compatible server via `jarvis serve`: `POST /v1/chat/completions` and `GE
 | v0.4 | Phase 3 | Agents, tool system, OpenAI-compatible API server |
 | v0.5 | Phase 4 | Learning implementations, telemetry aggregation, `--router` CLI, `jarvis telemetry` |
 | v1.0 | Phase 5 | SDK, OpenClaw infrastructure, benchmarks, Docker, documentation |
+| v1.1 | Phase 6 | Trace system, trace-driven learning, pluggable agent architectures |

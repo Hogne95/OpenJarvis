@@ -4,14 +4,14 @@ Living document tracking implementation progress, testing state, lessons learned
 
 ---
 
-## Current State (2026-02-16)
+## Current State (2026-02-21)
 
-- **Version:** 1.0.0
-- **All 6 roadmap phases complete** (Phase 0 through Phase 5)
-- **Tests:** 520 passed, 8 skipped, 0 failures
+- **Version:** 1.0.0 (trace system added, targeting v1.1)
+- **All 6 roadmap phases complete** (Phase 0 through Phase 5) + Phase 6 trace system in progress
+- **Tests:** 576 passed, 8 skipped, 0 failures
 - **Lint:** ruff clean (`select = ["E", "F", "I", "W"]`)
-- **Source files:** 72 Python files in `src/openjarvis/`
-- **Test files:** 74 Python files in `tests/`
+- **Source files:** 76 Python files in `src/openjarvis/`
+- **Test files:** 78 Python files in `tests/`
 - **Python:** 3.13 (compatible with 3.10+)
 - **Package manager:** `uv` with `hatchling` build backend
 
@@ -40,6 +40,7 @@ Living document tracking implementation progress, testing state, lessons learned
 | Phase 3 | v0.4 | Agents (Simple/Orchestrator/Custom/OpenClaw stub), tool system (Calculator/Think/Retrieval/LLM/FileRead), OpenAI-compatible API server, `jarvis serve` | ~360 |
 | Phase 4 | v0.5 | Learning — HeuristicRouter, HeuristicRewardFunction, GRPORouterPolicy stub, TelemetryAggregator, `jarvis telemetry` CLI, `--router` CLI option | ~432 |
 | Phase 5 | v1.0 | SDK (`Jarvis` class), OpenClaw infrastructure (protocol/transport/plugin), benchmarks (`jarvis bench`), Docker, docs | ~520 |
+| Phase 6 | v1.1 | Trace system (TraceStore, TraceCollector, TraceAnalyzer), trace-driven learning (TraceDrivenPolicy) | ~576 |
 
 ---
 
@@ -57,7 +58,8 @@ src/openjarvis/
 │   ├── config.py        # JarvisConfig dataclass hierarchy, TOML loader
 │   └── events.py        # EventBus pub/sub (synchronous)
 ├── intelligence/        # ModelRegistry, HeuristicRouter, model catalog
-├── learning/            # RouterPolicyRegistry, HeuristicRouter policy, GRPO stub
+├── traces/              # TraceStore, TraceCollector, TraceAnalyzer
+├── learning/            # RouterPolicyRegistry, HeuristicRouter, TraceDrivenPolicy, GRPO stub
 ├── memory/              # SQLite/FAISS/ColBERT/BM25/Hybrid backends, chunking, ingest
 ├── agents/              # Simple/Orchestrator/Custom/OpenClaw agents + protocol/transport
 ├── engine/              # Ollama/vLLM/llama.cpp/Cloud engine wrappers
@@ -459,3 +461,32 @@ python -c "from openjarvis import Jarvis; print(Jarvis)"
 - Without tool support, orchestrator falls back to reasoning-only mode
 
 **Final: 520 passed, 8 skipped, 0 failures, ruff clean**
+
+### Session 3 (2026-02-21) — Trace System & Research Direction
+
+**Scope:** Design new research direction (abstractions for local AI), implement trace system
+
+**Design decisions made:**
+- OpenJarvis repositioned as a research framework for studying on-device AI
+- Four core abstractions: Intelligence, Engine, Agentic Logic, Memory
+- Learning is a cross-cutting concern driven by interaction traces
+- Agentic Logic should be pluggable — users bring their own architecture (ReAct, OpenHands-style, etc.)
+- Trace collection is the bridge between static and learned agents
+- Evolve existing codebase rather than full redesign
+- Name stays as OpenJarvis
+- Learning focus: telemetry-driven routing/tool policies (lightweight, always-on)
+- Agent-model coupling: loose (any agent, any model)
+
+**Work completed:**
+- Added `StepType` enum, `TraceStep`, `Trace` dataclasses to `core/types.py`
+- Added `TRACE_STEP`, `TRACE_COMPLETE` event types to `core/events.py`
+- Created `traces/` package:
+  - `store.py` — `TraceStore`: SQLite-backed, save/get/list with filters, event bus subscription
+  - `collector.py` — `TraceCollector`: wraps any `BaseAgent`, subscribes to EventBus, records steps automatically
+  - `analyzer.py` — `TraceAnalyzer`: per-route stats, per-tool stats, summaries, export, query-type filtering
+- Created `learning/trace_policy.py` — `TraceDrivenPolicy`: learns routing from trace outcomes, batch/online updates, registered as `"learned"` policy
+- Registered `TraceDrivenPolicy` in `learning/__init__.py`
+- Added 56 new tests across 4 test files in `tests/traces/` and `tests/learning/test_trace_policy.py`
+- Updated all markdown documentation (README, VISION, ROADMAP, NOTES, CLAUDE)
+
+**Final: 576 passed, 8 skipped, 0 failures, ruff clean**
