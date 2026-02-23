@@ -74,17 +74,6 @@ class TestChannelRegistry:
         assert isinstance(instance, CreatableChannel)
         assert instance.channel_id == "creatable"
 
-    def test_openclaw_bridge_registered(self) -> None:
-        """After importing openclaw_bridge, 'openclaw' should be in the registry."""
-        from openjarvis.channels.openclaw_bridge import OpenClawChannelBridge
-
-        # Re-register since conftest clears registries
-        if not ChannelRegistry.contains("openclaw"):
-            ChannelRegistry.register_value("openclaw", OpenClawChannelBridge)
-
-        assert ChannelRegistry.contains("openclaw")
-        assert ChannelRegistry.get("openclaw") is OpenClawChannelBridge
-
     def test_duplicate_registration_raises(self) -> None:
         """Registering the same key twice should raise ValueError."""
         ChannelRegistry.register_value("dup", object)

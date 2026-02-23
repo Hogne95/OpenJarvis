@@ -32,7 +32,7 @@ class RewardFunction(ABC):
 class LearningPolicy(ABC):
     """Base for all learning policies. Targets one or more pillars."""
 
-    target: ClassVar[str] = ""  # "intelligence" | "agent" | "tools"
+    target: ClassVar[str] = ""  # "intelligence" | "agent"
 
     @abstractmethod
     def update(self, trace_store: Any, **kwargs: object) -> Dict[str, Any]:
@@ -51,12 +51,6 @@ class AgentLearningPolicy(LearningPolicy):
     target: ClassVar[str] = "agent"
 
 
-class ToolLearningPolicy(LearningPolicy):
-    """Updates tool usage (ICL examples, skills) from traces."""
-
-    target: ClassVar[str] = "tools"
-
-
 __all__ = [
     "AgentLearningPolicy",
     "IntelligenceLearningPolicy",
@@ -65,5 +59,4 @@ __all__ = [
     "RewardFunction",
     "RouterPolicy",
     "RoutingContext",
-    "ToolLearningPolicy",
 ]

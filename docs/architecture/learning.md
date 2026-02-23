@@ -6,13 +6,12 @@ The Learning system is a **cross-cutting concern** that connects all four pillar
 
 ## LearningPolicy ABC Taxonomy
 
-The learning system defines a hierarchy of learning policy ABCs. The base `LearningPolicy` ABC is specialized into three sub-ABCs corresponding to the three learnable concerns:
+The learning system defines a hierarchy of learning policy ABCs. The base `LearningPolicy` ABC is specialized into two sub-ABCs corresponding to the two learnable concerns:
 
 | ABC | Concern | Description |
 |-----|---------|-------------|
 | `IntelligenceLearningPolicy` | Model routing | Determines which model handles a query (replaces the legacy `RouterPolicy`) |
-| `AgentLearningPolicy` | Agent behavior | Advises on agent strategy (e.g., tool selection, turn limits) |
-| `ToolLearningPolicy` | Tool selection | Recommends tool configurations based on query characteristics |
+| `AgentLearningPolicy` | Agent behavior | Advises on agent strategy (e.g., ICL examples, tool selection, turn limits) |
 
 All learning policies are registered in the `LearningRegistry` (in `core/registry.py`).
 
@@ -66,14 +65,14 @@ The system ships with these router policies:
 | `heuristic` | `HeuristicRouter` | Active | Rule-based routing with 6 priority rules |
 | `learned` | `TraceDrivenPolicy` | Active | Learns from trace outcomes |
 | `grpo` | `GRPORouterPolicy` | Stub | Placeholder for future RL training |
-| `sft` | `SFTPolicy` | Active | Supervised fine-tuning policy (learns from labeled traces) |
+| `sft` | `SFTRouterPolicy` | Active | Trace-driven routing policy (learns query→model mapping); `SFTPolicy` is a backward-compat alias |
 
 And these additional learning policies (registered in `LearningRegistry`):
 
 | Registry Key | Policy Class | Taxonomy | Description |
 |-------------|-------------|----------|-------------|
 | `agent_advisor` | `AgentAdvisorPolicy` | `AgentLearningPolicy` | Advises on agent strategy based on trace patterns |
-| `icl_updater` | `ICLUpdaterPolicy` | `ToolLearningPolicy` | In-context learning updater for tool selection |
+| `icl_updater` | `ICLUpdaterPolicy` | `AgentLearningPolicy` | In-context learning updater — discovers ICL examples and multi-tool skills from traces |
 
 Users select a policy via `config.toml` or the `--router` CLI flag:
 
@@ -193,11 +192,13 @@ The online update uses a conservative strategy: it only switches the preferred m
 
 ---
 
-## SFTPolicy (Supervised Fine-Tuning)
+## SFTRouterPolicy (Trace-Driven Router)
 
-The `SFTPolicy` (in `learning/sft_policy.py`) is an `IntelligenceLearningPolicy` that learns routing decisions from labeled trace data using supervised fine-tuning principles. Unlike `TraceDrivenPolicy` which uses online aggregation, `SFTPolicy` trains a mapping from query features to model choices based on curated, high-quality trace examples.
+The `SFTRouterPolicy` (in `learning/sft_policy.py`) is an `IntelligenceLearningPolicy` that learns routing decisions from historical traces. It analyzes trace outcomes, groups by query class (code, math, short, long, general), and builds a `query_class → model` mapping from the highest-scoring model per class. A backward-compatible alias `SFTPolicy = SFTRouterPolicy` is provided for code that used the old name.
 
 ```python
+from openjarvis.learning.sft_policy import SFTRouterPolicy
+# or via the backward-compat alias:
 from openjarvis.learning.sft_policy import SFTPolicy
 ```
 
@@ -215,7 +216,7 @@ from openjarvis.learning.agent_advisor import AgentAdvisorPolicy
 
 ## ICLUpdaterPolicy
 
-The `ICLUpdaterPolicy` (in `learning/icl_updater.py`) is a `ToolLearningPolicy` that uses in-context learning to update tool selection and configuration. It analyzes recent tool-call traces to recommend which tools should be enabled for different query types.
+The `ICLUpdaterPolicy` (in `learning/icl_updater.py`) is an `AgentLearningPolicy` that uses in-context learning to discover reusable examples and multi-tool skill sequences from traces. It analyzes successful tool-call patterns to recommend ICL examples and skill libraries that update agent behavior.
 
 ```python
 from openjarvis.learning.icl_updater import ICLUpdaterPolicy

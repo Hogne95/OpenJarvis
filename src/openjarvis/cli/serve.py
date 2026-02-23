@@ -142,23 +142,23 @@ def serve(
             console.print(f"[yellow]Agent '{agent_key}' failed to load: {exc}[/yellow]")
             traceback.print_exc()
 
-    # Set up channel bridge if enabled
+    # Set up channel backend if enabled
     channel_bridge = None
-    if config.channel.enabled:
+    if config.channel.enabled and config.channel.default_channel:
         try:
-            from openjarvis.channels.openclaw_bridge import OpenClawChannelBridge
+            from openjarvis.system import SystemBuilder
 
-            channel_bridge = OpenClawChannelBridge(
-                gateway_url=config.channel.gateway_url,
-                reconnect_interval=config.channel.reconnect_interval,
-                bus=bus,
-            )
-            channel_bridge.connect()
-            console.print(
-                f"  Channels: [cyan]{config.channel.gateway_url}[/cyan]"
-            )
+            # Reuse _resolve_channel logic from SystemBuilder
+            sb = SystemBuilder(config)
+            sb._bus = bus
+            channel_bridge = sb._resolve_channel(config, bus)
+            if channel_bridge is not None:
+                channel_bridge.connect()
+                console.print(
+                    f"  Channel: [cyan]{config.channel.default_channel}[/cyan]"
+                )
         except Exception as exc:
-            console.print(f"[yellow]Channel bridge failed to start: {exc}[/yellow]")
+            console.print(f"[yellow]Channel failed to start: {exc}[/yellow]")
             channel_bridge = None
 
     # Create app

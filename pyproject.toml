@@ -33,6 +33,7 @@ inference-cloud = [
 inference-google = [
     "google-genai>=1.0",
 ]
+inference-litellm = ["litellm>=1.40"]
 tools-search = [
     "tavily-python>=0.3",
 ]
@@ -54,8 +55,22 @@ server = [
 ]
 agents = []
 learning = []
-openclaw = []
-channels = ["websockets>=12.0"]
+orchestrator-training = ["torch>=2.0", "transformers>=4.40"]
+channel-telegram = ["python-telegram-bot>=21.0"]
+channel-discord = ["discord.py>=2.3"]
+channel-slack = ["slack-sdk>=3.27"]
+channel-webhook = []
+channel-email = []
+channel-whatsapp = []
+channel-signal = []
+channel-google-chat = []
+channel-irc = []
+channel-webchat = []
+channel-teams = []
+channel-matrix = []
+channel-mattermost = []
+channel-feishu = []
+channel-bluebubbles = []
 docs = [
     "mkdocs>=1.6",
     "mkdocs-material>=9.5",

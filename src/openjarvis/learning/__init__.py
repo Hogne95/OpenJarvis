@@ -47,6 +47,12 @@ def ensure_registered() -> None:
     except ImportError:
         pass
 
+    # Orchestrator-native SFT & GRPO training
+    try:
+        import openjarvis.learning.orchestrator  # noqa: F401
+    except ImportError:
+        pass
+
 
 __all__ = [
     "HeuristicRewardFunction",

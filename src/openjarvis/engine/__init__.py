@@ -21,6 +21,12 @@ try:
 except ImportError:
     pass
 
+# LiteLLM engine is optional — only register if litellm is installed
+try:
+    import openjarvis.engine.litellm  # noqa: F401
+except ImportError:
+    pass
+
 __all__ = [
     "EngineConnectionError",
     "InferenceEngine",

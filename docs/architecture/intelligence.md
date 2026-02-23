@@ -216,6 +216,6 @@ ctx = build_routing_context("```python\ndef hello():\n    pass\n```")
 
 ## Integration with Learning
 
-The `HeuristicRouter` implements the `RouterPolicy` ABC (now defined in `intelligence/_stubs.py`), which means it can be swapped out for a `TraceDrivenPolicy`, `SFTPolicy`, or any other policy via the `RouterPolicyRegistry`. See the [Learning & Traces](learning.md) documentation for details on how trace-driven routing and the broader `LearningPolicy` taxonomy work.
+The `HeuristicRouter` implements the `RouterPolicy` ABC (now defined in `intelligence/_stubs.py`), which means it can be swapped out for a `TraceDrivenPolicy`, `SFTRouterPolicy`, or any other policy via the `RouterPolicyRegistry`. See the [Learning & Traces](learning.md) documentation for details on how trace-driven routing and the broader `LearningPolicy` taxonomy work.
 
 The router is registered as `"heuristic"` in the `RouterPolicyRegistry` and is the default routing policy. Users can switch policies via the `--router` CLI flag or the `learning.default_policy` config setting.

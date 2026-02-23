@@ -27,6 +27,10 @@ _TOOL_ANNOTATIONS: Dict[str, Dict[str, Any]] = {
     "file_read": {"readOnlyHint": True, "destructiveHint": False},
     "web_search": {"readOnlyHint": True, "destructiveHint": False},
     "code_interpreter": {"destructiveHint": True, "readOnlyHint": False},
+    "repl": {"destructiveHint": True, "readOnlyHint": False},
+    "channel_send": {"destructiveHint": True, "readOnlyHint": False},
+    "channel_list": {"readOnlyHint": True, "destructiveHint": False},
+    "channel_status": {"readOnlyHint": True, "destructiveHint": False},
 }
 
 
@@ -86,6 +90,11 @@ class MCPServer:
             _tool_classes.append(CodeInterpreterTool)
         except ImportError:
             pass
+        try:
+            from openjarvis.tools.repl import ReplTool
+            _tool_classes.append(ReplTool)
+        except ImportError:
+            pass
 
         # Storage MCP tools
         try:
@@ -98,6 +107,19 @@ class MCPServer:
             _tool_classes.extend([
                 MemoryStoreTool, MemoryRetrieveTool,
                 MemorySearchTool, MemoryIndexTool,
+            ])
+        except ImportError:
+            pass
+
+        # Channel MCP tools
+        try:
+            from openjarvis.tools.channel_tools import (
+                ChannelListTool,
+                ChannelSendTool,
+                ChannelStatusTool,
+            )
+            _tool_classes.extend([
+                ChannelSendTool, ChannelListTool, ChannelStatusTool,
             ])
         except ImportError:
             pass

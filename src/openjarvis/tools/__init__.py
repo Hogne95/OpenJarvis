@@ -43,12 +43,22 @@ except ImportError:
     pass
 
 try:
+    import openjarvis.tools.repl  # noqa: F401
+except ImportError:
+    pass
+
+try:
     import openjarvis.tools.storage_tools  # noqa: F401
 except ImportError:
     pass
 
 try:
     import openjarvis.tools.mcp_adapter  # noqa: F401
+except ImportError:
+    pass
+
+try:
+    import openjarvis.tools.channel_tools  # noqa: F401
 except ImportError:
     pass
 

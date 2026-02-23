@@ -143,7 +143,7 @@ class TestLlamaCppGenerate:
             return tokens
 
         import asyncio
-        tokens = asyncio.get_event_loop().run_until_complete(collect())
+        tokens = asyncio.run(collect())
         assert tokens == ["Hi", " there"]
 
 

@@ -26,7 +26,6 @@ class _NoCacheStaticFiles(StaticFiles):
     async def __call__(self, scope, receive, send):
         async def _send_with_headers(message):
             if message["type"] == "http.response.start":
-                headers = dict(message.get("headers", []))
                 extra = [
                     (k.encode(), v.encode()) for k, v in _NO_CACHE_HEADERS.items()
                 ]

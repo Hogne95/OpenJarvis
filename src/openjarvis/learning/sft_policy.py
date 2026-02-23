@@ -1,4 +1,9 @@
-"""SFT on traces — learns which model handles which query type best."""
+"""SFT router — learns which model handles which query type best.
+
+Analyses historical traces and builds a ``query_class → model`` routing
+table.  Despite the "SFT" name, no model weights are fine-tuned — this
+is a *trace-driven routing* policy.
+"""
 
 from __future__ import annotations
 
@@ -9,11 +14,13 @@ from openjarvis.learning._stubs import IntelligenceLearningPolicy
 
 
 @LearningRegistry.register("sft")
-class SFTPolicy(IntelligenceLearningPolicy):
-    """SFT on traces: learns which model handles which query type best.
+class SFTRouterPolicy(IntelligenceLearningPolicy):
+    """Trace-driven router that learns query_class → model mappings.
 
-    Reads successful traces, groups by query class, and produces an
-    updated query_class -> model mapping.
+    Reads historical traces, groups by query class (code, math, short,
+    long, general), scores each model via a composite metric (60%
+    outcome + 40% feedback), and produces a routing table that maps
+    query classes to their best-performing model.
     """
 
     def __init__(self, *, min_samples: int = 5) -> None:
@@ -84,4 +91,7 @@ class SFTPolicy(IntelligenceLearningPolicy):
         return dict(self._policy_map)
 
 
-__all__ = ["SFTPolicy"]
+__all__ = ["SFTRouterPolicy"]
+
+# Backward-compat alias
+SFTPolicy = SFTRouterPolicy

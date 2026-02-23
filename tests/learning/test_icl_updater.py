@@ -122,10 +122,10 @@ class TestICLUpdaterPolicy:
         result = policy.update(store)
         assert len(result["examples"]) <= 5
 
-    def test_is_tool_policy(self):
-        from openjarvis.learning._stubs import ToolLearningPolicy
-        assert issubclass(ICLUpdaterPolicy, ToolLearningPolicy)
-        assert ICLUpdaterPolicy.target == "tools"
+    def test_is_agent_policy(self):
+        from openjarvis.learning._stubs import AgentLearningPolicy
+        assert issubclass(ICLUpdaterPolicy, AgentLearningPolicy)
+        assert ICLUpdaterPolicy.target == "agent"
 
     def test_examples_property(self):
         policy = ICLUpdaterPolicy()

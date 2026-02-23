@@ -297,13 +297,155 @@ class TracesConfig:
 
 
 @dataclass(slots=True)
+class TelegramChannelConfig:
+    """Per-channel config for Telegram."""
+
+    bot_token: str = ""
+    allowed_chat_ids: str = ""
+    parse_mode: str = "Markdown"
+
+
+@dataclass(slots=True)
+class DiscordChannelConfig:
+    """Per-channel config for Discord."""
+
+    bot_token: str = ""
+
+
+@dataclass(slots=True)
+class SlackChannelConfig:
+    """Per-channel config for Slack."""
+
+    bot_token: str = ""
+    app_token: str = ""
+
+
+@dataclass(slots=True)
+class WebhookChannelConfig:
+    """Per-channel config for generic webhooks."""
+
+    url: str = ""
+    secret: str = ""
+    method: str = "POST"
+
+
+@dataclass(slots=True)
+class EmailChannelConfig:
+    """Per-channel config for email (SMTP/IMAP)."""
+
+    smtp_host: str = ""
+    smtp_port: int = 587
+    imap_host: str = ""
+    imap_port: int = 993
+    username: str = ""
+    password: str = ""
+    use_tls: bool = True
+
+
+@dataclass(slots=True)
+class WhatsAppChannelConfig:
+    """Per-channel config for WhatsApp Cloud API."""
+
+    access_token: str = ""
+    phone_number_id: str = ""
+
+
+@dataclass(slots=True)
+class SignalChannelConfig:
+    """Per-channel config for Signal (via signal-cli REST API)."""
+
+    api_url: str = ""
+    phone_number: str = ""
+
+
+@dataclass(slots=True)
+class GoogleChatChannelConfig:
+    """Per-channel config for Google Chat webhooks."""
+
+    webhook_url: str = ""
+
+
+@dataclass(slots=True)
+class IRCChannelConfig:
+    """Per-channel config for IRC."""
+
+    server: str = ""
+    port: int = 6667
+    nick: str = ""
+    password: str = ""
+    use_tls: bool = False
+
+
+@dataclass(slots=True)
+class WebChatChannelConfig:
+    """Per-channel config for in-memory webchat."""
+
+    pass
+
+
+@dataclass(slots=True)
+class TeamsChannelConfig:
+    """Per-channel config for Microsoft Teams (Bot Framework)."""
+
+    app_id: str = ""
+    app_password: str = ""
+    service_url: str = ""
+
+
+@dataclass(slots=True)
+class MatrixChannelConfig:
+    """Per-channel config for Matrix."""
+
+    homeserver: str = ""
+    access_token: str = ""
+
+
+@dataclass(slots=True)
+class MattermostChannelConfig:
+    """Per-channel config for Mattermost."""
+
+    url: str = ""
+    token: str = ""
+
+
+@dataclass(slots=True)
+class FeishuChannelConfig:
+    """Per-channel config for Feishu (Lark)."""
+
+    app_id: str = ""
+    app_secret: str = ""
+
+
+@dataclass(slots=True)
+class BlueBubblesChannelConfig:
+    """Per-channel config for BlueBubbles (iMessage bridge)."""
+
+    url: str = ""
+    password: str = ""
+
+
+@dataclass
 class ChannelConfig:
     """Channel messaging settings."""
 
     enabled: bool = False
-    gateway_url: str = "ws://127.0.0.1:18789/ws"
+    default_channel: str = ""
     default_agent: str = "simple"
-    reconnect_interval: float = 5.0
+    telegram: TelegramChannelConfig = field(default_factory=TelegramChannelConfig)
+    discord: DiscordChannelConfig = field(default_factory=DiscordChannelConfig)
+    slack: SlackChannelConfig = field(default_factory=SlackChannelConfig)
+    webhook: WebhookChannelConfig = field(default_factory=WebhookChannelConfig)
+    email: EmailChannelConfig = field(default_factory=EmailChannelConfig)
+    whatsapp: WhatsAppChannelConfig = field(default_factory=WhatsAppChannelConfig)
+    signal: SignalChannelConfig = field(default_factory=SignalChannelConfig)
+    google_chat: GoogleChatChannelConfig = field(default_factory=GoogleChatChannelConfig)
+    irc: IRCChannelConfig = field(default_factory=IRCChannelConfig)
+    webchat: WebChatChannelConfig = field(default_factory=WebChatChannelConfig)
+    teams: TeamsChannelConfig = field(default_factory=TeamsChannelConfig)
+    matrix: MatrixChannelConfig = field(default_factory=MatrixChannelConfig)
+    mattermost: MattermostChannelConfig = field(default_factory=MattermostChannelConfig)
+    feishu: FeishuChannelConfig = field(default_factory=FeishuChannelConfig)
+    bluebubbles: BlueBubblesChannelConfig = field(default_factory=BlueBubblesChannelConfig)
 
 
 @dataclass(slots=True)
@@ -379,7 +521,7 @@ def load_config(path: Optional[Path] = None) -> JarvisConfig:
         # Simple top-level sections
         simple_sections = (
             "engine", "intelligence", "learning",
-            "agent", "server", "telemetry", "traces", "channel", "security",
+            "agent", "server", "telemetry", "traces", "security",
         )
         for section_name in simple_sections:
             if section_name in data:
@@ -388,6 +530,22 @@ def load_config(path: Optional[Path] = None) -> JarvisConfig:
         # Memory: accept [memory] (old) → maps to tools.storage
         if "memory" in data:
             _apply_toml_section(cfg.tools.storage, data["memory"])
+
+        # [channel] with nested per-channel sub-configs
+        if "channel" in data:
+            ch_data = data["channel"]
+            # Top-level channel keys (enabled, default_channel, etc.)
+            for key, value in ch_data.items():
+                if not isinstance(value, dict) and hasattr(cfg.channel, key):
+                    setattr(cfg.channel, key, value)
+            # Nested per-channel configs
+            for sub in (
+                "telegram", "discord", "slack", "webhook", "email",
+                "whatsapp", "signal", "google_chat", "irc", "webchat",
+                "teams", "matrix", "mattermost", "feishu", "bluebubbles",
+            ):
+                if sub in ch_data and isinstance(ch_data[sub], dict):
+                    _apply_toml_section(getattr(cfg.channel, sub), ch_data[sub])
 
         # Tools: accept [tools] and nested [tools.storage], [tools.mcp]
         if "tools" in data:
@@ -462,9 +620,56 @@ enabled = false
 
 [channel]
 enabled = false
-gateway_url = "ws://127.0.0.1:18789/ws"
 default_agent = "simple"
-reconnect_interval = 5.0
+
+# [channel.telegram]
+# bot_token = ""  # Or set TELEGRAM_BOT_TOKEN env var
+
+# [channel.discord]
+# bot_token = ""  # Or set DISCORD_BOT_TOKEN env var
+
+# [channel.slack]
+# bot_token = ""  # Or set SLACK_BOT_TOKEN env var
+
+# [channel.webhook]
+# url = ""
+
+# [channel.whatsapp]
+# access_token = ""      # Or set WHATSAPP_ACCESS_TOKEN env var
+# phone_number_id = ""   # Or set WHATSAPP_PHONE_NUMBER_ID env var
+
+# [channel.signal]
+# api_url = ""            # signal-cli REST API URL
+# phone_number = ""       # Or set SIGNAL_PHONE_NUMBER env var
+
+# [channel.google_chat]
+# webhook_url = ""        # Or set GOOGLE_CHAT_WEBHOOK_URL env var
+
+# [channel.irc]
+# server = ""
+# port = 6667
+# nick = ""
+# use_tls = false
+
+# [channel.teams]
+# app_id = ""             # Or set TEAMS_APP_ID env var
+# app_password = ""       # Or set TEAMS_APP_PASSWORD env var
+
+# [channel.matrix]
+# homeserver = ""         # Or set MATRIX_HOMESERVER env var
+# access_token = ""       # Or set MATRIX_ACCESS_TOKEN env var
+
+# [channel.mattermost]
+# url = ""                # Or set MATTERMOST_URL env var
+# token = ""              # Or set MATTERMOST_TOKEN env var
+
+# [channel.feishu]
+# app_id = ""             # Or set FEISHU_APP_ID env var
+# app_secret = ""         # Or set FEISHU_APP_SECRET env var
+
+# [channel.bluebubbles]
+# url = ""                # Or set BLUEBUBBLES_URL env var
+# password = ""           # Or set BLUEBUBBLES_PASSWORD env var
 
 [security]
 enabled = true
@@ -479,23 +684,38 @@ enforce_tool_confirmation = true
 
 __all__ = [
     "AgentConfig",
+    "BlueBubblesChannelConfig",
     "ChannelConfig",
     "DEFAULT_CONFIG_DIR",
     "DEFAULT_CONFIG_PATH",
+    "DiscordChannelConfig",
+    "EmailChannelConfig",
     "EngineConfig",
+    "FeishuChannelConfig",
+    "GoogleChatChannelConfig",
     "GpuInfo",
     "HardwareInfo",
+    "IRCChannelConfig",
     "IntelligenceConfig",
     "JarvisConfig",
     "LearningConfig",
     "MCPConfig",
+    "MatrixChannelConfig",
+    "MattermostChannelConfig",
     "MemoryConfig",
     "SecurityConfig",
     "ServerConfig",
+    "SignalChannelConfig",
+    "SlackChannelConfig",
     "StorageConfig",
+    "TeamsChannelConfig",
+    "TelegramChannelConfig",
     "TelemetryConfig",
     "ToolsConfig",
     "TracesConfig",
+    "WebChatChannelConfig",
+    "WebhookChannelConfig",
+    "WhatsAppChannelConfig",
     "detect_hardware",
     "generate_default_toml",
     "load_config",

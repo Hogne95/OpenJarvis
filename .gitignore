@@ -27,7 +27,9 @@ env/
 htmlcov/
 
 # uv
-uv.lock
+# Note: uv.lock is intentionally tracked — it pins all transitive deps for reproducibility.
+# Uncomment the line below only if you deliberately choose not to commit the lock file.
+# uv.lock
 
 # OS
 .DS_Store

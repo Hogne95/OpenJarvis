@@ -1,7 +1,7 @@
 """ABC for agent implementations.
 
 Adapted from IPW's ``BaseAgent`` at ``src/agents/base.py``.
-Phase 3 will provide concrete implementations (SimpleAgent, OpenClawAgent, etc.).
+Phase 3 will provide concrete implementations (SimpleAgent, OrchestratorAgent, etc.).
 """
 
 from __future__ import annotations

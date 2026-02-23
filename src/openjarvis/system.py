@@ -26,6 +26,7 @@ class JarvisSystem:
     tools: List[BaseTool] = field(default_factory=list)
     tool_executor: Optional[ToolExecutor] = None
     memory_backend: Optional[Any] = None  # MemoryBackend
+    channel_backend: Optional[Any] = None  # BaseChannel
     router: Optional[Any] = None  # RouterPolicy
     mcp_server: Optional[Any] = None  # MCPServer
     telemetry_store: Optional[Any] = None
@@ -117,6 +118,9 @@ class JarvisSystem:
             "max_tokens": max_tokens,
         }
         if agent_name == "orchestrator":
+            agent_kwargs["tools"] = agent_tools
+            agent_kwargs["max_turns"] = self.config.agent.max_turns
+        elif agent_name == "rlm":
             agent_kwargs["tools"] = agent_tools
             agent_kwargs["max_turns"] = self.config.agent.max_turns
 
@@ -263,8 +267,13 @@ class SystemBuilder:
         # Resolve memory backend
         memory_backend = self._resolve_memory(config)
 
+        # Resolve channel backend
+        channel_backend = self._resolve_channel(config, bus)
+
         # Resolve tools
-        tool_list = self._resolve_tools(config, engine, model, memory_backend)
+        tool_list = self._resolve_tools(
+            config, engine, model, memory_backend, channel_backend,
+        )
 
         # Build tool executor
         tool_executor = ToolExecutor(tool_list, bus) if tool_list else None
@@ -282,6 +291,7 @@ class SystemBuilder:
             tools=tool_list,
             tool_executor=tool_executor,
             memory_backend=memory_backend,
+            channel_backend=channel_backend,
             telemetry_store=telemetry_store,
         )
 
@@ -369,7 +379,125 @@ class SystemBuilder:
             pass
         return None
 
-    def _resolve_tools(self, config, engine, model, memory_backend):
+    def _resolve_channel(self, config, bus):
+        """Resolve channel backend from config."""
+        if not config.channel.enabled:
+            return None
+        try:
+            import openjarvis.channels  # noqa: F401 -- trigger registration
+            from openjarvis.core.registry import ChannelRegistry
+
+            key = config.channel.default_channel
+            if not key:
+                return None
+            if not ChannelRegistry.contains(key):
+                return None
+
+            kwargs: Dict[str, Any] = {"bus": bus}
+            if key == "telegram":
+                tc = config.channel.telegram
+                if tc.bot_token:
+                    kwargs["bot_token"] = tc.bot_token
+                if tc.parse_mode:
+                    kwargs["parse_mode"] = tc.parse_mode
+            elif key == "discord":
+                dc = config.channel.discord
+                if dc.bot_token:
+                    kwargs["bot_token"] = dc.bot_token
+            elif key == "slack":
+                sc = config.channel.slack
+                if sc.bot_token:
+                    kwargs["bot_token"] = sc.bot_token
+                if sc.app_token:
+                    kwargs["app_token"] = sc.app_token
+            elif key == "webhook":
+                wc = config.channel.webhook
+                if wc.url:
+                    kwargs["url"] = wc.url
+                if wc.secret:
+                    kwargs["secret"] = wc.secret
+                if wc.method:
+                    kwargs["method"] = wc.method
+            elif key == "email":
+                ec = config.channel.email
+                if ec.smtp_host:
+                    kwargs["smtp_host"] = ec.smtp_host
+                kwargs["smtp_port"] = ec.smtp_port
+                if ec.imap_host:
+                    kwargs["imap_host"] = ec.imap_host
+                kwargs["imap_port"] = ec.imap_port
+                if ec.username:
+                    kwargs["username"] = ec.username
+                if ec.password:
+                    kwargs["password"] = ec.password
+                kwargs["use_tls"] = ec.use_tls
+            elif key == "whatsapp":
+                wac = config.channel.whatsapp
+                if wac.access_token:
+                    kwargs["access_token"] = wac.access_token
+                if wac.phone_number_id:
+                    kwargs["phone_number_id"] = wac.phone_number_id
+            elif key == "signal":
+                sgc = config.channel.signal
+                if sgc.api_url:
+                    kwargs["api_url"] = sgc.api_url
+                if sgc.phone_number:
+                    kwargs["phone_number"] = sgc.phone_number
+            elif key == "google_chat":
+                gcc = config.channel.google_chat
+                if gcc.webhook_url:
+                    kwargs["webhook_url"] = gcc.webhook_url
+            elif key == "irc":
+                ic = config.channel.irc
+                if ic.server:
+                    kwargs["server"] = ic.server
+                kwargs["port"] = ic.port
+                if ic.nick:
+                    kwargs["nick"] = ic.nick
+                if ic.password:
+                    kwargs["password"] = ic.password
+                kwargs["use_tls"] = ic.use_tls
+            elif key == "webchat":
+                pass  # no config needed
+            elif key == "teams":
+                tmc = config.channel.teams
+                if tmc.app_id:
+                    kwargs["app_id"] = tmc.app_id
+                if tmc.app_password:
+                    kwargs["app_password"] = tmc.app_password
+                if tmc.service_url:
+                    kwargs["service_url"] = tmc.service_url
+            elif key == "matrix":
+                mc = config.channel.matrix
+                if mc.homeserver:
+                    kwargs["homeserver"] = mc.homeserver
+                if mc.access_token:
+                    kwargs["access_token"] = mc.access_token
+            elif key == "mattermost":
+                mmc = config.channel.mattermost
+                if mmc.url:
+                    kwargs["url"] = mmc.url
+                if mmc.token:
+                    kwargs["token"] = mmc.token
+            elif key == "feishu":
+                fc = config.channel.feishu
+                if fc.app_id:
+                    kwargs["app_id"] = fc.app_id
+                if fc.app_secret:
+                    kwargs["app_secret"] = fc.app_secret
+            elif key == "bluebubbles":
+                bbc = config.channel.bluebubbles
+                if bbc.url:
+                    kwargs["url"] = bbc.url
+                if bbc.password:
+                    kwargs["password"] = bbc.password
+
+            return ChannelRegistry.create(key, **kwargs)
+        except Exception:
+            return None
+
+    def _resolve_tools(self, config, engine, model, memory_backend,
+                       channel_backend=None):
         """Resolve tool instances."""
         tool_names_str = self._tool_names
         if tool_names_str is None:
@@ -402,6 +530,17 @@ class SystemBuilder:
 
                     if ToolRegistry.contains(name):
                         tool = ToolRegistry.create(name, backend=memory_backend)
+                        tools.append(tool)
+                elif name in (
+                    "channel_send",
+                    "channel_list",
+                    "channel_status",
+                ):
+                    import openjarvis.tools.channel_tools  # noqa: F401
+                    from openjarvis.core.registry import ToolRegistry
+
+                    if ToolRegistry.contains(name):
+                        tool = ToolRegistry.create(name, channel=channel_backend)
                         tools.append(tool)
                 else:
                     from openjarvis.core.registry import ToolRegistry

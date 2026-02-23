@@ -1,4 +1,4 @@
-"""Channel abstraction for multi-platform messaging via OpenClaw."""
+"""Channel abstraction for multi-platform messaging."""
 
 from openjarvis.channels._stubs import (
     BaseChannel,
@@ -9,7 +9,77 @@ from openjarvis.channels._stubs import (
 
 # Trigger registration of built-in channels
 try:
-    from openjarvis.channels.openclaw_bridge import OpenClawChannelBridge  # noqa: F401
+    import openjarvis.channels.telegram  # noqa: F401
+except ImportError:
+    pass
+
+try:
+    import openjarvis.channels.discord_channel  # noqa: F401
+except ImportError:
+    pass
+
+try:
+    import openjarvis.channels.slack  # noqa: F401
+except ImportError:
+    pass
+
+try:
+    import openjarvis.channels.webhook  # noqa: F401
+except ImportError:
+    pass
+
+try:
+    import openjarvis.channels.email_channel  # noqa: F401
+except ImportError:
+    pass
+
+try:
+    import openjarvis.channels.whatsapp  # noqa: F401
+except ImportError:
+    pass
+
+try:
+    import openjarvis.channels.signal_channel  # noqa: F401
+except ImportError:
+    pass
+
+try:
+    import openjarvis.channels.google_chat  # noqa: F401
+except ImportError:
+    pass
+
+try:
+    import openjarvis.channels.irc_channel  # noqa: F401
+except ImportError:
+    pass
+
+try:
+    import openjarvis.channels.webchat  # noqa: F401
+except ImportError:
+    pass
+
+try:
+    import openjarvis.channels.teams  # noqa: F401
+except ImportError:
+    pass
+
+try:
+    import openjarvis.channels.matrix_channel  # noqa: F401
+except ImportError:
+    pass
+
+try:
+    import openjarvis.channels.mattermost  # noqa: F401
+except ImportError:
+    pass
+
+try:
+    import openjarvis.channels.feishu  # noqa: F401
+except ImportError:
+    pass
+
+try:
+    import openjarvis.channels.bluebubbles  # noqa: F401
 except ImportError:
     pass
 

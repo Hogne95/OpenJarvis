@@ -5,16 +5,17 @@ from __future__ import annotations
 from typing import Any, Dict, List
 
 from openjarvis.core.registry import LearningRegistry
-from openjarvis.learning._stubs import ToolLearningPolicy
+from openjarvis.learning._stubs import AgentLearningPolicy
 
 
 @LearningRegistry.register("icl_updater")
-class ICLUpdaterPolicy(ToolLearningPolicy):
+class ICLUpdaterPolicy(AgentLearningPolicy):
     """Updates in-context examples and discovers skills from traces.
 
     Analyzes traces for successful tool call patterns, extracts
     in-context learning examples, and discovers reusable multi-tool
-    sequences ("skills").
+    sequences ("skills").  This updates *agent* logic (ICL examples
+    and tool-use strategies), not tool implementations themselves.
     """
 
     def __init__(

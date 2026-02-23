@@ -8,7 +8,6 @@ from openjarvis.learning._stubs import (
     AgentLearningPolicy,
     IntelligenceLearningPolicy,
     LearningPolicy,
-    ToolLearningPolicy,
 )
 
 
@@ -25,20 +24,12 @@ class TestLearningPolicyABC:
         with pytest.raises(TypeError):
             AgentLearningPolicy()
 
-    def test_cannot_instantiate_tools(self):
-        with pytest.raises(TypeError):
-            ToolLearningPolicy()
-
     def test_target_intelligence(self):
         assert IntelligenceLearningPolicy.target == "intelligence"
 
     def test_target_agent(self):
         assert AgentLearningPolicy.target == "agent"
 
-    def test_target_tools(self):
-        assert ToolLearningPolicy.target == "tools"
-
     def test_hierarchy(self):
         assert issubclass(IntelligenceLearningPolicy, LearningPolicy)
         assert issubclass(AgentLearningPolicy, LearningPolicy)
-        assert issubclass(ToolLearningPolicy, LearningPolicy)

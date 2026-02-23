@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Optional
 
-from openjarvis.learning.sft_policy import SFTPolicy
+from openjarvis.learning.sft_policy import SFTRouterPolicy
 
 
 @dataclass
@@ -26,9 +26,9 @@ class _MockTraceStore:
         return self._traces
 
 
-class TestSFTPolicy:
+class TestSFTRouterPolicy:
     def test_empty_traces(self):
-        policy = SFTPolicy()
+        policy = SFTRouterPolicy()
         store = _MockTraceStore([])
         result = policy.update(store)
         assert result["updated"] is False
@@ -42,7 +42,7 @@ class TestSFTPolicy:
             )
             for i in range(6)
         ]
-        policy = SFTPolicy(min_samples=5)
+        policy = SFTRouterPolicy(min_samples=5)
         store = _MockTraceStore(traces)
         result = policy.update(store)
         assert result["updated"] is True
@@ -54,29 +54,29 @@ class TestSFTPolicy:
             _MockTrace(query="def foo(): pass", model="code-model", outcome="success")
             for _ in range(3)
         ]
-        policy = SFTPolicy(min_samples=5)
+        policy = SFTRouterPolicy(min_samples=5)
         store = _MockTraceStore(traces)
         result = policy.update(store)
         assert result["updated"] is False
 
     def test_classify_code(self):
-        assert SFTPolicy._classify_query("def hello(): pass") == "code"
+        assert SFTRouterPolicy._classify_query("def hello(): pass") == "code"
 
     def test_classify_math(self):
-        assert SFTPolicy._classify_query("solve the integral") == "math"
+        assert SFTRouterPolicy._classify_query("solve the integral") == "math"
 
     def test_classify_short(self):
-        assert SFTPolicy._classify_query("hello world") == "short"
+        assert SFTRouterPolicy._classify_query("hello world") == "short"
 
     def test_classify_general(self):
         query = "tell me about " + " ".join(["something"] * 20)
-        assert SFTPolicy._classify_query(query) == "general"
+        assert SFTRouterPolicy._classify_query(query) == "general"
 
     def test_policy_map_property(self):
-        policy = SFTPolicy()
+        policy = SFTRouterPolicy()
         assert policy.policy_map == {}
 
     def test_is_intelligence_policy(self):
         from openjarvis.learning._stubs import IntelligenceLearningPolicy
-        assert issubclass(SFTPolicy, IntelligenceLearningPolicy)
-        assert SFTPolicy.target == "intelligence"
+        assert issubclass(SFTRouterPolicy, IntelligenceLearningPolicy)
+        assert SFTRouterPolicy.target == "intelligence"

@@ -1,7 +1,18 @@
-"""OrchestratorAgent — multi-turn agent with tool-calling loop."""
+"""OrchestratorAgent — multi-turn agent with tool-calling loop.
+
+Supports two modes:
+
+- **function_calling** (default): Uses OpenAI-format tool definitions and
+  parses ``tool_calls`` from the engine response.
+- **structured**: Uses a THOUGHT/TOOL/INPUT/FINAL_ANSWER text format
+  (like ReAct) with a canonical system prompt from the orchestrator
+  prompt registry.  This is the format used by the SFT/GRPO training
+  pipelines, making the Orchestrator a distinctive trainable agent type.
+"""
 
 from __future__ import annotations
 
+import re
 from typing import Any, List, Optional
 
 from openjarvis.agents._stubs import AgentContext, AgentResult, BaseAgent
@@ -21,6 +32,11 @@ class OrchestratorAgent(BaseAgent):
     2. If the response contains tool_calls, execute them and loop.
     3. If no tool_calls, return the final answer.
     4. Stop after ``max_turns`` iterations.
+
+    In **structured** mode the agent instead uses a
+    ``THOUGHT: / TOOL: / INPUT: / FINAL_ANSWER:`` text protocol
+    identical to the format used by the orchestrator SFT/GRPO
+    training pipelines.
     """
 
     agent_id = "orchestrator"
@@ -35,6 +51,8 @@ class OrchestratorAgent(BaseAgent):
         max_turns: int = 10,
         temperature: float = 0.7,
         max_tokens: int = 1024,
+        mode: str = "function_calling",
+        system_prompt: Optional[str] = None,
     ) -> None:
         self._engine = engine
         self._model = model
@@ -44,8 +62,182 @@ class OrchestratorAgent(BaseAgent):
         self._max_turns = max_turns
         self._temperature = temperature
         self._max_tokens = max_tokens
+        self._mode = mode
+        self._system_prompt = system_prompt
 
     def run(
+        self,
+        input: str,
+        context: Optional[AgentContext] = None,
+        **kwargs: Any,
+    ) -> AgentResult:
+        if self._mode == "structured":
+            return self._run_structured(input, context, **kwargs)
+        return self._run_function_calling(input, context, **kwargs)
+
+    # ------------------------------------------------------------------
+    # Structured mode (THOUGHT/TOOL/INPUT/FINAL_ANSWER)
+    # ------------------------------------------------------------------
+
+    def _run_structured(
+        self,
+        input: str,
+        context: Optional[AgentContext] = None,
+        **kwargs: Any,
+    ) -> AgentResult:
+        bus = self._bus
+
+        if bus:
+            bus.publish(
+                EventType.AGENT_TURN_START,
+                {"agent": self.agent_id, "input": input},
+            )
+
+        # Build system prompt
+        if self._system_prompt:
+            sys_prompt = self._system_prompt
+        else:
+            from openjarvis.learning.orchestrator.prompt_registry import (
+                build_system_prompt,
+            )
+            tool_names = [t.spec.name for t in self._tools]
+            sys_prompt = build_system_prompt(tool_names)
+
+        messages: list[Message] = [
+            Message(role=Role.SYSTEM, content=sys_prompt),
+        ]
+        if context and context.conversation.messages:
+            messages.extend(context.conversation.messages)
+        messages.append(Message(role=Role.USER, content=input))
+
+        all_tool_results: list[ToolResult] = []
+        turns = 0
+
+        for _turn in range(self._max_turns):
+            turns += 1
+
+            result = self._engine.generate(
+                messages,
+                model=self._model,
+                temperature=self._temperature,
+                max_tokens=self._max_tokens,
+            )
+            content = result.get("content", "")
+
+            parsed = self._parse_structured_response(content)
+
+            # FINAL_ANSWER → done
+            if parsed["final_answer"]:
+                if bus:
+                    bus.publish(
+                        EventType.AGENT_TURN_END,
+                        {"agent": self.agent_id, "turns": turns},
+                    )
+                return AgentResult(
+                    content=parsed["final_answer"],
+                    tool_results=all_tool_results,
+                    turns=turns,
+                )
+
+            # TOOL → execute
+            if parsed["tool"]:
+                messages.append(
+                    Message(role=Role.ASSISTANT, content=content)
+                )
+
+                tool_call = ToolCall(
+                    id=f"orch_{turns}",
+                    name=parsed["tool"],
+                    arguments=parsed["input"] or "{}",
+                )
+                tool_result = self._executor.execute(tool_call)
+                all_tool_results.append(tool_result)
+
+                observation = (
+                    f"Observation: {tool_result.content}"
+                )
+                messages.append(
+                    Message(role=Role.USER, content=observation)
+                )
+                continue
+
+            # Neither → treat content as final answer
+            if bus:
+                bus.publish(
+                    EventType.AGENT_TURN_END,
+                    {"agent": self.agent_id, "turns": turns},
+                )
+            return AgentResult(
+                content=content,
+                tool_results=all_tool_results,
+                turns=turns,
+            )
+
+        # Max turns exceeded
+        if bus:
+            bus.publish(
+                EventType.AGENT_TURN_END,
+                {
+                    "agent": self.agent_id,
+                    "turns": turns,
+                    "max_turns_exceeded": True,
+                },
+            )
+        return AgentResult(
+            content="Maximum turns reached without a final answer.",
+            tool_results=all_tool_results,
+            turns=turns,
+            metadata={"max_turns_exceeded": True},
+        )
+
+    @staticmethod
+    def _parse_structured_response(text: str) -> dict:
+        """Parse THOUGHT/TOOL/INPUT/FINAL_ANSWER from model output."""
+        result = {
+            "thought": "",
+            "tool": "",
+            "input": "",
+            "final_answer": "",
+        }
+
+        thought_match = re.search(
+            r"THOUGHT:\s*(.+?)(?=\nTOOL:|\nFINAL[_ ]?ANSWER:|\Z)",
+            text,
+            re.DOTALL | re.IGNORECASE,
+        )
+        if thought_match:
+            result["thought"] = thought_match.group(1).strip()
+
+        final_match = re.search(
+            r"FINAL[_ ]?ANSWER:\s*(.+)",
+            text,
+            re.DOTALL | re.IGNORECASE,
+        )
+        if final_match:
+            result["final_answer"] = final_match.group(1).strip()
+            return result
+
+        tool_match = re.search(
+            r"TOOL:\s*(.+)", text, re.IGNORECASE
+        )
+        if tool_match:
+            result["tool"] = tool_match.group(1).strip()
+
+        input_match = re.search(
+            r"INPUT:\s*(.+?)(?=\nTHOUGHT:|\nTOOL:|\nFINAL|\Z)",
+            text,
+            re.DOTALL | re.IGNORECASE,
+        )
+        if input_match:
+            result["input"] = input_match.group(1).strip()
+
+        return result
+
+    # ------------------------------------------------------------------
+    # Function-calling mode (original behaviour)
+    # ------------------------------------------------------------------
+
+    def _run_function_calling(
         self,
         input: str,
         context: Optional[AgentContext] = None,
@@ -128,7 +320,6 @@ class OrchestratorAgent(BaseAgent):
                 all_tool_results.append(tool_result)
 
                 # Append tool response message
-                # Serialize arguments for the content
                 messages.append(Message(
                     role=Role.TOOL,
                     content=tool_result.content,

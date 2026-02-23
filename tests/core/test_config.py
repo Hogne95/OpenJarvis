@@ -127,9 +127,7 @@ class TestChannelConfig:
     def test_channel_config_defaults(self) -> None:
         cc = ChannelConfig()
         assert cc.enabled is False
-        assert cc.gateway_url == "ws://127.0.0.1:18789/ws"
         assert cc.default_agent == "simple"
-        assert cc.reconnect_interval == 5.0
 
     def test_channel_config_on_jarvis_config(self) -> None:
         cfg = JarvisConfig()
@@ -138,11 +136,11 @@ class TestChannelConfig:
     def test_channel_config_loads_from_toml(self, tmp_path: Path) -> None:
         toml_file = tmp_path / "config.toml"
         toml_file.write_text(
-            '[channel]\nenabled = true\ngateway_url = "ws://custom:9999/ws"\n'
+            '[channel]\nenabled = true\ndefault_channel = "telegram"\n'
         )
         cfg = load_config(toml_file)
         assert cfg.channel.enabled is True
-        assert cfg.channel.gateway_url == "ws://custom:9999/ws"
+        assert cfg.channel.default_channel == "telegram"
 
     def test_channel_config_in_default_toml(self) -> None:
         output = generate_default_toml(HardwareInfo())

@@ -1,4 +1,8 @@
-"""Tests for /v1/channels endpoints."""
+"""Tests for /v1/channels endpoints.
+
+Requires the ``[server]`` optional extra (fastapi, uvicorn, pydantic).
+Skipped automatically when those packages are not installed.
+"""
 
 from __future__ import annotations
 
@@ -6,7 +10,9 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from openjarvis.channels._stubs import ChannelStatus
+pytest.importorskip("fastapi", reason="openjarvis[server] not installed")
+
+from openjarvis.channels._stubs import ChannelStatus  # noqa: E402
 
 
 @pytest.fixture

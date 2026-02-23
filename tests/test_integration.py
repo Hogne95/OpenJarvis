@@ -559,59 +559,6 @@ class TestBenchmarkSuiteRunAll:
             assert "benchmark_name" in obj
 
 
-class TestOpenClawProtocolRoundtrip:
-    """OpenClaw protocol serialize/deserialize roundtrip."""
-
-    def test_roundtrip(self):
-        from openjarvis.agents.openclaw_protocol import (
-            MessageType,
-            ProtocolMessage,
-            deserialize,
-            serialize,
-        )
-
-        msg = ProtocolMessage(
-            type=MessageType.QUERY,
-            content="integration test",
-            metadata={"source": "test"},
-        )
-        line = serialize(msg)
-        restored = deserialize(line)
-        assert restored.type == MessageType.QUERY
-        assert restored.content == "integration test"
-
-
-class TestOpenClawAgentE2E:
-    """OpenClawAgent runs with mock transport end-to-end."""
-
-    def test_agent_e2e(self):
-        from openjarvis.agents._stubs import AgentResult
-        from openjarvis.agents.openclaw import OpenClawAgent
-        from openjarvis.agents.openclaw_protocol import MessageType, ProtocolMessage
-        from openjarvis.agents.openclaw_transport import OpenClawTransport
-        from openjarvis.core.registry import AgentRegistry
-
-        class _MockTransport(OpenClawTransport):
-            def send(self, msg):
-                return ProtocolMessage(
-                    type=MessageType.RESPONSE,
-                    content="E2E response",
-                )
-
-            def health(self):
-                return True
-
-            def close(self):
-                pass
-
-        if not AgentRegistry.contains("openclaw"):
-            AgentRegistry.register_value("openclaw", OpenClawAgent)
-        agent = OpenClawAgent(transport=_MockTransport())
-        result = agent.run("Integration test query")
-        assert isinstance(result, AgentResult)
-        assert result.content == "E2E response"
-
-
 class TestFullPipeline:
     """Full pipeline: SDK → agent → engine → telemetry."""
 

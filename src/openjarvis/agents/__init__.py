@@ -21,17 +21,17 @@ except ImportError:
     pass
 
 try:
-    import openjarvis.agents.openclaw  # noqa: F401
-except ImportError:
-    pass
-
-try:
     import openjarvis.agents.react  # noqa: F401
 except ImportError:
     pass
 
 try:
     import openjarvis.agents.openhands  # noqa: F401
+except ImportError:
+    pass
+
+try:
+    import openjarvis.agents.rlm  # noqa: F401
 except ImportError:
     pass
 

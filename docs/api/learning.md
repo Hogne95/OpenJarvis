@@ -39,8 +39,7 @@ The learning system defines a hierarchy of learning policy ABCs:
 
 - **`LearningPolicy`** -- base ABC for all learning policies
 - **`IntelligenceLearningPolicy`** -- specialization for model routing decisions
-- **`AgentLearningPolicy`** -- specialization for agent behavior advice
-- **`ToolLearningPolicy`** -- specialization for tool selection/configuration
+- **`AgentLearningPolicy`** -- specialization for agent behavior advice (ICL examples, tool-use strategies)
 
 ---
 
@@ -59,9 +58,9 @@ The learning system defines a hierarchy of learning policy ABCs:
     options:
       show_source: true
 
-### SFTPolicy
+### SFTRouterPolicy
 
-::: openjarvis.learning.sft_policy.SFTPolicy
+::: openjarvis.learning.sft_policy.SFTRouterPolicy
     options:
       show_source: true
       members_order: source
