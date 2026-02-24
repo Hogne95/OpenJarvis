@@ -62,7 +62,7 @@ Each engine is configured via its own sub-section in `config.toml` (e.g., `[engi
 
 ### Agentic Logic
 
-The Agentic Logic pillar implements **pluggable agents** that handle queries with varying levels of sophistication. `SimpleAgent` provides single-turn query-to-response without tools. `OrchestratorAgent` implements a multi-turn tool-calling loop where the LLM can invoke tools like `calculator`, `think`, `retrieval`, `llm`, and `file_read`, with results fed back for further processing. `OpenClawAgent` communicates with external OpenClaw servers via HTTP or subprocess transport.
+The Agentic Logic pillar implements **pluggable agents** that handle queries with varying levels of sophistication. The agent hierarchy is organized around `BaseAgent` (ABC with concrete helpers) and `ToolUsingAgent` (intermediate base for agents that accept tools, with `accepts_tools = True`). Seven agent types are available: `SimpleAgent` (single-turn, no tools), `OrchestratorAgent` (multi-turn tool-calling loop with function_calling and structured modes), `NativeReActAgent` (Thought-Action-Observation loop), `NativeOpenHandsAgent` (CodeAct-style code execution), `RLMAgent` (recursive LM with persistent REPL), `OpenHandsAgent` (wraps real `openhands-sdk`), and `OpenClawAgent` (external agent via HTTP or subprocess transport).
 
 Agent behavior is configured through `[agent]` in `config.toml`, including the default agent, turn limits, tool list, optional system prompt, and the `context_from_memory` flag (previously `context_injection`) that controls automatic memory context injection. All agents implement the `BaseAgent` ABC with a `run()` method, and are registered via `@AgentRegistry.register("name")`.
 
@@ -152,11 +152,15 @@ src/openjarvis/
         cloud.py            Cloud backend (OpenAI, Anthropic, Google SDKs)
 
     agents/             Agentic Logic pillar -- pluggable agents
-        _stubs.py           BaseAgent ABC, AgentContext, AgentResult
+        _stubs.py           BaseAgent ABC, ToolUsingAgent, AgentContext, AgentResult
         simple.py           SimpleAgent (single-turn, no tools)
-        orchestrator.py     OrchestratorAgent (multi-turn tool loop)
+        orchestrator.py     OrchestratorAgent (multi-turn tool loop, function_calling + structured)
+        native_react.py     NativeReActAgent (Thought-Action-Observation loop)
+        native_openhands.py NativeOpenHandsAgent (CodeAct-style code execution)
+        rlm.py              RLMAgent (recursive LM with persistent REPL)
+        openhands.py        OpenHandsAgent (wraps real openhands-sdk)
+        react.py            Backward-compat shim (re-exports NativeReActAgent as ReActAgent)
         openclaw.py         OpenClawAgent (HTTP/subprocess transport)
-        custom.py           CustomAgent (template for user-defined agents)
         openclaw_protocol.py  Wire protocol (MessageType, serialize/deserialize)
         openclaw_transport.py Transport ABC, HttpTransport, SubprocessTransport
         openclaw_plugin.py  ProviderPlugin, MemorySearchManager

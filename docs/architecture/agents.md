@@ -1,16 +1,27 @@
 # Agentic Logic Pillar
 
-The Agentic Logic pillar provides **pluggable agents** that handle queries with varying levels of sophistication -- from simple single-turn responses to multi-turn tool-calling loops and external agent communication.
+The Agentic Logic pillar provides **pluggable agents** that handle queries with varying levels of sophistication -- from simple single-turn responses to multi-turn tool-calling loops, ReAct-style reasoning, CodeAct code execution, recursive decomposition, and external agent communication.
 
 ---
 
 ## BaseAgent ABC
 
-All agents implement the `BaseAgent` abstract base class:
+All agents implement the `BaseAgent` abstract base class, which provides both the `run()` contract and concrete helper methods that eliminate boilerplate in subclasses:
 
 ```python
 class BaseAgent(ABC):
     agent_id: str
+    accepts_tools: bool = False  # overridden by ToolUsingAgent
+
+    def __init__(
+        self,
+        engine: InferenceEngine,
+        model: str,
+        *,
+        bus: Optional[EventBus] = None,
+        temperature: float = 0.7,
+        max_tokens: int = 1024,
+    ) -> None: ...
 
     @abstractmethod
     def run(
@@ -21,6 +32,23 @@ class BaseAgent(ABC):
     ) -> AgentResult:
         """Execute the agent on *input* and return an AgentResult."""
 ```
+
+### Class Attribute: `accepts_tools`
+
+The `accepts_tools` class attribute (default `False`) enables the CLI and SDK to auto-detect which agents support tool-passing. Agents that set `accepts_tools = True` can receive `--tools` on the CLI and `tools=` in the SDK.
+
+### Concrete Helper Methods
+
+`BaseAgent` provides five concrete helpers that subclasses use to avoid duplicating common logic:
+
+| Helper | Purpose |
+|--------|---------|
+| `_emit_turn_start(input)` | Publish `AGENT_TURN_START` on the event bus |
+| `_emit_turn_end(**data)` | Publish `AGENT_TURN_END` on the event bus |
+| `_build_messages(input, context, *, system_prompt)` | Assemble the message list from optional system prompt, conversation context, and user input |
+| `_generate(messages, **extra_kwargs)` | Call `engine.generate()` with stored defaults (model, temperature, max_tokens) |
+| `_max_turns_result(tool_results, turns, content)` | Build the standard `AgentResult` for when `max_turns` is exceeded |
+| `_strip_think_tags(text)` | Remove `<think>...</think>` blocks from model output (static method) |
 
 ### The `run()` Contract
 
@@ -52,13 +80,42 @@ class AgentResult:
 
 ---
 
+## ToolUsingAgent
+
+`ToolUsingAgent` is an intermediate base class for agents that accept and use tools. It extends `BaseAgent` with:
+
+- **`accepts_tools = True`** -- Enables CLI/SDK tool introspection
+- **`ToolExecutor`** -- Initialized from the provided tool list, handles dispatch with JSON argument parsing, latency tracking, and event bus integration
+- **`max_turns`** -- Configurable loop iteration limit (default: 10)
+
+```python
+class ToolUsingAgent(BaseAgent):
+    accepts_tools: bool = True
+
+    def __init__(
+        self,
+        engine: InferenceEngine,
+        model: str,
+        *,
+        tools: Optional[List[BaseTool]] = None,
+        bus: Optional[EventBus] = None,
+        max_turns: int = 10,
+        temperature: float = 0.7,
+        max_tokens: int = 1024,
+    ) -> None: ...
+```
+
+All tool-using agents (`OrchestratorAgent`, `NativeReActAgent`, `NativeOpenHandsAgent`, `RLMAgent`) extend this class.
+
+---
+
 ## Agent Implementations
 
 ### SimpleAgent
 
 **Registry key:** `simple`
 
-The simplest agent implementation -- a single-turn, no-tool query-to-response pipeline.
+The simplest agent implementation -- a single-turn, no-tool query-to-response pipeline. Extends `BaseAgent` directly (does not accept tools).
 
 ```mermaid
 graph LR
@@ -69,10 +126,10 @@ graph LR
 
 How it works:
 
-1. Publishes `AGENT_TURN_START` on the event bus
-2. Builds a message list from any existing conversation context plus the user's input
-3. Calls `instrumented_generate()` (if bus is available) or `engine.generate()` directly
-4. Publishes `AGENT_TURN_END` and returns an `AgentResult` with `turns=1`
+1. Calls `_emit_turn_start()` to publish `AGENT_TURN_START` on the event bus
+2. Calls `_build_messages()` to assemble the message list from conversation context plus user input
+3. Calls `_generate()` to invoke the engine with stored defaults
+4. Calls `_emit_turn_end()` and returns an `AgentResult` with `turns=1`
 
 ```python
 from openjarvis.agents.simple import SimpleAgent
@@ -86,7 +143,12 @@ print(result.content)  # "The capital of France is Paris."
 
 **Registry key:** `orchestrator`
 
-A multi-turn agent that implements a **tool-calling loop**. The LLM can request tool invocations, and the results are fed back for further processing until the model produces a final text response.
+A multi-turn agent that implements a **tool-calling loop**. Extends `ToolUsingAgent`. The LLM can request tool invocations, and the results are fed back for further processing until the model produces a final text response.
+
+Supports two modes:
+
+- **`function_calling`** (default) -- Uses OpenAI function-calling format via `ToolExecutor.get_openai_tools()`
+- **`structured`** -- Uses structured output format for models that support it
 
 ```mermaid
 graph TD
@@ -127,6 +189,161 @@ result = agent.run("What is 2^10 + 3^5?")
 # The agent may call the calculator tool, get "1267", then respond
 ```
 
+### NativeReActAgent
+
+**Registry key:** `native_react` (alias: `react`)
+
+A ReAct (Reasoning + Acting) agent that implements a **Thought-Action-Observation** loop. Extends `ToolUsingAgent`. The LLM is prompted to output structured text with `Thought:`, `Action:`, `Action Input:`, and `Final Answer:` fields, which the agent parses to drive tool execution.
+
+```mermaid
+graph TD
+    Q["User Query"] --> SYS["Build system prompt<br/>with tool names"]
+    SYS --> GEN["Generate response"]
+    GEN --> PARSE["Parse ReAct output"]
+    PARSE --> FINAL{"Final Answer?"}
+    FINAL -->|Yes| DONE["Return answer"]
+    FINAL -->|No| ACTION{"Has Action?"}
+    ACTION -->|No| DONE2["Return content as-is"]
+    ACTION -->|Yes| EXEC["Execute tool<br/>via ToolExecutor"]
+    EXEC --> OBS["Append Observation"]
+    OBS --> MAXCHECK{"Max turns<br/>exceeded?"}
+    MAXCHECK -->|No| GEN
+    MAXCHECK -->|Yes| TIMEOUT["Return max_turns_result"]
+```
+
+How it works:
+
+1. Builds a system prompt listing available tool names
+2. Generates a response and parses the ReAct-structured output
+3. If a `Final Answer:` is found, returns it
+4. If an `Action:` is found, executes the tool and feeds the result back as an `Observation:`
+5. Loops until a final answer is produced or `max_turns` is exceeded
+
+!!! note "Backward compatibility"
+    The old `from openjarvis.agents.react import ReActAgent` import path still works via a backward-compat shim. The registry alias `"react"` also maps to `NativeReActAgent`.
+
+```python
+from openjarvis.agents.native_react import NativeReActAgent
+
+agent = NativeReActAgent(
+    engine,
+    model="qwen3:8b",
+    tools=[CalculatorTool(), ThinkTool()],
+    max_turns=10,
+)
+result = agent.run("What is the square root of 256?")
+```
+
+### NativeOpenHandsAgent
+
+**Registry key:** `native_openhands`
+
+A CodeAct-style agent that generates and executes Python code. Extends `ToolUsingAgent`. It can also invoke tools via structured `Action:` / `Action Input:` output. URLs in the input are automatically pre-fetched and inlined for the LLM.
+
+How it works:
+
+1. Builds a detailed system prompt with tool descriptions and code execution instructions
+2. Pre-fetches any URLs in the user input, inlining the content directly
+3. For each turn:
+    - Generates a response and strips `<think>` tags
+    - If a `\`\`\`python` code block is found, executes it via `code_interpreter`
+    - If an `Action:` / `Action Input:` is found, dispatches the tool
+    - If neither is found, returns the content as the final answer
+4. Handles context window overflow with automatic truncation
+
+```python
+from openjarvis.agents.native_openhands import NativeOpenHandsAgent
+
+agent = NativeOpenHandsAgent(
+    engine,
+    model="qwen3:8b",
+    tools=[CalculatorTool(), WebSearchTool()],
+    max_turns=3,
+    max_tokens=2048,
+)
+result = agent.run("Summarize https://example.com/article")
+```
+
+### RLMAgent
+
+**Registry key:** `rlm`
+
+A Recursive Language Model agent based on the [RLM paper](https://arxiv.org/abs/2512.24601). Instead of passing long context directly in the LLM prompt, RLM stores context as a Python variable in a persistent REPL. A "Root LM" writes Python code to inspect, decompose, and process context using recursive sub-LM calls via `llm_query()` and `llm_batch()`. Extends `ToolUsingAgent`.
+
+```mermaid
+graph TD
+    Q["User Query +<br/>Context"] --> REPL["Create persistent REPL<br/>(context stored as variable)"]
+    REPL --> GEN["Generate code"]
+    GEN --> CODE{"Code block<br/>found?"}
+    CODE -->|No| DONE["Return content<br/>as final answer"]
+    CODE -->|Yes| EXEC["Execute in REPL"]
+    EXEC --> TERM{"FINAL() called?"}
+    TERM -->|Yes| RESULT["Return final answer"]
+    TERM -->|No| FEED["Feed output back<br/>as user message"]
+    FEED --> MAXCHECK{"Max turns<br/>exceeded?"}
+    MAXCHECK -->|No| GEN
+    MAXCHECK -->|Yes| TIMEOUT["Return max_turns_result"]
+```
+
+How it works:
+
+1. Creates a persistent REPL with `llm_query()` and `llm_batch()` callbacks
+2. Injects context from `AgentContext` metadata or memory results into the REPL as a variable
+3. Generates code and executes it in the REPL
+4. If `FINAL(value)` or `FINAL_VAR("name")` is called, returns the final answer
+5. If no code block is found, treats the content as a direct answer
+
+The agent supports configurable sub-model parameters for recursive calls:
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `sub_model` | same as `model` | Model for sub-LM calls |
+| `sub_temperature` | `0.3` | Temperature for sub-LM calls |
+| `sub_max_tokens` | `1024` | Max tokens for sub-LM calls |
+| `max_output_chars` | `10000` | Max REPL output characters |
+| `system_prompt` | `RLM_SYSTEM_PROMPT` | Override the system prompt |
+
+```python
+from openjarvis.agents.rlm import RLMAgent
+
+agent = RLMAgent(
+    engine,
+    model="qwen3:8b",
+    max_turns=10,
+    sub_model="qwen3:1.7b",  # smaller model for sub-queries
+    sub_temperature=0.3,
+)
+result = agent.run("Summarize this document", context=ctx)
+```
+
+### OpenHandsAgent (SDK)
+
+**Registry key:** `openhands`
+
+A thin wrapper around the real `openhands-sdk` package for AI-driven software development tasks. Extends `BaseAgent` directly (does not use `ToolUsingAgent` since tool management is handled by the SDK).
+
+!!! warning "Optional dependency"
+    This agent requires the `openhands-sdk` package (`pip install openjarvis[openhands]`). The SDK requires Python 3.12+.
+
+How it works:
+
+1. Imports `openhands.sdk` at runtime (lazy import)
+2. Creates an LLM, Agent, and Conversation from the SDK
+3. Sends the user input as a message and runs the conversation
+4. Extracts the final message content from the conversation
+
+```python
+from openjarvis.agents.openhands import OpenHandsAgent
+
+agent = OpenHandsAgent(
+    engine,
+    model="gpt-4",
+    workspace="/path/to/project",
+    api_key="sk-...",
+)
+result = agent.run("Fix the failing test in test_utils.py")
+```
+
 ### OpenClawAgent
 
 **Registry key:** `openclaw`
@@ -162,30 +379,11 @@ agent = OpenClawAgent(engine, model="qwen3:8b", mode="http")
 agent = OpenClawAgent(engine, model="qwen3:8b", mode="subprocess")
 ```
 
-### CustomAgent
-
-**Registry key:** `custom`
-
-A template for user-defined agents. Its `run()` method raises `NotImplementedError` -- users must subclass it and override `run()`:
-
-```python
-from openjarvis.agents.custom import CustomAgent
-from openjarvis.core.registry import AgentRegistry
-
-@AgentRegistry.register("my-agent")
-class MyAgent(CustomAgent):
-    agent_id = "my-agent"
-
-    def run(self, input, context=None, **kwargs):
-        # Custom logic here
-        return AgentResult(content="Custom response")
-```
-
 ---
 
 ## Tool System Integration
 
-The `OrchestratorAgent` uses the `ToolExecutor` to dispatch tool calls. The tool system is built on the `BaseTool` ABC:
+All `ToolUsingAgent` subclasses use the `ToolExecutor` to dispatch tool calls. The tool system is built on the `BaseTool` ABC:
 
 ```python
 class BaseTool(ABC):
@@ -312,12 +510,13 @@ All agents integrate with the `EventBus` for telemetry and trace collection:
 
 | Event | Published By | When |
 |-------|-------------|------|
-| `AGENT_TURN_START` | All agents | Before starting query processing |
-| `AGENT_TURN_END` | All agents | After producing a response |
-| `INFERENCE_START` | OrchestratorAgent | Before each `engine.generate()` call |
-| `INFERENCE_END` | OrchestratorAgent | After each `engine.generate()` call |
-| `TOOL_CALL_START` | ToolExecutor / OpenClawAgent | Before executing a tool |
-| `TOOL_CALL_END` | ToolExecutor / OpenClawAgent | After executing a tool |
+| `AGENT_TURN_START` | All agents (via `_emit_turn_start` helper) | Before starting query processing |
+| `AGENT_TURN_END` | All agents (via `_emit_turn_end` helper) | After producing a response |
+| `TOOL_CALL_START` | ToolExecutor (all `ToolUsingAgent` subclasses) | Before executing a tool |
+| `TOOL_CALL_END` | ToolExecutor (all `ToolUsingAgent` subclasses) | After executing a tool |
+
+!!! info "Inference events"
+    `INFERENCE_START` and `INFERENCE_END` events are published by the `InstrumentedEngine` wrapper (in `telemetry/instrumented_engine.py`), not by agents directly. This keeps telemetry opt-in and transparent to agent code.
 
 These events are consumed by the `TelemetryStore` (for metrics) and `TraceCollector` (for interaction traces).
 
@@ -345,7 +544,7 @@ To list all registered agents:
 from openjarvis.core.registry import AgentRegistry
 
 print(AgentRegistry.keys())
-# ("simple", "orchestrator", "openclaw", "custom")
+# ("simple", "orchestrator", "native_react", "react", "native_openhands", "rlm", "openhands")
 ```
 
 To instantiate an agent by key:

@@ -326,24 +326,25 @@ class RetrievalResult:
 ## Adding a New Agent
 
 Agents implement the logic for handling queries, calling tools, and managing
-multi-turn interactions. All agents implement the `BaseAgent` ABC from
-`agents/_stubs.py`.
+multi-turn interactions. There are two paths depending on whether your agent
+uses tools:
 
-### Complete Example
+- **Path A: Non-tool agent** -- Extend `BaseAgent` directly
+- **Path B: Tool-using agent** -- Extend `ToolUsingAgent` (which sets `accepts_tools = True` and provides a `ToolExecutor`)
+
+### Path A: Non-tool Agent (extending BaseAgent)
 
 Create `src/openjarvis/agents/my_agent.py`:
 
 ```python
-"""Custom agent implementation."""
+"""Custom agent implementation — single-turn, no tools."""
 
 from __future__ import annotations
 
 from typing import Any, Optional
 
 from openjarvis.agents._stubs import AgentContext, AgentResult, BaseAgent
-from openjarvis.core.events import EventBus, EventType
 from openjarvis.core.registry import AgentRegistry
-from openjarvis.core.types import Message, Role
 from openjarvis.engine._stubs import InferenceEngine
 
 
@@ -353,21 +354,6 @@ class MyAgent(BaseAgent):
 
     agent_id = "my_agent"
 
-    def __init__(
-        self,
-        engine: InferenceEngine,
-        model: str,
-        *,
-        bus: Optional[EventBus] = None,
-        temperature: float = 0.7,
-        max_tokens: int = 1024,
-    ) -> None:
-        self._engine = engine
-        self._model = model
-        self._bus = bus
-        self._temperature = temperature
-        self._max_tokens = max_tokens
-
     def run(
         self,
         input: str,
@@ -375,48 +361,126 @@ class MyAgent(BaseAgent):
         **kwargs: Any,
     ) -> AgentResult:
         """Execute the agent on input and return an AgentResult."""
-        # Emit turn start event
-        if self._bus:
-            self._bus.publish(EventType.AGENT_TURN_START, {
-                "agent": self.agent_id,
-                "input": input,
-            })
+        # Use BaseAgent helpers instead of manual event bus code
+        self._emit_turn_start(input)
 
-        # Build messages from context + user input
-        messages: list[Message] = []
-
-        # Add a system prompt for your agent's personality
-        messages.append(Message(
-            role=Role.SYSTEM,
-            content="You are a helpful assistant with specialized knowledge.",
-        ))
-
-        # Include any prior conversation from context
-        if context and context.conversation.messages:
-            messages.extend(context.conversation.messages)
-
-        messages.append(Message(role=Role.USER, content=input))
-
-        # Just call engine.generate() directly -- telemetry is opt-in
-        # via InstrumentedEngine (see telemetry/instrumented_engine.py)
-        result = self._engine.generate(
-            messages,
-            model=self._model,
-            temperature=self._temperature,
-            max_tokens=self._max_tokens,
+        # Build messages from context + user input (with optional system prompt)
+        messages = self._build_messages(
+            input, context,
+            system_prompt="You are a helpful assistant with specialized knowledge.",
         )
 
-        content = result.get("content", "")
+        # Call engine.generate() with stored defaults (model, temperature, max_tokens)
+        result = self._generate(messages)
+        content = self._strip_think_tags(result.get("content", ""))
 
-        # Emit turn end event
-        if self._bus:
-            self._bus.publish(EventType.AGENT_TURN_END, {
-                "agent": self.agent_id,
-                "content_length": len(content),
-            })
-
+        self._emit_turn_end(turns=1)
         return AgentResult(content=content, turns=1)
 ```
+
+!!! tip "BaseAgent helpers"
+    `BaseAgent` provides these concrete helpers so you don't need to manually
+    manage the event bus or engine calls:
+
+    | Helper | Purpose |
+    |--------|---------|
+    | `_emit_turn_start(input)` | Publish `AGENT_TURN_START` |
+    | `_emit_turn_end(**data)` | Publish `AGENT_TURN_END` |
+    | `_build_messages(input, context, *, system_prompt)` | Assemble message list |
+    | `_generate(messages, **kwargs)` | Call engine with stored defaults |
+    | `_strip_think_tags(text)` | Remove `<think>` blocks |
+    | `_max_turns_result(tool_results, turns, content)` | Standard max-turns result |
+
+### Path B: Tool-using Agent (extending ToolUsingAgent)
+
+Create `src/openjarvis/agents/my_tool_agent.py`:
+
+```python
+"""Custom tool-using agent with a multi-turn loop."""
+
+from __future__ import annotations
+
+from typing import Any, List, Optional
+
+from openjarvis.agents._stubs import AgentContext, AgentResult, ToolUsingAgent
+from openjarvis.core.events import EventBus
+from openjarvis.core.registry import AgentRegistry
+from openjarvis.core.types import ToolCall, ToolResult
+from openjarvis.engine._stubs import InferenceEngine
+from openjarvis.tools._stubs import BaseTool
+
+
+@AgentRegistry.register("my_tool_agent")
+class MyToolAgent(ToolUsingAgent):
+    """Custom agent with tool-calling loop."""
+
+    agent_id = "my_tool_agent"
+
+    def __init__(
+        self,
+        engine: InferenceEngine,
+        model: str,
+        *,
+        tools: Optional[List[BaseTool]] = None,
+        bus: Optional[EventBus] = None,
+        max_turns: int = 10,
+        temperature: float = 0.7,
+        max_tokens: int = 1024,
+    ) -> None:
+        super().__init__(
+            engine, model, tools=tools, bus=bus,
+            max_turns=max_turns, temperature=temperature,
+            max_tokens=max_tokens,
+        )
+
+    def run(
+        self,
+        input: str,
+        context: Optional[AgentContext] = None,
+        **kwargs: Any,
+    ) -> AgentResult:
+        self._emit_turn_start(input)
+
+        messages = self._build_messages(input, context)
+        tools_spec = self._executor.get_openai_tools()
+        all_tool_results: list[ToolResult] = []
+        turns = 0
+
+        for _ in range(self._max_turns):
+            turns += 1
+            result = self._generate(messages, tools=tools_spec)
+            content = result.get("content", "")
+            tool_calls = result.get("tool_calls", [])
+
+            if not tool_calls:
+                self._emit_turn_end(turns=turns)
+                return AgentResult(
+                    content=content,
+                    tool_results=all_tool_results,
+                    turns=turns,
+                )
+
+            # Execute each tool call
+            for tc in tool_calls:
+                call = ToolCall(
+                    id=tc.get("id", f"call_{turns}"),
+                    name=tc["name"],
+                    arguments=tc["arguments"],
+                )
+                tr = self._executor.execute(call)
+                all_tool_results.append(tr)
+
+        # Max turns exceeded — use the standard helper
+        return self._max_turns_result(all_tool_results, turns)
+```
+
+!!! info "What ToolUsingAgent adds"
+    `ToolUsingAgent` extends `BaseAgent` with:
+
+    - **`accepts_tools = True`** — enables `--tools` in CLI and `tools=` in SDK
+    - **`self._executor`** — a `ToolExecutor` initialized from the provided tools
+    - **`self._tools`** — the raw list of `BaseTool` instances
+    - **`self._max_turns`** — configurable loop iteration limit (default: 10)
 
 ### Register in `__init__.py`
 

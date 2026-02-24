@@ -199,12 +199,14 @@ src/openjarvis/
         cloud.py                # CloudEngine (OpenAI/Anthropic/Google)
 
     agents/                     # Agent implementations
-        _stubs.py               # BaseAgent ABC, AgentContext, AgentResult
+        _stubs.py               # BaseAgent ABC, ToolUsingAgent, AgentContext, AgentResult
         simple.py               # SimpleAgent — single-turn, no tools
-        orchestrator.py         # OrchestratorAgent — multi-turn tool calling
-        custom.py               # CustomAgent — user template
-        react.py                # ReActAgent
-        openhands.py            # OpenHands agent
+        orchestrator.py         # OrchestratorAgent — multi-turn tool calling (function_calling + structured)
+        native_react.py         # NativeReActAgent — Thought-Action-Observation loop
+        native_openhands.py     # NativeOpenHandsAgent — CodeAct-style code execution
+        rlm.py                  # RLMAgent — recursive LM with persistent REPL
+        openhands.py            # OpenHandsAgent — wraps real openhands-sdk
+        react.py                # Backward-compat shim (re-exports NativeReActAgent)
         openclaw.py             # OpenClawAgent — HTTP/subprocess transport
         openclaw_protocol.py    # OpenClaw message protocol
         openclaw_transport.py   # OpenClaw transports (HTTP, subprocess)

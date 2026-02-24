@@ -6,11 +6,18 @@ coordinating tool calls, memory retrieval, and inference engine interactions.
 The module also includes the OpenClaw infrastructure for interoperating with
 external agent frameworks via HTTP or subprocess transport.
 
-## Abstract Base Class and Context
+## Abstract Base Classes and Context
 
 ### BaseAgent
 
 ::: openjarvis.agents._stubs.BaseAgent
+    options:
+      show_source: true
+      members_order: source
+
+### ToolUsingAgent
+
+::: openjarvis.agents._stubs.ToolUsingAgent
     options:
       show_source: true
       members_order: source
@@ -47,16 +54,30 @@ external agent frameworks via HTTP or subprocess transport.
       show_source: true
       members_order: source
 
-### OpenClawAgent
+### NativeReActAgent
 
-::: openjarvis.agents.openclaw.OpenClawAgent
+::: openjarvis.agents.native_react.NativeReActAgent
     options:
       show_source: true
       members_order: source
 
-### CustomAgent
+### NativeOpenHandsAgent
 
-::: openjarvis.agents.custom.CustomAgent
+::: openjarvis.agents.native_openhands.NativeOpenHandsAgent
+    options:
+      show_source: true
+      members_order: source
+
+### RLMAgent
+
+::: openjarvis.agents.rlm.RLMAgent
+    options:
+      show_source: true
+      members_order: source
+
+### OpenHandsAgent
+
+::: openjarvis.agents.openhands.OpenHandsAgent
     options:
       show_source: true
       members_order: source
