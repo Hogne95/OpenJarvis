@@ -27,6 +27,18 @@ except ImportError:
 from openjarvis.core.registry import LearningRegistry
 from openjarvis.learning._stubs import IntelligenceLearningPolicy
 
+
+def _select_torch_device():
+    """Select the best available PyTorch device (cuda > mps > cpu)."""
+    if not HAS_TORCH or torch is None:
+        return None
+    if torch.cuda.is_available():
+        return torch.device("cuda")
+    if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+        return torch.device("mps")
+    return torch.device("cpu")
+
+
 # ---------------------------------------------------------------------------
 # Config
 # ---------------------------------------------------------------------------
@@ -215,9 +227,7 @@ class OrchestratorSFTTrainer:
         self.global_step = 0
 
         if HAS_TORCH and torch is not None:
-            self.device = torch.device(
-                "cuda" if torch.cuda.is_available() else "cpu"
-            )
+            self.device = _select_torch_device()
 
         self._init_model()
         self._init_data()
@@ -399,4 +409,5 @@ __all__ = [
     "OrchestratorSFTConfig",
     "OrchestratorSFTDataset",
     "OrchestratorSFTTrainer",
+    "_select_torch_device",
 ]

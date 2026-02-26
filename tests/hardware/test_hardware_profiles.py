@@ -37,7 +37,11 @@ class TestDetectHardware:
     @patch("openjarvis.core.config.shutil.which", return_value="/usr/bin/rocm-smi")
     @patch(
         "openjarvis.core.config._run_cmd",
-        return_value="AMD Instinct MI300X",
+        side_effect=[
+            "AMD Instinct MI300X",        # --showproductname
+            "GPU[0] : vram Total Memory (B): 206158430208",  # --showmeminfo vram
+            "GPU[0] : Some info",          # --showallinfo
+        ],
     )
     def test_detect_amd_gpu(self, mock_run, mock_which):
         gpu = _detect_amd_gpu()
@@ -88,8 +92,8 @@ class TestRecommendEngine:
     def test_amd_vllm(self, hardware_amd):
         assert recommend_engine(hardware_amd) == "vllm"
 
-    def test_apple_ollama(self, hardware_apple):
-        assert recommend_engine(hardware_apple) == "ollama"
+    def test_apple_mlx(self, hardware_apple):
+        assert recommend_engine(hardware_apple) == "mlx"
 
     def test_cpu_only_llamacpp(self, hardware_cpu_only):
         assert recommend_engine(hardware_cpu_only) == "llamacpp"

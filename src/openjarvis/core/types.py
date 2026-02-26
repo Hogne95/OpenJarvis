@@ -140,10 +140,28 @@ class TelemetryRecord:
     gpu_memory_used_gb: float = 0.0
     gpu_temperature_c: float = 0.0
     throughput_tok_per_sec: float = 0.0
+    energy_per_output_token_joules: float = 0.0
+    throughput_per_watt: float = 0.0
     prefill_latency_seconds: float = 0.0
     decode_latency_seconds: float = 0.0
+    prefill_energy_joules: float = 0.0
+    decode_energy_joules: float = 0.0
+    mean_itl_ms: float = 0.0
+    median_itl_ms: float = 0.0
+    p90_itl_ms: float = 0.0
+    p95_itl_ms: float = 0.0
+    p99_itl_ms: float = 0.0
+    std_itl_ms: float = 0.0
+    is_streaming: bool = False
     engine: str = ""
     agent: str = ""
+    energy_method: str = ""
+    energy_vendor: str = ""
+    batch_id: str = ""
+    is_warmup: bool = False
+    cpu_energy_joules: float = 0.0
+    gpu_energy_joules: float = 0.0
+    dram_energy_joules: float = 0.0
     metadata: Dict[str, Any] = field(default_factory=dict)
 
 

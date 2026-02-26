@@ -10,7 +10,7 @@
   <p>
     <a href="https://www.intelligence-per-watt.ai/"><img src="https://img.shields.io/badge/project-intelligence--per--watt.ai-blue" alt="Project"></a>
     <a href="https://hazyresearch.stanford.edu/OpenJarvis/"><img src="https://img.shields.io/badge/docs-mkdocs-blue" alt="Docs"></a>
-    <img src="https://img.shields.io/badge/python-%3E%3D3.12-blue" alt="Python">
+    <img src="https://img.shields.io/badge/python-%3E%3D3.10-blue" alt="Python">
     <img src="https://img.shields.io/badge/license-Apache%202.0-green" alt="License">
   </p>
 </div>
@@ -46,6 +46,33 @@ pip install openjarvis[server]    # + FastAPI server
 ```
 
 You also need a local inference backend: [Ollama](https://ollama.com), [vLLM](https://github.com/vllm-project/vllm), [SGLang](https://github.com/sgl-project/sglang), or [llama.cpp](https://github.com/ggerganov/llama.cpp).
+
+## Quick Start
+
+The fastest path is Ollama on any machine with Python 3.10+:
+
+```bash
+# 1. Install OpenJarvis
+pip install openjarvis
+
+# 2. Detect hardware and generate config
+jarvis init
+
+# 3. Install and start Ollama (https://ollama.com)
+curl -fsSL https://ollama.com/install.sh | sh
+ollama serve                      # start the Ollama server
+
+# 4. Pull a model
+ollama pull qwen3:8b
+
+# 5. Ask a question
+jarvis ask "What is the capital of France?"
+
+# 6. Verify your setup
+jarvis doctor
+```
+
+`jarvis init` auto-detects your hardware and recommends the best engine. After init, it prints engine-specific next steps. Run `jarvis doctor` at any time to diagnose configuration or connectivity issues.
 
 ## The Five Pillars
 

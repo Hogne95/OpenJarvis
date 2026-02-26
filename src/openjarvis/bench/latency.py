@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import statistics
 import time
-from typing import List
+from typing import Any, List
 
 from openjarvis.bench._stubs import BaseBenchmark, BenchmarkResult
 from openjarvis.core.registry import BenchmarkRegistry
@@ -35,7 +35,18 @@ class LatencyBenchmark(BaseBenchmark):
         model: str,
         *,
         num_samples: int = 10,
+        warmup_samples: int = 0,
+        **kwargs: Any,
     ) -> BenchmarkResult:
+        # Run warmup iterations (discarded)
+        for i in range(warmup_samples):
+            prompt = _CANNED_PROMPTS[i % len(_CANNED_PROMPTS)]
+            messages = [Message(role=Role.USER, content=prompt)]
+            try:
+                engine.generate(messages, model=model)
+            except Exception:
+                pass
+
         latencies: List[float] = []
         errors = 0
 

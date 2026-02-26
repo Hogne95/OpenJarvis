@@ -21,6 +21,12 @@ class BenchmarkResult:
     metadata: Dict[str, Any] = field(default_factory=dict)
     samples: int = 0
     errors: int = 0
+    warmup_samples: int = 0
+    steady_state_samples: int = 0
+    steady_state_reached: bool = False
+    total_energy_joules: float = 0.0
+    energy_per_token_joules: float = 0.0
+    energy_method: str = ""
 
 
 class BaseBenchmark(ABC):
@@ -47,6 +53,7 @@ class BaseBenchmark(ABC):
         model: str,
         *,
         num_samples: int = 10,
+        **kwargs: Any,
     ) -> BenchmarkResult:
         """Execute the benchmark and return results."""
 
@@ -63,11 +70,12 @@ class BenchmarkSuite:
         model: str,
         *,
         num_samples: int = 10,
+        **kwargs: Any,
     ) -> List[BenchmarkResult]:
         """Run all benchmarks and return a list of results."""
         results: List[BenchmarkResult] = []
         for bench in self._benchmarks:
-            result = bench.run(engine, model, num_samples=num_samples)
+            result = bench.run(engine, model, num_samples=num_samples, **kwargs)
             results.append(result)
         return results
 

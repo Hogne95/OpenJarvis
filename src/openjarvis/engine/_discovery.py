@@ -14,6 +14,7 @@ _HOST_MAP: Dict[str, str | None] = {
     "vllm": "vllm_host",
     "llamacpp": "llamacpp_host",
     "sglang": "sglang_host",
+    "mlx": "mlx_host",
     "cloud": None,
     "litellm": None,
 }

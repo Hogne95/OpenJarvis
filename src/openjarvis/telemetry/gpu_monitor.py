@@ -31,14 +31,22 @@ class GpuHardwareSpec:
 
 
 GPU_SPECS: Dict[str, GpuHardwareSpec] = {
-    "A100-SXM": GpuHardwareSpec(tflops_fp16=312, bandwidth_gb_s=2039, tdp_watts=400),
-    "A100-PCIE": GpuHardwareSpec(tflops_fp16=312, bandwidth_gb_s=2039, tdp_watts=300),
+    # NVIDIA
+    "B200-SXM": GpuHardwareSpec(tflops_fp16=2250, bandwidth_gb_s=8000, tdp_watts=1000),
     "H100-SXM": GpuHardwareSpec(tflops_fp16=990, bandwidth_gb_s=3350, tdp_watts=700),
     "H100-PCIE": GpuHardwareSpec(tflops_fp16=756, bandwidth_gb_s=2000, tdp_watts=350),
+    "A100-SXM": GpuHardwareSpec(tflops_fp16=312, bandwidth_gb_s=2039, tdp_watts=400),
+    "A100-PCIE": GpuHardwareSpec(tflops_fp16=312, bandwidth_gb_s=2039, tdp_watts=300),
     "L40S": GpuHardwareSpec(tflops_fp16=366, bandwidth_gb_s=864, tdp_watts=350),
     "A10": GpuHardwareSpec(tflops_fp16=125, bandwidth_gb_s=600, tdp_watts=150),
     "RTX 4090": GpuHardwareSpec(tflops_fp16=165, bandwidth_gb_s=1008, tdp_watts=450),
     "RTX 3090": GpuHardwareSpec(tflops_fp16=71, bandwidth_gb_s=936, tdp_watts=350),
+    # AMD
+    "MI300X": GpuHardwareSpec(tflops_fp16=1307, bandwidth_gb_s=5300, tdp_watts=750),
+    "MI250X": GpuHardwareSpec(tflops_fp16=383, bandwidth_gb_s=3277, tdp_watts=560),
+    # Apple Silicon
+    "M4 Max": GpuHardwareSpec(tflops_fp16=53, bandwidth_gb_s=546, tdp_watts=40),
+    "M2 Ultra": GpuHardwareSpec(tflops_fp16=27, bandwidth_gb_s=800, tdp_watts=60),
 }
 
 

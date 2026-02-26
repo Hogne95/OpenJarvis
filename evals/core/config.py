@@ -92,6 +92,8 @@ def load_eval_config(path: str | Path) -> EvalSuiteConfig:
         seed=int(run_raw.get("seed", 42)),
         telemetry=bool(run_raw.get("telemetry", False)),
         gpu_metrics=bool(run_raw.get("gpu_metrics", False)),
+        warmup_samples=int(run_raw.get("warmup_samples", 0)),
+        energy_vendor=run_raw.get("energy_vendor", ""),
     )
 
     # Parse [[models]]
@@ -235,6 +237,7 @@ def expand_suite(suite: EvalSuiteConfig) -> List[RunConfig]:
                 telemetry=suite.run.telemetry,
                 gpu_metrics=suite.run.gpu_metrics,
                 metadata=model_meta,
+                warmup_samples=suite.run.warmup_samples,
             ))
 
     return configs

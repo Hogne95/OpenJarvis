@@ -98,7 +98,32 @@ def _detect_amd_gpu() -> Optional[GpuInfo]:
     raw = _run_cmd(["rocm-smi", "--showproductname"])
     if not raw:
         return None
-    return GpuInfo(vendor="amd", name=raw.splitlines()[0] if raw else "AMD GPU")
+    name = raw.splitlines()[0] if raw else "AMD GPU"
+
+    # Parse VRAM from rocm-smi --showmeminfo vram
+    vram_gb = 0.0
+    try:
+        vram_raw = _run_cmd(["rocm-smi", "--showmeminfo", "vram"])
+        for line in vram_raw.splitlines():
+            if "Total Memory (B):" in line:
+                vram_bytes = int(line.split(":")[-1].strip())
+                vram_gb = round(vram_bytes / (1024**3), 1)
+                break
+    except (ValueError, IndexError):
+        vram_gb = 0.0
+
+    # Parse GPU count from rocm-smi --showallinfo
+    count = 1
+    try:
+        allinfo_raw = _run_cmd(["rocm-smi", "--showallinfo"])
+        import re
+        gpu_ids = set(re.findall(r"GPU\[(\d+)\]", allinfo_raw))
+        if gpu_ids:
+            count = len(gpu_ids)
+    except (ValueError, IndexError):
+        count = 1
+
+    return GpuInfo(vendor="amd", name=name, vram_gb=vram_gb, count=count)
 
 
 def _detect_apple_gpu() -> Optional[GpuInfo]:
@@ -172,7 +197,7 @@ def recommend_engine(hw: HardwareInfo) -> str:
     if gpu is None:
         return "llamacpp"
     if gpu.vendor == "apple":
-        return "ollama"
+        return "mlx"
     if gpu.vendor == "nvidia":
         # Datacenter cards (A100, H100, L40, etc.) → vllm; consumer → ollama
         datacenter_keywords = ("A100", "H100", "H200", "L40", "A10", "A30")
@@ -218,6 +243,13 @@ class LlamaCppEngineConfig:
     binary_path: str = ""
 
 
+@dataclass(slots=True)
+class MLXEngineConfig:
+    """Per-engine config for MLX."""
+
+    host: str = "http://localhost:8080"
+
+
 @dataclass
 class EngineConfig:
     """Inference engine settings with nested per-engine configs."""
@@ -227,6 +259,7 @@ class EngineConfig:
     vllm: VLLMEngineConfig = field(default_factory=VLLMEngineConfig)
     sglang: SGLangEngineConfig = field(default_factory=SGLangEngineConfig)
     llamacpp: LlamaCppEngineConfig = field(default_factory=LlamaCppEngineConfig)
+    mlx: MLXEngineConfig = field(default_factory=MLXEngineConfig)
 
     # Backward-compat properties for old flat attribute names
     @property
@@ -273,6 +306,15 @@ class EngineConfig:
     @sglang_host.setter
     def sglang_host(self, value: str) -> None:
         self.sglang.host = value
+
+    @property
+    def mlx_host(self) -> str:
+        """Deprecated: use ``engine.mlx.host``."""
+        return self.mlx.host
+
+    @mlx_host.setter
+    def mlx_host(self, value: str) -> None:
+        self.mlx.host = value
 
 
 @dataclass(slots=True)
@@ -482,6 +524,10 @@ class TelemetryConfig:
     db_path: str = str(DEFAULT_CONFIG_DIR / "telemetry.db")
     gpu_metrics: bool = False
     gpu_poll_interval_ms: int = 50
+    energy_vendor: str = ""  # auto-detect or force "nvidia"/"amd"/"apple"/"cpu_rapl"
+    warmup_samples: int = 0
+    steady_state_window: int = 5
+    steady_state_threshold: float = 0.05
 
 
 @dataclass(slots=True)
@@ -851,6 +897,9 @@ host = "http://localhost:30000"
 # host = "http://localhost:8080"
 # binary_path = ""
 
+[engine.mlx]
+host = "http://localhost:8080"
+
 [intelligence]
 default_model = ""
 fallback_model = ""
@@ -1017,6 +1066,7 @@ __all__ = [
     "LearningConfig",
     "LlamaCppEngineConfig",
     "MCPConfig",
+    "MLXEngineConfig",
     "MatrixChannelConfig",
     "MattermostChannelConfig",
     "MemoryConfig",

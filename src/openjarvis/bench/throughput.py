@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import time
+from typing import Any
 
 from openjarvis.bench._stubs import BaseBenchmark, BenchmarkResult
 from openjarvis.core.registry import BenchmarkRegistry
@@ -27,13 +28,22 @@ class ThroughputBenchmark(BaseBenchmark):
         model: str,
         *,
         num_samples: int = 10,
+        warmup_samples: int = 0,
+        **kwargs: Any,
     ) -> BenchmarkResult:
+        # Run warmup iterations (discarded)
+        prompt = "Write a short paragraph about artificial intelligence."
+        messages = [Message(role=Role.USER, content=prompt)]
+
+        for _ in range(warmup_samples):
+            try:
+                engine.generate(messages, model=model)
+            except Exception:
+                pass
+
         total_tokens = 0
         total_time = 0.0
         errors = 0
-
-        prompt = "Write a short paragraph about artificial intelligence."
-        messages = [Message(role=Role.USER, content=prompt)]
 
         for _ in range(num_samples):
             t0 = time.time()

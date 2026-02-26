@@ -12,7 +12,12 @@ from openjarvis.telemetry.store import TelemetryStore
 from openjarvis.telemetry.wrapper import instrumented_generate
 
 try:
-    from openjarvis.telemetry.gpu_monitor import GpuHardwareSpec, GpuMonitor, GpuSample, GpuSnapshot
+    from openjarvis.telemetry.gpu_monitor import (
+        GpuHardwareSpec,
+        GpuMonitor,
+        GpuSample,
+        GpuSnapshot,
+    )
 except ImportError:
     pass
 
@@ -26,9 +31,31 @@ try:
 except ImportError:
     pass
 
+try:
+    from openjarvis.telemetry.energy_monitor import (
+        EnergyMonitor,
+        EnergySample,
+        EnergyVendor,
+        create_energy_monitor,
+    )
+except ImportError:
+    pass
+
+from openjarvis.telemetry.batch import BatchMetrics, EnergyBatch
+from openjarvis.telemetry.steady_state import (
+    SteadyStateConfig,
+    SteadyStateDetector,
+    SteadyStateResult,
+)
+
 __all__ = [
     "AggregatedStats",
+    "BatchMetrics",
     "EfficiencyMetrics",
+    "EnergyBatch",
+    "EnergyMonitor",
+    "EnergySample",
+    "EnergyVendor",
     "EngineStats",
     "GpuHardwareSpec",
     "GpuMonitor",
@@ -39,6 +66,10 @@ __all__ = [
     "TelemetryStore",
     "VLLMMetrics",
     "VLLMMetricsScraper",
+    "SteadyStateConfig",
+    "SteadyStateDetector",
+    "SteadyStateResult",
     "compute_efficiency",
+    "create_energy_monitor",
     "instrumented_generate",
 ]

@@ -53,7 +53,7 @@ class TestRecommendEngine:
             platform="darwin",
             gpu=GpuInfo(vendor="apple", name="Apple M2 Max"),
         )
-        assert recommend_engine(hw) == "ollama"
+        assert recommend_engine(hw) == "mlx"
 
     def test_nvidia_datacenter(self) -> None:
         hw = HardwareInfo(

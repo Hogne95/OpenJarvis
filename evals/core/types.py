@@ -41,6 +41,9 @@ class EvalResult:
     mbu_pct: float = 0.0
     ipw: float = 0.0  # Intelligence Per Watt
     ipj: float = 0.0  # Intelligence Per Joule
+    energy_per_output_token_joules: float = 0.0
+    throughput_per_watt: float = 0.0
+    mean_itl_ms: float = 0.0
 
 
 @dataclass(slots=True)
@@ -64,6 +67,7 @@ class RunConfig:
     telemetry: bool = False
     gpu_metrics: bool = False
     metadata: Dict[str, Any] = field(default_factory=dict)
+    warmup_samples: int = 0
 
 
 @dataclass(slots=True)
@@ -75,6 +79,9 @@ class MetricStats:
     min: float = 0.0
     max: float = 0.0
     std: float = 0.0
+    p90: float = 0.0
+    p95: float = 0.0
+    p99: float = 0.0
 
 
 @dataclass(slots=True)
@@ -106,7 +113,15 @@ class RunSummary:
     mbu_stats: Optional[MetricStats] = None
     ipw_stats: Optional[MetricStats] = None
     ipj_stats: Optional[MetricStats] = None
+    energy_per_output_token_stats: Optional[MetricStats] = None
+    throughput_per_watt_stats: Optional[MetricStats] = None
+    itl_stats: Optional[MetricStats] = None
+    input_token_stats: Optional[MetricStats] = None
+    output_token_stats: Optional[MetricStats] = None
     total_energy_joules: float = 0.0
+    warmup_samples_excluded: int = 0
+    steady_state_reached: bool = False
+    energy_method: str = ""
 
 
 # ---------------------------------------------------------------------------
@@ -149,6 +164,8 @@ class ExecutionConfig:
     seed: int = 42
     telemetry: bool = False
     gpu_metrics: bool = False
+    warmup_samples: int = 0
+    energy_vendor: str = ""
 
 
 @dataclass(slots=True)

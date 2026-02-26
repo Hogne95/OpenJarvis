@@ -9,7 +9,7 @@ import time
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 from evals.core.backend import InferenceBackend
 from evals.core.dataset import DatasetProvider
@@ -41,8 +41,16 @@ class EvalRunner:
         self._results: List[EvalResult] = []
         self._output_file: Optional[Any] = None
 
-    def run(self) -> RunSummary:
-        """Execute the evaluation and return a summary."""
+    def run(
+        self,
+        progress_callback: Optional[Callable[[int, int], None]] = None,
+    ) -> RunSummary:
+        """Execute the evaluation and return a summary.
+
+        Args:
+            progress_callback: Optional ``(completed, total)`` callback invoked
+                after each sample completes, useful for driving progress bars.
+        """
         cfg = self._config
         started_at = time.time()
 
@@ -57,12 +65,21 @@ class EvalRunner:
             cfg.benchmark, len(records), cfg.backend, cfg.model, cfg.max_workers,
         )
 
+        # --- Warmup phase (discard results) ---
+        warmup_count = cfg.warmup_samples
+        if warmup_count > 0 and records:
+            warmup_records = records[:warmup_count]
+            for rec in warmup_records:
+                self._process_one(rec)
+            LOGGER.info("Warmup complete: %d samples discarded", len(warmup_records))
+
         # Open output file for incremental JSONL writing
         output_path = self._resolve_output_path()
         if output_path:
             output_path.parent.mkdir(parents=True, exist_ok=True)
             self._output_file = open(output_path, "w")
 
+        total = len(records)
         try:
             with ThreadPoolExecutor(max_workers=cfg.max_workers) as pool:
                 futures = {
@@ -72,6 +89,8 @@ class EvalRunner:
                     result = future.result()
                     self._results.append(result)
                     self._flush_result(result)
+                    if progress_callback is not None:
+                        progress_callback(len(self._results), total)
         finally:
             if self._output_file:
                 self._output_file.close()
@@ -81,6 +100,7 @@ class EvalRunner:
         summary = self._compute_summary(records, started_at, ended_at)
 
         # Write summary JSON alongside JSONL
+        traces_dir: Optional[Path] = None
         if output_path:
             summary_path = output_path.with_suffix(".summary.json")
             with open(summary_path, "w") as f:
@@ -88,7 +108,28 @@ class EvalRunner:
             LOGGER.info("Results written to %s", output_path)
             LOGGER.info("Summary written to %s", summary_path)
 
+            # Write per-trace data
+            traces_dir = self._write_traces(output_path)
+
+        # Attach paths to summary for callers (e.g. CLI display)
+        summary._output_path = output_path  # type: ignore[attr-defined]
+        summary._traces_dir = traces_dir  # type: ignore[attr-defined]
+
         return summary
+
+    def _write_traces(self, output_path: Path) -> Optional[Path]:
+        """Write per-sample trace data to a traces subdirectory."""
+        if not self._results:
+            return None
+        cfg = self._config
+        model_slug = cfg.model.replace("/", "-").replace(":", "-")
+        traces_dir = output_path.parent / "traces" / f"{cfg.benchmark}_{model_slug}"
+        traces_dir.mkdir(parents=True, exist_ok=True)
+        with open(traces_dir / "traces.jsonl", "w") as f:
+            for result in self._results:
+                f.write(json.dumps(_result_to_trace_dict(result)) + "\n")
+        LOGGER.info("Traces written to %s", traces_dir)
+        return traces_dir
 
     def _process_one(self, record: EvalRecord) -> EvalResult:
         """Process a single evaluation sample."""
@@ -141,6 +182,14 @@ class EvalRunner:
                     mfu = eff.mfu_pct
                     mbu = eff.mbu_pct
 
+            # Extract derived and ITL metrics from _telemetry dict
+            _telem = full.get("_telemetry", {})
+            energy_per_out_tok = _telem.get(
+                "energy_per_output_token_joules", 0.0
+            )
+            throughput_per_w = _telem.get("throughput_per_watt", 0.0)
+            mean_itl = _telem.get("mean_itl_ms", 0.0)
+
             return EvalResult(
                 record_id=record.record_id,
                 model_answer=content,
@@ -160,6 +209,9 @@ class EvalRunner:
                 mbu_pct=mbu,
                 ipw=ipw,
                 ipj=ipj,
+                energy_per_output_token_joules=energy_per_out_tok,
+                throughput_per_watt=throughput_per_w,
+                mean_itl_ms=mean_itl,
             )
         except Exception as exc:
             LOGGER.error("Error processing %s: %s", record.record_id, exc)
@@ -196,6 +248,9 @@ class EvalRunner:
             "mbu_pct": result.mbu_pct,
             "ipw": result.ipw,
             "ipj": result.ipj,
+            "energy_per_output_token_joules": result.energy_per_output_token_joules,
+            "throughput_per_watt": result.throughput_per_watt,
+            "mean_itl_ms": result.mean_itl_ms,
         }
         self._output_file.write(json.dumps(record_dict) + "\n")
         self._output_file.flush()
@@ -259,12 +314,33 @@ class EvalRunner:
         ttft_vals = [r.ttft for r in results if r.ttft > 0]
         energy_vals = [r.energy_joules for r in results if r.energy_joules > 0]
         power_vals = [r.power_watts for r in results if r.power_watts > 0]
-        gpu_util_vals = [r.gpu_utilization_pct for r in results if r.gpu_utilization_pct > 0]
-        throughput_vals = [r.throughput_tok_per_sec for r in results if r.throughput_tok_per_sec > 0]
+        gpu_util_vals = [
+            r.gpu_utilization_pct for r in results
+            if r.gpu_utilization_pct > 0
+        ]
+        throughput_vals = [
+            r.throughput_tok_per_sec for r in results
+            if r.throughput_tok_per_sec > 0
+        ]
         mfu_vals = [r.mfu_pct for r in results if r.mfu_pct > 0]
         mbu_vals = [r.mbu_pct for r in results if r.mbu_pct > 0]
         ipw_vals = [r.ipw for r in results if r.ipw > 0]
         ipj_vals = [r.ipj for r in results if r.ipj > 0]
+        epot_vals = [
+            r.energy_per_output_token_joules
+            for r in results
+            if r.energy_per_output_token_joules > 0
+        ]
+        tpw_vals = [
+            r.throughput_per_watt
+            for r in results if r.throughput_per_watt > 0
+        ]
+        itl_vals = [r.mean_itl_ms for r in results if r.mean_itl_ms > 0]
+        input_tok_vals = [r.prompt_tokens for r in results if r.prompt_tokens > 0]
+        output_tok_vals = [
+            r.completion_tokens for r in results
+            if r.completion_tokens > 0
+        ]
 
         total_energy = sum(r.energy_joules for r in results)
 
@@ -294,8 +370,25 @@ class EvalRunner:
             mbu_stats=_metric_stats(mbu_vals),
             ipw_stats=_metric_stats(ipw_vals),
             ipj_stats=_metric_stats(ipj_vals),
+            energy_per_output_token_stats=_metric_stats(epot_vals),
+            throughput_per_watt_stats=_metric_stats(tpw_vals),
+            itl_stats=_metric_stats(itl_vals),
+            input_token_stats=_metric_stats([float(v) for v in input_tok_vals]),
+            output_token_stats=_metric_stats([float(v) for v in output_tok_vals]),
             total_energy_joules=round(total_energy, 6),
+            warmup_samples_excluded=cfg.warmup_samples,
         )
+
+
+def _eval_percentile(data: list[float], p: float) -> float:
+    """Compute the p-th percentile using linear interpolation."""
+    sorted_data = sorted(data)
+    k = (len(sorted_data) - 1) * p
+    f = int(k)
+    c = f + 1
+    if c >= len(sorted_data):
+        return sorted_data[-1]
+    return sorted_data[f] + (k - f) * (sorted_data[c] - sorted_data[f])
 
 
 def _metric_stats(values: List[float]) -> Optional[MetricStats]:
@@ -308,6 +401,9 @@ def _metric_stats(values: List[float]) -> Optional[MetricStats]:
         min=min(values),
         max=max(values),
         std=statistics.stdev(values) if len(values) > 1 else 0.0,
+        p90=_eval_percentile(values, 0.90),
+        p95=_eval_percentile(values, 0.95),
+        p99=_eval_percentile(values, 0.99),
     )
 
 
@@ -321,6 +417,9 @@ def _metric_stats_to_dict(ms: Optional[MetricStats]) -> Optional[Dict[str, float
         "min": ms.min,
         "max": ms.max,
         "std": ms.std,
+        "p90": ms.p90,
+        "p95": ms.p95,
+        "p99": ms.p99,
     }
 
 
@@ -352,7 +451,47 @@ def _summary_to_dict(s: RunSummary) -> Dict[str, Any]:
         "mbu_stats": _metric_stats_to_dict(s.mbu_stats),
         "ipw_stats": _metric_stats_to_dict(s.ipw_stats),
         "ipj_stats": _metric_stats_to_dict(s.ipj_stats),
+        "energy_per_output_token_stats": _metric_stats_to_dict(
+            s.energy_per_output_token_stats,
+        ),
+        "throughput_per_watt_stats": _metric_stats_to_dict(
+            s.throughput_per_watt_stats,
+        ),
+        "itl_stats": _metric_stats_to_dict(s.itl_stats),
+        "input_token_stats": _metric_stats_to_dict(s.input_token_stats),
+        "output_token_stats": _metric_stats_to_dict(s.output_token_stats),
         "total_energy_joules": s.total_energy_joules,
+        "warmup_samples_excluded": s.warmup_samples_excluded,
+        "steady_state_reached": s.steady_state_reached,
+        "energy_method": s.energy_method,
+    }
+
+
+def _result_to_trace_dict(result: EvalResult) -> Dict[str, Any]:
+    """Convert an EvalResult to a full trace dict for per-sample export."""
+    return {
+        "record_id": result.record_id,
+        "model_answer": result.model_answer,
+        "is_correct": result.is_correct,
+        "score": result.score,
+        "latency_seconds": result.latency_seconds,
+        "prompt_tokens": result.prompt_tokens,
+        "completion_tokens": result.completion_tokens,
+        "cost_usd": result.cost_usd,
+        "error": result.error,
+        "scoring_metadata": result.scoring_metadata,
+        "ttft": result.ttft,
+        "energy_joules": result.energy_joules,
+        "power_watts": result.power_watts,
+        "gpu_utilization_pct": result.gpu_utilization_pct,
+        "throughput_tok_per_sec": result.throughput_tok_per_sec,
+        "mfu_pct": result.mfu_pct,
+        "mbu_pct": result.mbu_pct,
+        "ipw": result.ipw,
+        "ipj": result.ipj,
+        "energy_per_output_token_joules": result.energy_per_output_token_joules,
+        "throughput_per_watt": result.throughput_per_watt,
+        "mean_itl_ms": result.mean_itl_ms,
     }
 
 

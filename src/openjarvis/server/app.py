@@ -131,7 +131,13 @@ def create_app(
 
         @app.get("/{full_path:path}")
         async def spa_catch_all(full_path: str):
-            """Serve index.html for SPA routes not handled by API endpoints."""
+            """Serve static files directly, fall back to index.html for SPA routes."""
+            if full_path:
+                candidate = (static_dir / full_path).resolve()
+                # Path traversal prevention
+                resolved_root = static_dir.resolve()
+                if candidate.is_relative_to(resolved_root) and candidate.is_file():
+                    return FileResponse(candidate, headers=_NO_CACHE_HEADERS)
             return FileResponse(
                 static_dir / "index.html",
                 headers=_NO_CACHE_HEADERS,

@@ -8,6 +8,7 @@ import openjarvis
 from openjarvis.cli.ask import ask
 from openjarvis.cli.bench_cmd import bench
 from openjarvis.cli.channel_cmd import channel
+from openjarvis.cli.doctor_cmd import doctor
 from openjarvis.cli.init_cmd import init
 from openjarvis.cli.memory_cmd import memory
 from openjarvis.cli.model import model
@@ -31,6 +32,7 @@ cli.add_command(telemetry, "telemetry")
 cli.add_command(bench, "bench")
 cli.add_command(channel, "channel")
 cli.add_command(scheduler, "scheduler")
+cli.add_command(doctor, "doctor")
 
 
 def main() -> None:

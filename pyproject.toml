@@ -27,6 +27,7 @@ dev = [
 inference-ollama = []
 inference-vllm = []
 inference-llamacpp = []
+inference-mlx = ["mlx-lm>=0.19; sys_platform == 'darwin'"]
 inference-cloud = [
     "openai>=1.30",
     "anthropic>=0.30",
@@ -58,6 +59,9 @@ agents = []
 openhands = ["openhands-sdk>=1.0; python_version >= '3.12'"]
 claude-code = []
 gpu-metrics = ["pynvml>=12.0"]
+energy-amd = ["amdsmi>=6.1"]
+energy-apple = ["zeus-ml[apple]"]
+energy-all = ["pynvml>=12.0", "amdsmi>=6.1", "zeus-ml[apple]"]
 learning = []
 orchestrator-training = ["torch>=2.0", "transformers>=4.40"]
 channel-telegram = ["python-telegram-bot>=21.0"]

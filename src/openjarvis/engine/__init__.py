@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import openjarvis.engine.llamacpp  # noqa: F401
+import openjarvis.engine.mlx  # noqa: F401
 
 # Import engine modules to trigger @EngineRegistry.register() decorators
 import openjarvis.engine.ollama  # noqa: F401

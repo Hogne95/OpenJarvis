@@ -11,8 +11,8 @@ from openjarvis.core.events import EventBus
 from openjarvis.core.types import Message, Role
 from openjarvis.engine._discovery import get_engine
 from openjarvis.system import JarvisSystem, SystemBuilder
+from openjarvis.telemetry.instrumented_engine import InstrumentedEngine
 from openjarvis.telemetry.store import TelemetryStore
-from openjarvis.telemetry.wrapper import instrumented_generate
 
 
 class MemoryHandle:
@@ -140,6 +140,7 @@ class Jarvis:
         self._engine_key = engine_key
         self._model_override = model
         self._engine: Any = None
+        self._energy_monitor: Any = None
         self._resolved_engine_key: Optional[str] = None
         self._bus = EventBus()
         self._telem_store: Optional[TelemetryStore] = None
@@ -222,7 +223,21 @@ class Jarvis:
             except Exception:
                 pass  # security is best-effort
 
-        self._engine = engine
+        # Wrap engine with InstrumentedEngine for telemetry + energy
+        energy_monitor = None
+        if self._config.telemetry.gpu_metrics:
+            try:
+                from openjarvis.telemetry.energy_monitor import create_energy_monitor
+
+                energy_monitor = create_energy_monitor(
+                    prefer_vendor=self._config.telemetry.energy_vendor or None,
+                )
+            except Exception:
+                pass
+        self._energy_monitor = energy_monitor
+        self._engine = InstrumentedEngine(
+            engine, self._bus, energy_monitor=energy_monitor,
+        )
 
     def ask(
         self,
@@ -295,11 +310,10 @@ class Jarvis:
         if context and self._config.agent.context_from_memory:
             messages = self._inject_context(query, messages)
 
-        result = instrumented_generate(
-            self._engine,
+        # InstrumentedEngine handles telemetry + energy recording
+        result = self._engine.generate(
             messages,
             model=model_name,
-            bus=self._bus,
             temperature=temperature,
             max_tokens=max_tokens,
         )
@@ -442,6 +456,12 @@ class Jarvis:
     def close(self) -> None:
         """Release all resources."""
         self.memory.close()
+        if self._energy_monitor is not None:
+            try:
+                self._energy_monitor.close()
+            except Exception:
+                pass
+            self._energy_monitor = None
         if self._telem_store is not None:
             try:
                 self._telem_store.close()

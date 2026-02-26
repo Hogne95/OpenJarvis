@@ -4,13 +4,13 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Status
 
-OpenJarvis is a research framework for studying on-device AI systems. Phase 11 (NanoClaw subsumption) complete. Five composable pillars: Intelligence, Engine, Agents, Tools (with storage + MCP), and Learning — with trace-driven learning as a cross-cutting concern. Python SDK (`Jarvis` class), composition layer (`SystemBuilder`/`JarvisSystem`), OpenClaw agent infrastructure, benchmarking framework, Docker deployment all ready. Agent hierarchy refactored: `BaseAgent` (with shared helpers) → `ToolUsingAgent` (tool-using agents), `accepts_tools` introspection, real OpenHands SDK integration. NanoClaw functionality subsumed: `ClaudeCodeAgent` (Claude Agent SDK via Node.js), `WhatsAppBaileysChannel` (Baileys protocol), `ContainerRunner`/`SandboxedAgent` (Docker sandbox), `TaskScheduler` (cron/interval/once with SQLite + MCP tools). ~2078 tests pass (36 skipped for optional deps). Eval framework with 4 benchmarks (SuperGPQA, GAIA, FRAMES, WildChat) and LLM-as-judge scoring via `gpt-5-mini-2025-08-07`. Tool system enriched with shared `build_tool_descriptions()` builder; engine tool_calls normalized across OpenAI, Anthropic, Google, and LiteLLM.
+OpenJarvis is a research framework for studying on-device AI systems. Phase 13 (Install, Hosting, Cross-Hardware, Eval) complete. Five composable pillars: Intelligence, Engine, Agents, Tools (with storage + MCP), and Learning — with trace-driven learning as a cross-cutting concern. Python SDK (`Jarvis` class), composition layer (`SystemBuilder`/`JarvisSystem`), OpenClaw agent infrastructure, benchmarking framework, Docker deployment all ready. Agent hierarchy refactored: `BaseAgent` (with shared helpers) → `ToolUsingAgent` (tool-using agents), `accepts_tools` introspection, real OpenHands SDK integration. NanoClaw functionality subsumed: `ClaudeCodeAgent` (Claude Agent SDK via Node.js), `WhatsAppBaileysChannel` (Baileys protocol), `ContainerRunner`/`SandboxedAgent` (Docker sandbox), `TaskScheduler` (cron/interval/once with SQLite + MCP tools). ~2244 tests pass (37 skipped for optional deps). Eval framework with 4 benchmarks (SuperGPQA, GAIA, FRAMES, WildChat) and LLM-as-judge scoring via `gpt-5-mini-2025-08-07`. Energy measurement upgraded: `EnergyMonitor` ABC with multi-vendor support (NVIDIA hw counters, AMD amdsmi, Apple Silicon zeus-ml, CPU RAPL sysfs), batch-level energy-per-token accounting (`EnergyBatch`), steady-state detection (`SteadyStateDetector`), `EnergyBenchmark` with warmup phase. Tool system enriched with shared `build_tool_descriptions()` builder; engine tool_calls normalized across OpenAI, Anthropic, Google, and LiteLLM. Phase 13: `jarvis doctor` diagnostic command, `jarvis init` post-setup guidance, MLX engine backend (Apple Silicon → `mlx` recommendation), AMD VRAM/multi-GPU detection, PyTorch MPS device selection, PWA support for browser/desktop hosting, ROCm Docker support.
 
 ## Build & Development Commands
 
 ```bash
 uv sync --extra dev          # Install deps + dev tools
-uv run pytest tests/ -v      # Run ~2078 tests (36 skipped if optional deps missing)
+uv run pytest tests/ -v      # Run ~2244 tests (37 skipped if optional deps missing)
 uv run ruff check src/ tests/ # Lint
 uv run jarvis --version      # 1.0.0
 uv run jarvis ask "Hello"    # Query via discovered engine (direct mode)
@@ -44,7 +44,10 @@ uv run jarvis scheduler start        # Start scheduler daemon (foreground)
 uv run jarvis bench run              # Run all benchmarks against engine
 uv run jarvis bench run -n 20 --json # Run with 20 samples, JSON output
 uv run jarvis bench run -b latency -o results.jsonl  # Specific benchmark to file
+uv run jarvis bench run -b energy -w 5 -n 20 --json  # Energy benchmark with warmup
 uv run jarvis serve --port 8000      # OpenAI-compatible API server (requires openjarvis[server])
+uv run jarvis doctor                 # Run diagnostic checks (config, engines, models, deps)
+uv run jarvis doctor --json          # Machine-readable diagnostics
 uv run jarvis --help         # Show all subcommands
 uv run jarvis init --force   # Detect hardware, write ~/.openjarvis/config.toml
 # Eval framework
@@ -84,8 +87,8 @@ j.close()                             # Release resources
 ```
 
 - **Package manager:** `uv` with `hatchling` build backend
-- **Config:** `pyproject.toml` with extras for optional backends (e.g., `openjarvis[inference-vllm]`, `openjarvis[memory-colbert]`, `openjarvis[server]`, `openjarvis[openclaw]`)
-- **CLI entry point:** `jarvis` (Click-based) — subcommands: `init`, `ask`, `serve`, `model`, `memory`, `telemetry`, `bench`, `channel`, `scheduler`
+- **Config:** `pyproject.toml` with extras for optional backends (e.g., `openjarvis[inference-vllm]`, `openjarvis[inference-mlx]`, `openjarvis[memory-colbert]`, `openjarvis[server]`, `openjarvis[openclaw]`, `openjarvis[energy-amd]`, `openjarvis[energy-apple]`, `openjarvis[energy-all]`)
+- **CLI entry point:** `jarvis` (Click-based) — subcommands: `init`, `ask`, `serve`, `model`, `memory`, `telemetry`, `bench`, `channel`, `scheduler`, `doctor`
 - **Python:** 3.10+ required
 - **Node.js:** 22+ required only for OpenClaw agent
 
@@ -137,11 +140,12 @@ OpenJarvis is a research framework for on-device AI organized around **five comp
 
 ### Benchmarking Framework (`src/openjarvis/bench/`)
 
-- `_stubs.py` — `BenchmarkResult` dataclass, `BaseBenchmark` ABC, `BenchmarkSuite` runner
-- `latency.py` — `LatencyBenchmark`: measures per-call latency (mean, p50, p95, min, max)
-- `throughput.py` — `ThroughputBenchmark`: measures tokens/second throughput
+- `_stubs.py` — `BenchmarkResult` dataclass (includes `warmup_samples`, `steady_state_samples`, `steady_state_reached`, `total_energy_joules`, `energy_per_token_joules`, `energy_method`), `BaseBenchmark` ABC, `BenchmarkSuite` runner
+- `latency.py` — `LatencyBenchmark`: measures per-call latency (mean, p50, p95, min, max). Supports `warmup_samples` parameter.
+- `throughput.py` — `ThroughputBenchmark`: measures tokens/second throughput. Supports `warmup_samples` parameter.
+- `energy.py` — `EnergyBenchmark`: measures energy per token at thermal equilibrium. Uses `SteadyStateDetector` + `EnergyBatch` with optional `EnergyMonitor`. Warmup phase excluded from metrics.
 - All registered via `BenchmarkRegistry` with `ensure_registered()` pattern
-- CLI: `jarvis bench run` with options for model, engine, samples, benchmark selection, JSON/JSONL output
+- CLI: `jarvis bench run` with options for model, engine, samples, benchmark selection, warmup (`-w`), JSON/JSONL output
 
 ### OpenClaw Infrastructure (`src/openjarvis/agents/openclaw*.py`)
 
@@ -167,11 +171,18 @@ OpenJarvis is a research framework for on-device AI organized around **five comp
 
 ### Telemetry (`src/openjarvis/telemetry/`)
 
-- `store.py` — `TelemetryStore` writes records to SQLite via EventBus subscription (append-only)
-- `aggregator.py` — `TelemetryAggregator` read-only query layer: `per_model_stats()`, `per_engine_stats()`, `top_models()`, `summary()`, `export_records()`, `clear()`. Time-range filtering via `since`/`until`.
-- `instrumented_engine.py` — `InstrumentedEngine` wraps any `InferenceEngine` transparently, publishing `INFERENCE_START/END` and `TELEMETRY_RECORD` events. Agents call `engine.generate()` normally; telemetry is opt-in via this wrapper (applied by `SystemBuilder` when `config.telemetry.enabled`).
+- `store.py` — `TelemetryStore` writes records to SQLite via EventBus subscription (append-only). Schema includes `energy_method`, `energy_vendor`, `batch_id`, `is_warmup`, `cpu_energy_joules`, `gpu_energy_joules`, `dram_energy_joules` columns.
+- `aggregator.py` — `TelemetryAggregator` read-only query layer: `per_model_stats()`, `per_engine_stats()`, `per_batch_stats()`, `top_models()`, `summary()`, `export_records()`, `clear()`. Time-range filtering via `since`/`until`.
+- `instrumented_engine.py` — `InstrumentedEngine` wraps any `InferenceEngine` transparently, publishing `INFERENCE_START/END` and `TELEMETRY_RECORD` events. Prefers `EnergyMonitor` over legacy `GpuMonitor` when available. Agents call `engine.generate()` normally; telemetry is opt-in via this wrapper (applied by `SystemBuilder` when `config.telemetry.enabled`).
+- `energy_monitor.py` — `EnergyMonitor` ABC: `available()`, `vendor()`, `energy_method()`, `sample()` context manager, `close()`. `EnergySample` dataclass (superset of `GpuSample`): total + per-component (CPU, GPU, DRAM, ANE) energy, vendor/device info, measurement method. `EnergyVendor` enum: NVIDIA, AMD, APPLE, CPU_RAPL. `create_energy_monitor()` factory with auto-detection order: NVIDIA > AMD > Apple > CPU RAPL.
+- `energy_nvidia.py` — `NvidiaEnergyMonitor`: hardware counters via `nvmlDeviceGetTotalEnergyConsumption()` on Volta+, trapezoidal polling fallback on pre-Volta. `energy_method` = "hw_counter" or "polling".
+- `energy_amd.py` — `AmdEnergyMonitor`: hardware counters via `amdsmi_get_energy_count()` (ROCm 6.1+). `energy_method` = "hw_counter".
+- `energy_apple.py` — `AppleEnergyMonitor`: wraps `zeus-ml[apple]` `AppleSiliconMonitor`. Per-component breakdown (CPU, GPU, DRAM, ANE). `energy_method` = "zeus".
+- `energy_rapl.py` — `RaplEnergyMonitor`: reads Intel RAPL counters from `/sys/class/powercap/intel-rapl/` (no deps). Handles counter wrap-around. `energy_method` = "rapl".
+- `batch.py` — `EnergyBatch`: wraps `EnergyMonitor.sample()` around grouped requests. `BatchMetrics` dataclass with energy-per-token/per-request accounting. `BATCH_START`/`BATCH_END` events.
+- `steady_state.py` — `SteadyStateDetector`: CV-based sliding window to detect thermal equilibrium. `SteadyStateConfig` (warmup_samples, window_size, cv_threshold). Used by `EnergyBenchmark`.
 - `wrapper.py` — Legacy `instrumented_generate()` function (still used by some CLI/SDK code paths)
-- Dataclasses: `ModelStats`, `EngineStats`, `AggregatedStats`
+- Dataclasses: `ModelStats`, `EngineStats`, `AggregatedStats`, `EnergySample`, `BatchMetrics`, `SteadyStateResult`
 
 ### Security (`src/openjarvis/security/`)
 
@@ -205,14 +216,16 @@ OpenJarvis is a research framework for on-device AI organized around **five comp
 
 - `registry.py` — `RegistryBase[T]` generic base class adapted from IPW. Typed subclasses: `ModelRegistry`, `EngineRegistry`, `MemoryRegistry`, `AgentRegistry`, `ToolRegistry`, `RouterPolicyRegistry`, `BenchmarkRegistry`, `ChannelRegistry`, `LearningRegistry`.
 - `types.py` — `Message`, `Conversation`, `ModelSpec`, `ToolResult`, `TelemetryRecord`, `StepType`, `TraceStep`, `Trace`, `RoutingContext`.
-- `config.py` — `JarvisConfig` dataclass hierarchy with TOML loader. Config classes: `EngineConfig` (nested `OllamaEngineConfig`, `VLLMEngineConfig`, `SGLangEngineConfig`, `LlamaCppEngineConfig`), `IntelligenceConfig` (model identity + generation defaults: temperature, max_tokens, top_p, top_k, repetition_penalty, stop_sequences), `AgentConfig` (default_agent, tools, objective, system_prompt, system_prompt_path, context_from_memory), `ToolsConfig` (nests `StorageConfig` + `MCPConfig`), `LearningConfig` (nested `RoutingLearningConfig`, `IntelligenceLearningConfig`, `AgentLearningConfig`, `MetricsConfig`), `TracesConfig`, `TelemetryConfig`, `ServerConfig`, `ChannelConfig` (nests `WhatsAppBaileysChannelConfig`), `SecurityConfig`, `SandboxConfig`, `SchedulerConfig`. Backward-compat properties: `engine.ollama_host` → `engine.ollama.host`, `agent.default_tools` → `agent.tools`, `learning.default_policy` → `learning.routing.policy`. TOML migration layer handles cross-section moves (`agent.temperature` → `intelligence.temperature`, `memory.context_injection` → `agent.context_from_memory`). User config lives at `~/.openjarvis/config.toml`. TOML sections: `[engine]`, `[engine.ollama]`, `[engine.vllm]`, `[engine.sglang]`, `[engine.llamacpp]`, `[intelligence]`, `[agent]`, `[tools.storage]`, `[tools.mcp]`, `[learning]`, `[learning.routing]`, `[learning.intelligence]`, `[learning.agent]`, `[learning.metrics]`, `[memory]` (backward-compat), `[server]`, `[telemetry]`, `[traces]`, `[channel]`, `[channel.whatsapp_baileys]`, `[security]`, `[sandbox]`, `[scheduler]`.
+- `config.py` — `JarvisConfig` dataclass hierarchy with TOML loader. Config classes: `EngineConfig` (nested `OllamaEngineConfig`, `VLLMEngineConfig`, `SGLangEngineConfig`, `LlamaCppEngineConfig`, `MLXEngineConfig`), `IntelligenceConfig` (model identity + generation defaults: temperature, max_tokens, top_p, top_k, repetition_penalty, stop_sequences), `AgentConfig` (default_agent, tools, objective, system_prompt, system_prompt_path, context_from_memory), `ToolsConfig` (nests `StorageConfig` + `MCPConfig`), `LearningConfig` (nested `RoutingLearningConfig`, `IntelligenceLearningConfig`, `AgentLearningConfig`, `MetricsConfig`), `TracesConfig`, `TelemetryConfig`, `ServerConfig`, `ChannelConfig` (nests `WhatsAppBaileysChannelConfig`), `SecurityConfig`, `SandboxConfig`, `SchedulerConfig`. Backward-compat properties: `engine.ollama_host` → `engine.ollama.host`, `agent.default_tools` → `agent.tools`, `learning.default_policy` → `learning.routing.policy`. TOML migration layer handles cross-section moves (`agent.temperature` → `intelligence.temperature`, `memory.context_injection` → `agent.context_from_memory`). User config lives at `~/.openjarvis/config.toml`. TOML sections: `[engine]`, `[engine.ollama]`, `[engine.vllm]`, `[engine.sglang]`, `[engine.llamacpp]`, `[engine.mlx]`, `[intelligence]`, `[agent]`, `[tools.storage]`, `[tools.mcp]`, `[learning]`, `[learning.routing]`, `[learning.intelligence]`, `[learning.agent]`, `[learning.metrics]`, `[memory]` (backward-compat), `[server]`, `[telemetry]`, `[traces]`, `[channel]`, `[channel.whatsapp_baileys]`, `[security]`, `[sandbox]`, `[scheduler]`.
 - `events.py` — Pub/sub event bus for inter-pillar telemetry (synchronous dispatch). EventType values: INFERENCE_START/END, TOOL_CALL_START/END, MEMORY_STORE/RETRIEVE, AGENT_TURN_START/END, TELEMETRY_RECORD, TRACE_STEP/COMPLETE, CHANNEL_MESSAGE_RECEIVED/SENT, SECURITY_SCAN/ALERT/BLOCK, SCHEDULER_TASK_START/END.
 
 ### Docker & Deployment
 
 - `Dockerfile` — Multi-stage build: Python 3.12-slim, installs `.[server]`, entrypoint `jarvis serve`
 - `Dockerfile.gpu` — NVIDIA CUDA 12.4 runtime variant
+- `Dockerfile.gpu.rocm` — AMD ROCm 6.2 runtime variant (multi-stage build)
 - `docker-compose.yml` — Services: `jarvis` (port 8000) + `ollama` (port 11434)
+- `docker-compose.gpu.rocm.yml` — ROCm override file (use with `-f docker-compose.yml -f docker-compose.gpu.rocm.yml`)
 - `deploy/systemd/openjarvis.service` — systemd unit file
 - `deploy/launchd/com.openjarvis.plist` — macOS launchd plist
 
@@ -250,3 +263,5 @@ OpenAI-compatible server via `jarvis serve`: `POST /v1/chat/completions`, `GET /
 | v1.4 | Phase 9 | Pillar-aligned config: generation params in Intelligence, nested engine/learning configs, agent objective/system_prompt/context_from_memory, structured learning sub-policies (routing/intelligence/agent/metrics), TOML migration layer |
 | v1.5 | Phase 10 | Agent restructuring: BaseAgent helpers (`_emit_turn_start/end`, `_build_messages`, `_generate`, `_max_turns_result`), ToolUsingAgent intermediate base, `accepts_tools` introspection, NativeReActAgent/NativeOpenHandsAgent renames, real OpenHands SDK integration, CLI/SDK tool-passing bug fix, backward-compat shims |
 | v1.6 | Phase 11 | NanoClaw subsumption: `ClaudeCodeAgent` (Claude Agent SDK via Node.js subprocess), `WhatsAppBaileysChannel` (Baileys protocol), `ContainerRunner`/`SandboxedAgent` (Docker sandbox with mount security), `TaskScheduler` (cron/interval/once + SQLite + MCP tools + CLI), `SandboxConfig`/`SchedulerConfig`/`WhatsAppBaileysChannelConfig`, SystemBuilder `.sandbox()`/`.scheduler()` |
+| v1.7 | Phase 12 | Energy Measurement Upgrade: `EnergyMonitor` ABC with multi-vendor support (NVIDIA hw counters, AMD amdsmi, Apple zeus-ml, CPU RAPL sysfs), `create_energy_monitor()` factory with auto-detection, `EnergySample` superset of `GpuSample`, `EnergyBatch` batch-level energy-per-token accounting, `SteadyStateDetector` CV-based thermal equilibrium detection, `EnergyBenchmark` with warmup phase, `InstrumentedEngine` prefers `EnergyMonitor` over legacy `GpuMonitor`, expanded `GPU_SPECS` (B200, MI300X, MI250X, M4 Max, M2 Ultra), `TelemetryRecord`/store schema extended with energy_method/vendor/batch_id/is_warmup/per-component fields, eval runner warmup phase, `--warmup` CLI option, new extras `energy-amd`/`energy-apple`/`energy-all` |
+| v1.8 | Phase 13 | Install, Hosting, Cross-Hardware, Eval: `jarvis doctor` diagnostic command (8 checks with Rich output + `--json`), `jarvis init` post-setup guidance (engine-specific next steps), README Quick Start section, MLX engine backend (`MLXEngine`, `MLXEngineConfig`, Apple Silicon → `mlx` recommendation), AMD VRAM/multi-GPU detection via `rocm-smi --showmeminfo`/`--showallinfo`, PyTorch MPS device selection in orchestrator trainers, PWA support (vite-plugin-pwa, service worker, manifest, icons), server static file serving fix for PWA files, `Dockerfile.gpu.rocm` + `docker-compose.gpu.rocm.yml` for ROCm, `inference-mlx` extra |

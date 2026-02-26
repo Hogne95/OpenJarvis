@@ -11,7 +11,89 @@ from openjarvis.core.config import (
     DEFAULT_CONFIG_PATH,
     detect_hardware,
     generate_default_toml,
+    recommend_engine,
 )
+
+
+def _next_steps_text(engine: str) -> str:
+    """Return engine-specific next-steps guidance after init."""
+    steps: dict[str, str] = {
+        "ollama": (
+            "Next steps:\n"
+            "\n"
+            "  1. Install Ollama:\n"
+            "     curl -fsSL https://ollama.com/install.sh | sh\n"
+            "\n"
+            "  2. Start the Ollama server:\n"
+            "     ollama serve\n"
+            "\n"
+            "  3. Pull a model:\n"
+            "     ollama pull qwen3:8b\n"
+            "\n"
+            "  4. Try it out:\n"
+            "     jarvis ask \"Hello\"\n"
+            "\n"
+            "  Run `jarvis doctor` to verify your setup."
+        ),
+        "vllm": (
+            "Next steps:\n"
+            "\n"
+            "  1. Install vLLM:\n"
+            "     pip install vllm\n"
+            "\n"
+            "  2. Start the vLLM server:\n"
+            "     vllm serve Qwen/Qwen3-8B\n"
+            "\n"
+            "  3. Try it out:\n"
+            "     jarvis ask \"Hello\"\n"
+            "\n"
+            "  Run `jarvis doctor` to verify your setup."
+        ),
+        "llamacpp": (
+            "Next steps:\n"
+            "\n"
+            "  1. Install llama.cpp:\n"
+            "     brew install llama.cpp   # macOS\n"
+            "     # Or build from source: https://github.com/ggerganov/llama.cpp\n"
+            "\n"
+            "  2. Start the llama.cpp server:\n"
+            "     llama-server -m model.gguf --port 8080\n"
+            "\n"
+            "  3. Try it out:\n"
+            "     jarvis ask \"Hello\"\n"
+            "\n"
+            "  Run `jarvis doctor` to verify your setup."
+        ),
+        "sglang": (
+            "Next steps:\n"
+            "\n"
+            "  1. Install SGLang:\n"
+            "     pip install sglang[all]\n"
+            "\n"
+            "  2. Start the SGLang server:\n"
+            "     python -m sglang.launch_server --model Qwen/Qwen3-8B\n"
+            "\n"
+            "  3. Try it out:\n"
+            "     jarvis ask \"Hello\"\n"
+            "\n"
+            "  Run `jarvis doctor` to verify your setup."
+        ),
+        "mlx": (
+            "Next steps:\n"
+            "\n"
+            "  1. Install MLX LM:\n"
+            "     pip install mlx-lm\n"
+            "\n"
+            "  2. Start the MLX server:\n"
+            "     mlx_lm.server --model mlx-community/Qwen2.5-7B-4bit\n"
+            "\n"
+            "  3. Try it out:\n"
+            "     jarvis ask \"Hello\"\n"
+            "\n"
+            "  Run `jarvis doctor` to verify your setup."
+        ),
+    }
+    return steps.get(engine, steps["ollama"])
 
 
 @click.command()
@@ -52,3 +134,13 @@ def init(force: bool) -> None:
         Panel(toml_content, title=str(DEFAULT_CONFIG_PATH), border_style="green")
     )
     console.print("[green]Config written successfully.[/green]")
+
+    engine = recommend_engine(hw)
+    console.print()
+    console.print(
+        Panel(
+            _next_steps_text(engine),
+            title="Getting Started",
+            border_style="cyan",
+        )
+    )

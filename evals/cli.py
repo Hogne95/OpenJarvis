@@ -8,6 +8,24 @@ from pathlib import Path
 from typing import Optional
 
 import click
+from rich.console import Console
+from rich.progress import (
+    BarColumn,
+    Progress,
+    SpinnerColumn,
+    TextColumn,
+    TimeRemainingColumn,
+)
+
+from evals.core.display import (
+    print_banner,
+    print_completion,
+    print_metrics_table,
+    print_run_header,
+    print_section,
+    print_subject_table,
+    print_suite_summary,
+)
 
 # Registry of available benchmarks and their metadata
 BENCHMARKS = {
@@ -96,58 +114,28 @@ def _build_judge_backend(judge_model: str):
     return JarvisDirectBackend(engine_key="cloud")
 
 
-def _print_summary(summary) -> None:
-    """Print a single run summary."""
-    click.echo(f"\n{'=' * 60}")
-    click.echo(f"Benchmark: {summary.benchmark}")
-    click.echo(f"Model:     {summary.model}")
-    click.echo(f"Backend:   {summary.backend}")
-    click.echo(f"Samples:   {summary.total_samples}")
-    click.echo(f"Scored:    {summary.scored_samples}")
-    click.echo(f"Correct:   {summary.correct}")
-    click.echo(f"Accuracy:  {summary.accuracy:.4f}")
-    click.echo(f"Errors:    {summary.errors}")
-    click.echo(f"Latency:   {summary.mean_latency_seconds:.2f}s (mean)")
-    click.echo(f"Cost:      ${summary.total_cost_usd:.4f}")
-    if summary.per_subject:
-        click.echo("\nPer-subject breakdown:")
-        for subj, stats in sorted(summary.per_subject.items()):
-            click.echo(f"  {subj}: {stats['accuracy']:.4f} "
-                       f"({int(stats['correct'])}/{int(stats['scored'])})")
-    # GPU telemetry stats
-    _stats_rows = []
-    for label, stats_field in [
-        ("Accuracy", "accuracy_stats"),
-        ("Latency (s)", "latency_stats"),
-        ("TTFT (s)", "ttft_stats"),
-        ("Energy (J)", "energy_stats"),
-        ("Power (W)", "power_stats"),
-        ("GPU Util (%)", "gpu_utilization_stats"),
-        ("Throughput (tok/s)", "throughput_stats"),
-        ("MFU (%)", "mfu_stats"),
-        ("MBU (%)", "mbu_stats"),
-        ("IPW", "ipw_stats"),
-        ("IPJ", "ipj_stats"),
-    ]:
-        ms = getattr(summary, stats_field, None)
-        if ms is not None:
-            _stats_rows.append((label, ms))
-    if _stats_rows:
-        click.echo(f"\n{'Metric':20s} {'Mean':>10s} {'Median':>10s} "
-                   f"{'Min':>10s} {'Max':>10s} {'Std':>10s}")
-        click.echo(f"{'-' * 20} {'-' * 10} {'-' * 10} "
-                   f"{'-' * 10} {'-' * 10} {'-' * 10}")
-        for label, ms in _stats_rows:
-            click.echo(f"{label:20s} {ms.mean:10.4f} {ms.median:10.4f} "
-                       f"{ms.min:10.4f} {ms.max:10.4f} {ms.std:10.4f}")
-    if getattr(summary, "total_energy_joules", 0.0) > 0:
-        click.echo(f"\nTotal Energy: {summary.total_energy_joules:.4f} J")
-    click.echo(f"{'=' * 60}")
+def _print_summary(
+    summary,
+    console: Optional[Console] = None,
+    output_path: Optional[Path] = None,
+    traces_dir: Optional[Path] = None,
+) -> None:
+    """Print a single run summary using Rich display primitives."""
+    if console is None:
+        console = Console()
+    print_section(console, "Results")
+    print_metrics_table(console, summary)
+    if summary.per_subject and len(summary.per_subject) > 1:
+        print_subject_table(console, summary.per_subject)
+    print_completion(console, summary, output_path, traces_dir)
 
 
-def _run_single(config) -> object:
+def _run_single(config, console: Optional[Console] = None) -> object:
     """Run a single eval from a RunConfig and return the summary."""
     from evals.core.runner import EvalRunner
+
+    if console is None:
+        console = Console()
 
     eval_backend = _build_backend(
         config.backend,
@@ -163,7 +151,27 @@ def _run_single(config) -> object:
 
     runner = EvalRunner(config, dataset, eval_backend, scorer)
     try:
-        return runner.run()
+        num_samples = config.max_samples or 0
+        # Use progress bar if we know the sample count
+        if num_samples > 0:
+            with Progress(
+                SpinnerColumn(),
+                TextColumn("[progress.description]{task.description}"),
+                BarColumn(),
+                TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
+                TimeRemainingColumn(),
+                console=console,
+            ) as progress:
+                task = progress.add_task("Evaluating samples...", total=num_samples)
+                summary = runner.run(
+                    progress_callback=lambda done, total: progress.update(
+                        task, completed=done,
+                    ),
+                )
+        else:
+            with console.status("Evaluating samples..."):
+                summary = runner.run()
+        return summary
     finally:
         eval_backend.close()
         judge_backend.close()
@@ -173,15 +181,25 @@ def _run_from_config(config_path: str, verbose: bool) -> None:
     """Load a TOML config and run the full models x benchmarks matrix."""
     from evals.core.config import expand_suite, load_eval_config
 
+    console = Console()
+
     suite = load_eval_config(config_path)
     run_configs = expand_suite(suite)
 
     suite_name = suite.meta.name or Path(config_path).stem
-    click.echo(f"Suite: {suite_name}")
+
+    # Banner + configuration
+    print_banner(console)
+    print_section(console, "Suite Configuration")
+    console.print(
+        f"  [cyan]Suite:[/cyan]       {suite_name}"
+    )
     if suite.meta.description:
-        click.echo(f"  {suite.meta.description}")
-    click.echo(f"  {len(suite.models)} model(s) x {len(suite.benchmarks)} "
-               f"benchmark(s) = {len(run_configs)} run(s)\n")
+        console.print(f"  [cyan]Description:[/cyan] {suite.meta.description}")
+    console.print(
+        f"  [cyan]Matrix:[/cyan]     {len(suite.models)} model(s) x "
+        f"{len(suite.benchmarks)} benchmark(s) = {len(run_configs)} run(s)"
+    )
 
     # Ensure output directory exists
     output_dir = Path(suite.run.output_dir)
@@ -189,28 +207,24 @@ def _run_from_config(config_path: str, verbose: bool) -> None:
 
     summaries = []
     for i, rc in enumerate(run_configs, 1):
-        click.echo(f"--- [{i}/{len(run_configs)}] {rc.benchmark} / {rc.model} ---")
+        print_section(
+            console,
+            f"Run {i}/{len(run_configs)}: {rc.benchmark} / {rc.model}",
+        )
         try:
-            summary = _run_single(rc)
+            summary = _run_single(rc, console=console)
             summaries.append(summary)
-            click.echo(f"  {summary.accuracy:.4f} "
-                       f"({summary.correct}/{summary.scored_samples})")
+            console.print(
+                f"  [green]{summary.accuracy:.4f}[/green] "
+                f"({summary.correct}/{summary.scored_samples})"
+            )
         except Exception as exc:
-            click.echo(f"  FAILED: {exc}", err=True)
+            console.print(f"  [red bold]FAILED:[/red bold] {exc}")
 
     # Print overall summary table
     if summaries:
-        click.echo(f"\n{'=' * 60}")
-        click.echo(f"Suite Results: {suite_name}")
-        click.echo(f"{'=' * 60}")
-        click.echo(f"  {'Benchmark':12s} {'Model':20s} {'Accuracy':>10s} {'Scored':>8s}")
-        click.echo(f"  {'-' * 12} {'-' * 20} {'-' * 10} {'-' * 8}")
-        for s in summaries:
-            model_display = s.model[:20]
-            click.echo(f"  {s.benchmark:12s} {model_display:20s} "
-                       f"{s.accuracy:10.4f} "
-                       f"{s.correct}/{s.scored_samples:>5}")
-        click.echo(f"{'=' * 60}")
+        print_section(console, "Suite Results")
+        print_suite_summary(console, summaries, suite_name)
 
 
 @click.group()
@@ -260,6 +274,8 @@ def run(ctx, config_path, benchmark, backend, model, engine_key, agent_name,
     """Run a single benchmark evaluation, or a full suite from a TOML config."""
     _setup_logging(verbose)
 
+    console = Console()
+
     # Config-driven mode
     if config_path is not None:
         _run_from_config(config_path, verbose)
@@ -300,8 +316,31 @@ def run(ctx, config_path, benchmark, backend, model, engine_key, agent_name,
         gpu_metrics=gpu_metrics,
     )
 
-    summary = _run_single(config)
-    _print_summary(summary)
+    # Banner + config
+    print_banner(console)
+    print_section(console, "Configuration")
+    print_run_header(
+        console,
+        benchmark=benchmark,
+        model=model,
+        backend=backend,
+        samples=max_samples,
+        workers=max_workers,
+    )
+
+    # Evaluation
+    print_section(console, "Evaluation")
+    summary = _run_single(config, console=console)
+
+    # Results
+    _output_path = getattr(summary, "_output_path", None)
+    _traces_dir = getattr(summary, "_traces_dir", None)
+    _print_summary(
+        summary,
+        console=console,
+        output_path=_output_path,
+        traces_dir=_traces_dir,
+    )
 
 
 @main.command("run-all")
@@ -325,14 +364,24 @@ def run_all(model, engine_key, max_samples, max_workers, judge_model,
     from evals.core.runner import EvalRunner
     from evals.core.types import RunConfig
 
+    console = Console()
+
+    print_banner(console)
+    print_section(console, "Suite Configuration")
+    console.print(
+        f"  [cyan]Model:[/cyan]      {model}\n"
+        f"  [cyan]Benchmarks:[/cyan] {', '.join(BENCHMARKS.keys())}\n"
+        f"  [cyan]Samples:[/cyan]    {max_samples if max_samples else 'all'}"
+    )
+
     output_dir_path = Path(output_dir)
     output_dir_path.mkdir(parents=True, exist_ok=True)
 
     model_slug = model.replace("/", "-").replace(":", "-")
     summaries = []
 
-    for bench_name in BENCHMARKS:
-        click.echo(f"\n--- Running {bench_name} ---")
+    for i, bench_name in enumerate(BENCHMARKS, 1):
+        print_section(console, f"Run {i}/{len(BENCHMARKS)}: {bench_name}")
         output_path = output_dir_path / f"{bench_name}_{model_slug}.jsonl"
 
         config = RunConfig(
@@ -354,24 +403,41 @@ def run_all(model, engine_key, max_samples, max_workers, judge_model,
 
         runner = EvalRunner(config, dataset, eval_backend, scorer)
         try:
-            summary = runner.run()
+            if max_samples and max_samples > 0:
+                with Progress(
+                    SpinnerColumn(),
+                    TextColumn("[progress.description]{task.description}"),
+                    BarColumn(),
+                    TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
+                    TimeRemainingColumn(),
+                    console=console,
+                ) as progress:
+                    task = progress.add_task(
+                        f"Evaluating {bench_name}...", total=max_samples,
+                    )
+                    summary = runner.run(
+                        progress_callback=lambda done, total: progress.update(
+                            task, completed=done,
+                        ),
+                    )
+            else:
+                with console.status(f"Evaluating {bench_name}..."):
+                    summary = runner.run()
             summaries.append(summary)
-            click.echo(f"  {bench_name}: {summary.accuracy:.4f} "
-                       f"({summary.correct}/{summary.scored_samples})")
+            console.print(
+                f"  [green]{summary.accuracy:.4f}[/green] "
+                f"({summary.correct}/{summary.scored_samples})"
+            )
         except Exception as exc:
-            click.echo(f"  {bench_name}: FAILED — {exc}", err=True)
+            console.print(f"  [red bold]FAILED:[/red bold] {exc}")
         finally:
             eval_backend.close()
             judge_backend.close()
 
     # Print overall summary
     if summaries:
-        click.echo(f"\n{'=' * 60}")
-        click.echo("Overall Results:")
-        for s in summaries:
-            click.echo(f"  {s.benchmark:12s} {s.accuracy:.4f} "
-                       f"({s.correct}/{s.scored_samples})")
-        click.echo(f"{'=' * 60}")
+        print_section(console, "Suite Results")
+        print_suite_summary(console, summaries, f"All Benchmarks / {model}")
 
 
 @main.command()
@@ -389,32 +455,53 @@ def summarize(jsonl_path):
         click.echo("No records found.")
         return
 
+    console = Console()
     total = len(records)
     scored = [r for r in records if r.get("is_correct") is not None]
     correct = [r for r in scored if r["is_correct"]]
     errors = [r for r in records if r.get("error")]
     accuracy = len(correct) / len(scored) if scored else 0.0
 
-    click.echo(f"File:     {jsonl_path}")
-    click.echo(f"Benchmark: {records[0].get('benchmark', '?')}")
-    click.echo(f"Model:     {records[0].get('model', '?')}")
-    click.echo(f"Total:     {total}")
-    click.echo(f"Scored:    {len(scored)}")
-    click.echo(f"Correct:   {len(correct)}")
-    click.echo(f"Accuracy:  {accuracy:.4f}")
-    click.echo(f"Errors:    {len(errors)}")
+    console.print(f"[cyan]File:[/cyan]      {jsonl_path}")
+    console.print(f"[cyan]Benchmark:[/cyan] {records[0].get('benchmark', '?')}")
+    console.print(f"[cyan]Model:[/cyan]     {records[0].get('model', '?')}")
+    console.print(f"[cyan]Total:[/cyan]     {total}")
+    console.print(f"[cyan]Scored:[/cyan]    {len(scored)}")
+    console.print(f"[cyan]Correct:[/cyan]   {len(correct)}")
+    console.print(f"[cyan]Accuracy:[/cyan]  [bold]{accuracy:.4f}[/bold]")
+    console.print(f"[cyan]Errors:[/cyan]    {len(errors)}")
 
 
 @main.command("list")
 def list_cmd():
     """List available benchmarks and backends."""
-    click.echo("Benchmarks:")
-    for name, info in BENCHMARKS.items():
-        click.echo(f"  {name:12s} [{info['category']:10s}] {info['description']}")
+    console = Console()
+    print_banner(console)
 
-    click.echo("\nBackends:")
+    from rich.table import Table
+
+    bench_table = Table(
+        title="[bold]Available Benchmarks[/bold]",
+        border_style="bright_blue",
+        title_style="bold cyan",
+    )
+    bench_table.add_column("Name", style="cyan", no_wrap=True)
+    bench_table.add_column("Category", style="white")
+    bench_table.add_column("Description")
+    for name, info in BENCHMARKS.items():
+        bench_table.add_row(name, info["category"], info["description"])
+    console.print(bench_table)
+
+    backend_table = Table(
+        title="[bold]Available Backends[/bold]",
+        border_style="bright_blue",
+        title_style="bold cyan",
+    )
+    backend_table.add_column("Name", style="cyan", no_wrap=True)
+    backend_table.add_column("Description")
     for name, desc in BACKENDS.items():
-        click.echo(f"  {name:16s} {desc}")
+        backend_table.add_row(name, desc)
+    console.print(backend_table)
 
 
 if __name__ == "__main__":

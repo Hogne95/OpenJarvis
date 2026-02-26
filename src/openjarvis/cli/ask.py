@@ -21,8 +21,8 @@ from openjarvis.intelligence import (
     merge_discovered_models,
     register_builtin_models,
 )
+from openjarvis.telemetry.instrumented_engine import InstrumentedEngine
 from openjarvis.telemetry.store import TelemetryStore
-from openjarvis.telemetry.wrapper import instrumented_generate
 
 
 def _get_memory_backend(config):
@@ -225,6 +225,19 @@ def ask(
 
     engine_name, engine = resolved
 
+    # Wrap engine with InstrumentedEngine for telemetry (energy + GPU metrics)
+    energy_monitor = None
+    if config.telemetry.gpu_metrics:
+        try:
+            from openjarvis.telemetry.energy_monitor import create_energy_monitor
+
+            energy_monitor = create_energy_monitor(
+                prefer_vendor=config.telemetry.energy_vendor or None,
+            )
+        except Exception:
+            pass  # energy monitoring is best-effort
+    engine = InstrumentedEngine(engine, bus, energy_monitor=energy_monitor)
+
     # Discover models and merge into registry
     all_engines = discover_engines(config)
     all_models = discover_models(all_engines)
@@ -306,13 +319,11 @@ def ask(
         except Exception:
             pass  # context injection is best-effort
 
-    # Generate
+    # Generate (InstrumentedEngine handles telemetry + energy recording)
     try:
-        result = instrumented_generate(
-            engine,
+        result = engine.generate(
             messages,
             model=model_name,
-            bus=bus,
             temperature=temperature,
             max_tokens=max_tokens,
         )
@@ -327,6 +338,11 @@ def ask(
         click.echo(result.get("content", ""))
 
     # Cleanup
+    if energy_monitor is not None:
+        try:
+            energy_monitor.close()
+        except Exception:
+            pass
     if telem_store is not None:
         try:
             telem_store.close()

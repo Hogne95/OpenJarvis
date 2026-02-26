@@ -30,6 +30,24 @@ CREATE TABLE IF NOT EXISTS telemetry (
     throughput_tok_per_sec REAL NOT NULL DEFAULT 0.0,
     prefill_latency_seconds REAL NOT NULL DEFAULT 0.0,
     decode_latency_seconds  REAL NOT NULL DEFAULT 0.0,
+    energy_method   TEXT    NOT NULL DEFAULT '',
+    energy_vendor   TEXT    NOT NULL DEFAULT '',
+    batch_id        TEXT    NOT NULL DEFAULT '',
+    is_warmup       INTEGER NOT NULL DEFAULT 0,
+    cpu_energy_joules    REAL NOT NULL DEFAULT 0.0,
+    gpu_energy_joules    REAL NOT NULL DEFAULT 0.0,
+    dram_energy_joules   REAL NOT NULL DEFAULT 0.0,
+    energy_per_output_token_joules REAL NOT NULL DEFAULT 0.0,
+    throughput_per_watt  REAL NOT NULL DEFAULT 0.0,
+    prefill_energy_joules REAL NOT NULL DEFAULT 0.0,
+    decode_energy_joules REAL NOT NULL DEFAULT 0.0,
+    mean_itl_ms          REAL NOT NULL DEFAULT 0.0,
+    median_itl_ms        REAL NOT NULL DEFAULT 0.0,
+    p90_itl_ms           REAL NOT NULL DEFAULT 0.0,
+    p95_itl_ms           REAL NOT NULL DEFAULT 0.0,
+    p99_itl_ms           REAL NOT NULL DEFAULT 0.0,
+    std_itl_ms           REAL NOT NULL DEFAULT 0.0,
+    is_streaming         INTEGER NOT NULL DEFAULT 0,
     metadata        TEXT    NOT NULL DEFAULT '{}'
 );
 """
@@ -41,8 +59,19 @@ INSERT INTO telemetry (
     latency_seconds, ttft, cost_usd, energy_joules, power_watts,
     gpu_utilization_pct, gpu_memory_used_gb, gpu_temperature_c,
     throughput_tok_per_sec, prefill_latency_seconds, decode_latency_seconds,
+    energy_method, energy_vendor, batch_id, is_warmup,
+    cpu_energy_joules, gpu_energy_joules, dram_energy_joules,
+    energy_per_output_token_joules, throughput_per_watt,
+    prefill_energy_joules, decode_energy_joules,
+    mean_itl_ms, median_itl_ms, p90_itl_ms, p95_itl_ms, p99_itl_ms, std_itl_ms,
+    is_streaming,
     metadata
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+) VALUES (
+    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+    ?, ?, ?, ?, ?, ?, ?
+)
 """
 
 _MIGRATE_COLUMNS = [
@@ -52,6 +81,24 @@ _MIGRATE_COLUMNS = [
     ("throughput_tok_per_sec", "REAL NOT NULL DEFAULT 0.0"),
     ("prefill_latency_seconds", "REAL NOT NULL DEFAULT 0.0"),
     ("decode_latency_seconds", "REAL NOT NULL DEFAULT 0.0"),
+    ("energy_method", "TEXT NOT NULL DEFAULT ''"),
+    ("energy_vendor", "TEXT NOT NULL DEFAULT ''"),
+    ("batch_id", "TEXT NOT NULL DEFAULT ''"),
+    ("is_warmup", "INTEGER NOT NULL DEFAULT 0"),
+    ("cpu_energy_joules", "REAL NOT NULL DEFAULT 0.0"),
+    ("gpu_energy_joules", "REAL NOT NULL DEFAULT 0.0"),
+    ("dram_energy_joules", "REAL NOT NULL DEFAULT 0.0"),
+    ("energy_per_output_token_joules", "REAL NOT NULL DEFAULT 0.0"),
+    ("throughput_per_watt", "REAL NOT NULL DEFAULT 0.0"),
+    ("prefill_energy_joules", "REAL NOT NULL DEFAULT 0.0"),
+    ("decode_energy_joules", "REAL NOT NULL DEFAULT 0.0"),
+    ("mean_itl_ms", "REAL NOT NULL DEFAULT 0.0"),
+    ("median_itl_ms", "REAL NOT NULL DEFAULT 0.0"),
+    ("p90_itl_ms", "REAL NOT NULL DEFAULT 0.0"),
+    ("p95_itl_ms", "REAL NOT NULL DEFAULT 0.0"),
+    ("p99_itl_ms", "REAL NOT NULL DEFAULT 0.0"),
+    ("std_itl_ms", "REAL NOT NULL DEFAULT 0.0"),
+    ("is_streaming", "INTEGER NOT NULL DEFAULT 0"),
 ]
 
 
@@ -99,6 +146,24 @@ class TelemetryStore:
                 rec.throughput_tok_per_sec,
                 rec.prefill_latency_seconds,
                 rec.decode_latency_seconds,
+                rec.energy_method,
+                rec.energy_vendor,
+                rec.batch_id,
+                1 if rec.is_warmup else 0,
+                rec.cpu_energy_joules,
+                rec.gpu_energy_joules,
+                rec.dram_energy_joules,
+                rec.energy_per_output_token_joules,
+                rec.throughput_per_watt,
+                rec.prefill_energy_joules,
+                rec.decode_energy_joules,
+                rec.mean_itl_ms,
+                rec.median_itl_ms,
+                rec.p90_itl_ms,
+                rec.p95_itl_ms,
+                rec.p99_itl_ms,
+                rec.std_itl_ms,
+                1 if rec.is_streaming else 0,
                 json.dumps(rec.metadata),
             ),
         )

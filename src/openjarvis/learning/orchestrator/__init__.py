@@ -38,6 +38,7 @@ from openjarvis.learning.orchestrator.sft_trainer import (
     OrchestratorSFTConfig,
     OrchestratorSFTDataset,
     OrchestratorSFTTrainer,
+    _select_torch_device,
 )
 from openjarvis.learning.orchestrator.types import (
     Episode,
@@ -78,6 +79,8 @@ __all__ = [
     "OrchestratorSFTConfig",
     "OrchestratorSFTDataset",
     "OrchestratorSFTTrainer",
+    # Device selection
+    "_select_torch_device",
     # GRPO
     "OrchestratorGRPOConfig",
     "OrchestratorGRPOTrainer",

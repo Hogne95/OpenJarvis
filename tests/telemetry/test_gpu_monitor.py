@@ -104,10 +104,13 @@ class TestGpuHardwareSpec:
         from openjarvis.telemetry.gpu_monitor import GPU_SPECS
 
         expected = {
+            "B200-SXM",
             "A100-SXM", "A100-PCIE",
             "H100-SXM", "H100-PCIE",
             "L40S", "A10",
             "RTX 4090", "RTX 3090",
+            "MI300X", "MI250X",
+            "M4 Max", "M2 Ultra",
         }
         assert set(GPU_SPECS.keys()) == expected
 
