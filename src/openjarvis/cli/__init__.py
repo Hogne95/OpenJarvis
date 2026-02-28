@@ -28,8 +28,17 @@ from openjarvis.cli.workflow_cmd import workflow
 
 @click.group(help="OpenJarvis — modular AI assistant backend")
 @click.version_option(version=openjarvis.__version__, prog_name="jarvis")
-def cli() -> None:
+@click.option("--verbose", is_flag=True, default=False, help="Enable debug logging")
+@click.option("--quiet", is_flag=True, default=False, help="Suppress non-error output")
+@click.pass_context
+def cli(ctx: click.Context, verbose: bool, quiet: bool) -> None:
     """Top-level CLI group."""
+    from openjarvis.cli.log_config import setup_logging
+
+    ctx.ensure_object(dict)
+    ctx.obj["verbose"] = verbose
+    ctx.obj["quiet"] = quiet
+    setup_logging(verbose=verbose, quiet=quiet)
 
 
 cli.add_command(init, "init")
