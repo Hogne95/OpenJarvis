@@ -11,7 +11,12 @@ from rich.panel import Panel
 from rich.rule import Rule
 from rich.table import Table
 
+from typing import TYPE_CHECKING
+
 from openjarvis.core.config import load_config
+
+if TYPE_CHECKING:
+    from openjarvis.bench._stubs import BenchmarkResult
 from openjarvis.engine import get_engine
 
 _BANNER = r"""
@@ -36,6 +41,90 @@ def _print_banner(console: Console) -> None:
 
 def _section(console: Console, title: str) -> None:
     console.print(Rule(title, style="bright_blue"))
+
+
+# -- Stats-aware rendering ----------------------------------------------------
+
+_STATS_PREFIXES = {"mean_", "p50_", "p95_", "min_", "max_", "std_"}
+
+
+def _detect_stat_groups(metrics: dict[str, float]) -> dict[str, dict[str, float]]:
+    """Detect metrics following the stats pattern (mean_X, p50_X, ...).
+
+    Returns ``{metric_base: {prefix: value}}`` for grouped metrics.
+    """
+    groups: dict[str, dict[str, float]] = {}
+    for key, val in metrics.items():
+        for pfx in _STATS_PREFIXES:
+            if key.startswith(pfx):
+                base = key[len(pfx):]
+                groups.setdefault(base, {})[pfx.rstrip("_")] = val
+                break
+    return groups
+
+
+def _render_stats_table(console: Console, result: BenchmarkResult) -> None:
+    """Render benchmark result as a stats table when stats keys are present."""
+    groups = _detect_stat_groups(result.metrics)
+
+    # Determine which keys are consumed by stat groups
+    consumed: set[str] = set()
+    for base, prefixes in groups.items():
+        for pfx in prefixes:
+            consumed.add(f"{pfx}_{base}")
+
+    # Stat groups → multi-column table
+    if groups:
+        table = Table(
+            title=(
+                f"[bold]{result.benchmark_name}[/bold]"
+                f"  ({result.samples} samples, {result.errors} errors)"
+            ),
+            show_header=True,
+            header_style="bold bright_white",
+            border_style="bright_blue",
+            title_style="bold cyan",
+        )
+        table.add_column("Metric", style="cyan", no_wrap=True)
+        table.add_column("Avg", justify="right")
+        table.add_column("Median", justify="right")
+        table.add_column("Min", justify="right")
+        table.add_column("Max", justify="right")
+        table.add_column("Std", justify="right")
+        table.add_column("P95", justify="right")
+
+        for base, vals in sorted(groups.items()):
+            table.add_row(
+                base,
+                f"{vals.get('mean', 0):.4f}",
+                f"{vals.get('p50', 0):.4f}",
+                f"{vals.get('min', 0):.4f}",
+                f"{vals.get('max', 0):.4f}",
+                f"{vals.get('std', 0):.4f}",
+                f"{vals.get('p95', 0):.4f}",
+            )
+        console.print(table)
+
+    # Remaining non-stats metrics → simple key-value table
+    remaining = {k: v for k, v in result.metrics.items() if k not in consumed}
+    if remaining or result.total_energy_joules > 0:
+        kv_table = Table(
+            show_header=True,
+            header_style="bold bright_white",
+            border_style="bright_blue",
+        )
+        kv_table.add_column("Metric", style="cyan", no_wrap=True)
+        kv_table.add_column("Value", justify="right", style="green")
+        for k, v in remaining.items():
+            kv_table.add_row(k, f"{v:.4f}")
+        if result.total_energy_joules > 0:
+            kv_table.add_row("Total Energy (J)", f"{result.total_energy_joules:.4f}")
+            kv_table.add_row("Energy Method", str(result.energy_method))
+        if result.energy_per_token_joules > 0:
+            kv_table.add_row(
+                "Energy/Token (J)", f"{result.energy_per_token_joules:.6f}",
+            )
+        console.print(kv_table)
 
 
 @click.group()
@@ -175,30 +264,7 @@ def run(
         # Pretty-print results as Rich tables
         _section(console, "Results")
         for r in results:
-            table = Table(
-                title=(
-                    f"[bold]{r.benchmark_name}[/bold]"
-                    f"  ({r.samples} samples, {r.errors} errors)"
-                ),
-                show_header=True,
-                header_style="bold bright_white",
-                border_style="bright_blue",
-                title_style="bold cyan",
-            )
-            table.add_column("Metric", style="cyan", no_wrap=True)
-            table.add_column("Value", justify="right", style="green")
-
-            for k, v in r.metrics.items():
-                table.add_row(k, f"{v:.4f}")
-            if r.total_energy_joules > 0:
-                table.add_row("Total Energy (J)", f"{r.total_energy_joules:.4f}")
-                table.add_row("Energy Method", str(r.energy_method))
-            if r.energy_per_token_joules > 0:
-                table.add_row(
-                    "Energy/Token (J)", f"{r.energy_per_token_joules:.6f}",
-                )
-
-            console.print(table)
+            _render_stats_table(console, r)
 
     # Cleanup energy monitor
     if energy_monitor is not None:

@@ -80,6 +80,9 @@ class LatencyBenchmark(BaseBenchmark):
                 "p95_latency": _percentile(latencies, 0.95),
                 "min_latency": min(latencies),
                 "max_latency": max(latencies),
+                "std_latency": (
+                    statistics.stdev(latencies) if len(latencies) > 1 else 0.0
+                ),
             },
             samples=num_samples,
             errors=errors,
