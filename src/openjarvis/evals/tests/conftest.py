@@ -2,14 +2,9 @@
 
 from __future__ import annotations
 
-import sys
-from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
 
 import pytest
-
-# Ensure evals package is importable from the repo root
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 
 from openjarvis.evals.core.backend import InferenceBackend
 from openjarvis.evals.core.dataset import DatasetProvider

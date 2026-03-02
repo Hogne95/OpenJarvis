@@ -644,7 +644,7 @@ class TestCLIConfig:
         """)
 
         runner = CliRunner()
-        with patch("evals.cli._run_single", side_effect=Exception("mock")):
+        with patch("openjarvis.evals.cli._run_single", side_effect=Exception("mock")):
             result = runner.invoke(main, ["run", "--config", str(p)])
 
         # Should print suite info before failing
