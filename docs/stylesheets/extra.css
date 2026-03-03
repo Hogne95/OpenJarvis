@@ -1,0 +1,256 @@
+/* ── Fonts ─────────────────────────────────────────────────────────── */
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap');
+
+:root {
+  --md-text-font: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  --md-code-font: "JetBrains Mono", "Fira Code", "SF Mono", monospace;
+}
+
+/* ── Color Overrides (Light) ──────────────────────────────────────── */
+[data-md-color-scheme="default"] {
+  --md-primary-fg-color: #1e293b;
+  --md-primary-fg-color--light: #334155;
+  --md-primary-fg-color--dark: #0f172a;
+  --md-accent-fg-color: #3b82f6;
+  --md-accent-fg-color--transparent: rgba(59, 130, 246, 0.1);
+  --md-default-bg-color: #ffffff;
+  --md-default-fg-color: #1e293b;
+  --md-default-fg-color--light: #475569;
+  --md-typeset-a-color: #2563eb;
+}
+
+/* ── Color Overrides (Dark) ───────────────────────────────────────── */
+[data-md-color-scheme="slate"] {
+  --md-primary-fg-color: #0f172a;
+  --md-primary-fg-color--light: #1e293b;
+  --md-primary-fg-color--dark: #020617;
+  --md-accent-fg-color: #60a5fa;
+  --md-accent-fg-color--transparent: rgba(96, 165, 250, 0.1);
+  --md-default-bg-color: #0f172a;
+  --md-default-fg-color: #e2e8f0;
+  --md-default-fg-color--light: #94a3b8;
+  --md-typeset-a-color: #60a5fa;
+  --md-code-bg-color: #1e293b;
+}
+
+/* ── Hero Section ─────────────────────────────────────────────────── */
+.hero {
+  padding: 4rem 0 3rem;
+  text-align: center;
+  position: relative;
+}
+
+.hero h1 {
+  font-size: 3.2rem;
+  font-weight: 800;
+  letter-spacing: -0.03em;
+  line-height: 1.1;
+  margin-bottom: 1rem;
+  background: linear-gradient(135deg, #1e293b 0%, #3b82f6 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+[data-md-color-scheme="slate"] .hero h1 {
+  background: linear-gradient(135deg, #e2e8f0 0%, #60a5fa 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+.hero .hero-tagline {
+  font-size: 1.25rem;
+  color: var(--md-default-fg-color--light);
+  max-width: 640px;
+  margin: 0 auto 2rem;
+  line-height: 1.6;
+  font-weight: 400;
+}
+
+.hero-buttons {
+  display: flex;
+  gap: 1rem;
+  justify-content: center;
+  flex-wrap: wrap;
+  margin-bottom: 2rem;
+}
+
+.hero-buttons a {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.75rem 1.75rem;
+  border-radius: 8px;
+  font-weight: 600;
+  font-size: 0.95rem;
+  text-decoration: none;
+  transition: all 0.2s ease;
+}
+
+.hero-buttons .btn-primary {
+  background: #3b82f6;
+  color: #fff;
+  box-shadow: 0 2px 8px rgba(59, 130, 246, 0.3);
+}
+
+.hero-buttons .btn-primary:hover {
+  background: #2563eb;
+  box-shadow: 0 4px 16px rgba(59, 130, 246, 0.4);
+  transform: translateY(-1px);
+}
+
+.hero-buttons .btn-secondary {
+  background: transparent;
+  color: var(--md-default-fg-color);
+  border: 1.5px solid var(--md-default-fg-color--light);
+}
+
+.hero-buttons .btn-secondary:hover {
+  border-color: var(--md-accent-fg-color);
+  color: var(--md-accent-fg-color);
+  transform: translateY(-1px);
+}
+
+/* ── Feature Cards ────────────────────────────────────────────────── */
+.md-typeset .grid.cards > ol > li,
+.md-typeset .grid.cards > ul > li {
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  border-radius: 12px;
+  padding: 1.5rem;
+  transition: all 0.25s ease;
+  background: var(--md-default-bg-color);
+}
+
+[data-md-color-scheme="slate"] .md-typeset .grid.cards > ol > li,
+[data-md-color-scheme="slate"] .md-typeset .grid.cards > ul > li {
+  border-color: rgba(255, 255, 255, 0.08);
+  background: #1e293b;
+}
+
+.md-typeset .grid.cards > ol > li:hover,
+.md-typeset .grid.cards > ul > li:hover {
+  border-color: var(--md-accent-fg-color);
+  box-shadow: 0 4px 20px rgba(59, 130, 246, 0.1);
+  transform: translateY(-2px);
+}
+
+.md-typeset .grid.cards > ol > li > :first-child,
+.md-typeset .grid.cards > ul > li > :first-child {
+  font-weight: 600;
+  font-size: 1.05rem;
+}
+
+/* ── Code Blocks ──────────────────────────────────────────────────── */
+.md-typeset code {
+  border-radius: 4px;
+  font-size: 0.85em;
+}
+
+.md-typeset pre {
+  border-radius: 10px;
+  border: 1px solid rgba(0, 0, 0, 0.06);
+}
+
+[data-md-color-scheme="slate"] .md-typeset pre {
+  border-color: rgba(255, 255, 255, 0.06);
+}
+
+.md-typeset pre > code {
+  font-size: 0.85rem;
+  line-height: 1.65;
+}
+
+/* ── Tabs ─────────────────────────────────────────────────────────── */
+.md-typeset .tabbed-labels > label {
+  font-weight: 500;
+  font-size: 0.9rem;
+}
+
+/* ── Navigation ───────────────────────────────────────────────────── */
+.md-tabs {
+  background: var(--md-primary-fg-color);
+}
+
+.md-header {
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+}
+
+/* ── Admonitions ──────────────────────────────────────────────────── */
+.md-typeset .admonition,
+.md-typeset details {
+  border-radius: 8px;
+  border-width: 1px;
+  border-left-width: 4px;
+  box-shadow: none;
+}
+
+/* ── Section Headers ──────────────────────────────────────────────── */
+.md-typeset h2 {
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  margin-top: 2.5rem;
+}
+
+.md-typeset h3 {
+  font-weight: 600;
+}
+
+/* ── Footer ───────────────────────────────────────────────────────── */
+.md-footer {
+  background: var(--md-primary-fg-color--dark);
+}
+
+/* ── Pill Badges (used on landing page) ───────────────────────────── */
+.pill {
+  display: inline-block;
+  padding: 0.3rem 0.9rem;
+  border-radius: 100px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  background: var(--md-accent-fg-color--transparent);
+  color: var(--md-accent-fg-color);
+  margin-bottom: 1rem;
+}
+
+/* ── Divider ──────────────────────────────────────────────────────── */
+.md-typeset hr {
+  border-color: rgba(0, 0, 0, 0.06);
+  margin: 3rem 0;
+}
+
+[data-md-color-scheme="slate"] .md-typeset hr {
+  border-color: rgba(255, 255, 255, 0.06);
+}
+
+/* ── Responsive ───────────────────────────────────────────────────── */
+@media (max-width: 768px) {
+  .hero h1 {
+    font-size: 2.2rem;
+  }
+  .hero .hero-tagline {
+    font-size: 1.05rem;
+  }
+  .hero-buttons {
+    flex-direction: column;
+    align-items: center;
+  }
+}
+
+/* ── Quick-start section ──────────────────────────────────────────── */
+.quick-start {
+  max-width: 800px;
+  margin: 0 auto;
+}
+
+.quick-start h2 {
+  text-align: center;
+  margin-bottom: 0.5rem;
+}
+
+.quick-start > p:first-of-type {
+  text-align: center;
+  color: var(--md-default-fg-color--light);
+  margin-bottom: 2rem;
+}
