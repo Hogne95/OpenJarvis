@@ -85,6 +85,8 @@ Everything runs on your hardware. Cloud APIs are optional.
 
 ## Quick Start
 
+<div class="quick-start-section" markdown>
+
 ### Browser App
 
 Run the full chat UI locally with one script:
@@ -98,6 +100,10 @@ cd OpenJarvis
 This installs dependencies, starts Ollama + a local model, launches the backend
 and frontend, and opens `http://localhost:5173` in your browser.
 
+</div>
+
+<div class="quick-start-section" markdown>
+
 ### Desktop App
 
 Download the native desktop app — it bundles Ollama and the Python backend
@@ -106,6 +112,10 @@ so everything works out of the box.
 [Download for macOS (Apple Silicon)](https://github.com/HazyResearch/OpenJarvis/releases/latest/download/OpenJarvis_aarch64.dmg){ .md-button .md-button--primary }
 
 Also available for [macOS (Intel)](https://github.com/HazyResearch/OpenJarvis/releases/latest/download/OpenJarvis_x64.dmg), [Windows](https://github.com/HazyResearch/OpenJarvis/releases/latest/download/OpenJarvis_x64-setup.exe), [Linux (DEB)](https://github.com/HazyResearch/OpenJarvis/releases/latest/download/OpenJarvis_amd64.deb), and [Linux (RPM)](https://github.com/HazyResearch/OpenJarvis/releases/latest/download/OpenJarvis_amd64.rpm). See the [Downloads](downloads.md) page for details.
+
+</div>
+
+<div class="quick-start-section" markdown>
 
 ### Python SDK
 
@@ -130,6 +140,10 @@ print(result["content"])       # "4"
 print(result["tool_results"])  # [{tool_name: "calculator", ...}]
 ```
 
+</div>
+
+<div class="quick-start-section" markdown>
+
 ### CLI
 
 ```bash
@@ -149,6 +163,8 @@ jarvis memory search "configuration options"
 # Run inference benchmarks
 jarvis bench run --json
 ```
+
+</div>
 
 ---
 
