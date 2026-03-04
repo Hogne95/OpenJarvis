@@ -60,3 +60,6 @@ desktop/src-tauri/target/
 
 # Worktrees
 .worktrees/
+
+# Rust
+target/
