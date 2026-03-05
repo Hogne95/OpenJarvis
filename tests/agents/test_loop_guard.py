@@ -111,7 +111,7 @@ class TestLoopGuard:
         assert len(result) == 5
         system_count = sum(
             1 for m in result
-            if str(getattr(m, 'role', '')) == 'system'
+            if getattr(m, 'role', None) == 'system'
         )
         assert system_count == 1
 
