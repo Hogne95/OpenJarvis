@@ -34,16 +34,24 @@ Everything runs on your hardware. Cloud APIs are optional.
 
 === "Desktop App"
 
-    The desktop app is a native window for the chat UI. Start the backend first,
-    then open the app.
+    The desktop app is a native window for the OpenJarvis UI.
+    The backend (Ollama + inference) runs on your machine — start it first, then open the app.
 
-    **1.** Start backend: `git clone ... && cd OpenJarvis && ./scripts/quickstart.sh`
+    **Step 1.** Start the backend:
 
-    **2.** Download the app:
+    ```bash
+    git clone https://github.com/HazyResearch/OpenJarvis.git
+    cd OpenJarvis
+    ./scripts/quickstart.sh
+    ```
+
+    **Step 2.** Download and open the desktop app:
 
     [Download for macOS (Apple Silicon)](https://github.com/HazyResearch/OpenJarvis/releases/download/desktop-latest/OpenJarvis_1.0.0_aarch64.dmg){ .md-button .md-button--primary }
 
-    Also available for [Windows](https://github.com/HazyResearch/OpenJarvis/releases/download/desktop-latest/OpenJarvis_1.0.0_x64-setup.exe), [Linux (DEB)](https://github.com/HazyResearch/OpenJarvis/releases/download/desktop-latest/OpenJarvis_1.0.0_amd64.deb), and [Linux (RPM)](https://github.com/HazyResearch/OpenJarvis/releases/download/desktop-latest/OpenJarvis-1.0.0-1.x86_64.rpm). See [Installation](getting-started/installation.md#desktop-app) for details.
+    Also available for [Windows](https://github.com/HazyResearch/OpenJarvis/releases/download/desktop-latest/OpenJarvis_1.0.0_x64-setup.exe), [Linux (DEB)](https://github.com/HazyResearch/OpenJarvis/releases/download/desktop-latest/OpenJarvis_1.0.0_amd64.deb), and [Linux (RPM)](https://github.com/HazyResearch/OpenJarvis/releases/download/desktop-latest/OpenJarvis-1.0.0-1.x86_64.rpm). See the [Downloads](downloads.md) page for details.
+
+    The app connects to `http://localhost:8000` automatically.
 
 === "Python SDK"
 
