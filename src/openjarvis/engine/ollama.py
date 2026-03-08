@@ -41,9 +41,20 @@ class OllamaEngine(InferenceEngine):
         max_tokens: int = 1024,
         **kwargs: Any,
     ) -> Dict[str, Any]:
+        msg_dicts = messages_to_dicts(messages)
+        # Ollama expects tool_call arguments as dicts, not JSON strings
+        for md in msg_dicts:
+            for tc in md.get("tool_calls", []):
+                fn = tc.get("function", {})
+                args = fn.get("arguments")
+                if isinstance(args, str):
+                    try:
+                        fn["arguments"] = json.loads(args)
+                    except (json.JSONDecodeError, TypeError):
+                        pass
         payload: Dict[str, Any] = {
             "model": model,
-            "messages": messages_to_dicts(messages),
+            "messages": msg_dicts,
             "stream": False,
             "options": {
                 "temperature": temperature,
