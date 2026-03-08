@@ -97,6 +97,26 @@ BENCHMARKS = {
         "category": "agentic",
         "description": "WorkArena++ enterprise workflows",
     },
+    "coding_assistant": {
+        "category": "use-case",
+        "description": "Bug-fix coding assistant (test-based)",
+    },
+    "security_scanner": {
+        "category": "use-case",
+        "description": "Security vulnerability scanner",
+    },
+    "daily_digest": {
+        "category": "use-case",
+        "description": "Daily briefing generation",
+    },
+    "doc_qa": {
+        "category": "use-case",
+        "description": "Document-grounded QA with citations",
+    },
+    "browser_assistant": {
+        "category": "use-case",
+        "description": "Web research with fact verification",
+    },
 }
 
 BACKENDS = {
@@ -138,7 +158,7 @@ def _build_backend(backend_name: str, engine_key: Optional[str],
         )
 
 
-def _build_dataset(benchmark: str):
+def _build_dataset(benchmark: str, subset: str | None = None):
     """Construct the dataset provider for a benchmark."""
     if benchmark == "supergpqa":
         from openjarvis.evals.datasets.supergpqa import SuperGPQADataset
@@ -210,7 +230,7 @@ def _build_dataset(benchmark: str):
         return AMABenchDataset()
     elif benchmark == "lifelong-agent":
         from openjarvis.evals.datasets.lifelong_agent import LifelongAgentDataset
-        return LifelongAgentDataset()
+        return LifelongAgentDataset(subset=subset or "database")
     elif benchmark == "deepplanning":
         from openjarvis.evals.datasets.deepplanning import DeepPlanningDataset
         return DeepPlanningDataset()
@@ -223,6 +243,21 @@ def _build_dataset(benchmark: str):
     elif benchmark == "workarena":
         from openjarvis.evals.datasets.workarena import WorkArenaDataset
         return WorkArenaDataset()
+    elif benchmark == "coding_assistant":
+        from openjarvis.evals.datasets.coding_assistant import CodingAssistantDataset
+        return CodingAssistantDataset()
+    elif benchmark == "security_scanner":
+        from openjarvis.evals.datasets.security_scanner import SecurityScannerDataset
+        return SecurityScannerDataset()
+    elif benchmark == "daily_digest":
+        from openjarvis.evals.datasets.daily_digest import DailyDigestDataset
+        return DailyDigestDataset()
+    elif benchmark == "doc_qa":
+        from openjarvis.evals.datasets.doc_qa import DocQADataset
+        return DocQADataset()
+    elif benchmark == "browser_assistant":
+        from openjarvis.evals.datasets.browser_assistant import BrowserAssistantDataset
+        return BrowserAssistantDataset()
     else:
         raise click.ClickException(f"Unknown benchmark: {benchmark}")
 
@@ -309,6 +344,21 @@ def _build_scorer(benchmark: str, judge_backend, judge_model: str):
     elif benchmark == "workarena":
         from openjarvis.evals.scorers.workarena_scorer import WorkArenaScorer
         return WorkArenaScorer(judge_backend, judge_model)
+    elif benchmark == "coding_assistant":
+        from openjarvis.evals.scorers.coding_assistant import CodingAssistantScorer
+        return CodingAssistantScorer(judge_backend, judge_model)
+    elif benchmark == "security_scanner":
+        from openjarvis.evals.scorers.security_scanner import SecurityScannerScorer
+        return SecurityScannerScorer(judge_backend, judge_model)
+    elif benchmark == "daily_digest":
+        from openjarvis.evals.scorers.daily_digest import DailyDigestScorer
+        return DailyDigestScorer(judge_backend, judge_model)
+    elif benchmark == "doc_qa":
+        from openjarvis.evals.scorers.doc_qa import DocQAScorer
+        return DocQAScorer(judge_backend, judge_model)
+    elif benchmark == "browser_assistant":
+        from openjarvis.evals.scorers.browser_assistant import BrowserAssistantScorer
+        return BrowserAssistantScorer(judge_backend, judge_model)
     else:
         raise click.ClickException(f"Unknown benchmark: {benchmark}")
 
@@ -387,7 +437,7 @@ def _run_single(config, console: Optional[Console] = None) -> object:
         gpu_metrics=getattr(config, "gpu_metrics", False),
         model=config.model,
     )
-    dataset = _build_dataset(config.benchmark)
+    dataset = _build_dataset(config.benchmark, getattr(config, "dataset_subset", None))
     judge_backend = _build_judge_backend(config.judge_model)
     scorer = _build_scorer(config.benchmark, judge_backend, config.judge_model)
 
@@ -443,7 +493,7 @@ def _run_agentic(
         console = Console()
 
     # Build dataset
-    dataset = _build_dataset(config.benchmark)
+    dataset = _build_dataset(config.benchmark, getattr(config, "dataset_subset", None))
     dataset.load(
         max_samples=config.max_samples,
         split=config.dataset_split,

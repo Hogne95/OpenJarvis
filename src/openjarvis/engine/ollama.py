@@ -41,9 +41,20 @@ class OllamaEngine(InferenceEngine):
         max_tokens: int = 1024,
         **kwargs: Any,
     ) -> Dict[str, Any]:
+        msg_dicts = messages_to_dicts(messages)
+        # Ollama expects tool_call arguments as dicts, not JSON strings
+        for md in msg_dicts:
+            for tc in md.get("tool_calls", []):
+                fn = tc.get("function", {})
+                args = fn.get("arguments")
+                if isinstance(args, str):
+                    try:
+                        fn["arguments"] = json.loads(args)
+                    except (json.JSONDecodeError, TypeError):
+                        pass
         payload: Dict[str, Any] = {
             "model": model,
-            "messages": messages_to_dicts(messages),
+            "messages": msg_dicts,
             "stream": False,
             "options": {
                 "temperature": temperature,
@@ -55,6 +66,16 @@ class OllamaEngine(InferenceEngine):
         tools = kwargs.get("tools")
         if tools:
             payload["tools"] = tools
+
+        # Apply structured output / JSON mode
+        response_format = kwargs.get("response_format")
+        if response_format is not None:
+            from openjarvis.engine._stubs import ResponseFormat
+
+            if isinstance(response_format, ResponseFormat):
+                payload["format"] = "json"
+            elif isinstance(response_format, dict):
+                payload["format"] = "json"
         try:
             resp = self._client.post("/api/chat", json=payload)
             if resp.status_code == 400 and tools:
