@@ -131,6 +131,65 @@ BUILTIN_MODELS: List[ModelSpec] = [
         },
     ),
     # -----------------------------------------------------------------------
+    # Local models — Qwen3.5 (MoE, Gated DeltaNet + sparse MoE)
+    # -----------------------------------------------------------------------
+    ModelSpec(
+        model_id="qwen3.5:4b",
+        name="Qwen3.5 4B",
+        parameter_count_b=4.0,
+        active_parameter_count_b=0.5,
+        context_length=262144,
+        min_vram_gb=3.0,
+        supported_engines=("ollama", "vllm", "sglang", "llamacpp"),
+        provider="alibaba",
+        metadata={
+            "architecture": "moe",
+            "hf_repo": "Qwen/Qwen3.5-4B",
+        },
+    ),
+    ModelSpec(
+        model_id="qwen3.5:35b-a3b",
+        name="Qwen3.5 35B A3B",
+        parameter_count_b=35.0,
+        active_parameter_count_b=3.0,
+        context_length=262144,
+        min_vram_gb=8.0,
+        supported_engines=("ollama", "vllm", "sglang"),
+        provider="alibaba",
+        metadata={
+            "architecture": "moe",
+            "hf_repo": "Qwen/Qwen3.5-35B-A3B",
+        },
+    ),
+    ModelSpec(
+        model_id="qwen3.5:122b-a10b",
+        name="Qwen3.5 122B A10B",
+        parameter_count_b=122.0,
+        active_parameter_count_b=10.0,
+        context_length=262144,
+        min_vram_gb=20.0,
+        supported_engines=("vllm", "sglang"),
+        provider="alibaba",
+        metadata={
+            "architecture": "moe",
+            "hf_repo": "Qwen/Qwen3.5-122B-A10B",
+        },
+    ),
+    ModelSpec(
+        model_id="qwen3.5:397b-a17b",
+        name="Qwen3.5 397B A17B",
+        parameter_count_b=397.0,
+        active_parameter_count_b=17.0,
+        context_length=262144,
+        min_vram_gb=50.0,
+        supported_engines=("vllm", "sglang"),
+        provider="alibaba",
+        metadata={
+            "architecture": "moe",
+            "hf_repo": "Qwen/Qwen3.5-397B-A17B",
+        },
+    ),
+    # -----------------------------------------------------------------------
     # Local models — TeichAI Distilled
     # -----------------------------------------------------------------------
     ModelSpec(
