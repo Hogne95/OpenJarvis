@@ -9,8 +9,6 @@ hide:
 
 <p class="hero-tagline">
 OpenJarvis is a research framework for composable, on-device AI systems.
-Five programmable pillars — Intelligence, Engine, Agents, Tools, and Learning —
-each with a clear ABC interface and decorator-based registry.
 Build personal AI that runs on your hardware. Cloud APIs are optional.
 </p>
 
