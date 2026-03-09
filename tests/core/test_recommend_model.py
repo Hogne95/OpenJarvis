@@ -29,15 +29,15 @@ class TestRecommendModelGpu:
         # 8B * 0.5 * 1.1 = 4.4 GB; available = 7.2 → fits
         assert result == "qwen3.5:8b"
 
-    def test_4gb_gpu_picks_qwen35_3b(self) -> None:
+    def test_4gb_gpu_picks_qwen35_4b(self) -> None:
         hw = HardwareInfo(
             platform="linux",
             ram_gb=16.0,
             gpu=GpuInfo(vendor="nvidia", name="GTX 1650", vram_gb=4.0, count=1),
         )
         result = recommend_model(hw, "ollama")
-        # 3B * 0.5 * 1.1 = 1.65 GB; available = 4 * 0.9 = 3.6 → fits
-        assert result == "qwen3.5:3b"
+        # 4B * 0.5 * 1.1 = 2.2 GB; available = 4 * 0.9 = 3.6 → fits
+        assert result == "qwen3.5:4b"
 
     def test_2gb_gpu_picks_qwen35_3b(self) -> None:
         hw = HardwareInfo(
@@ -88,8 +88,8 @@ class TestRecommendModelCpuOnly:
         result = recommend_model(hw, "llamacpp")
         # available = (8 - 4) * 0.8 = 3.2 GB
         # 8B * 0.5 * 1.1 = 4.4 → too big
-        # 3B * 0.5 * 1.1 = 1.65 → fits
-        assert result == "qwen3.5:3b"
+        # 4B * 0.5 * 1.1 = 2.2 → fits
+        assert result == "qwen3.5:4b"
 
     def test_cpu_only_4gb_ram(self) -> None:
         hw = HardwareInfo(platform="linux", ram_gb=4.0, gpu=None)
