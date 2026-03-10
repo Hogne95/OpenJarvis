@@ -122,28 +122,28 @@ def create_energy_monitor(
         vendor_map["nvidia"] = NvidiaEnergyMonitor
         default_order.append(NvidiaEnergyMonitor)
     except Exception as exc:
-        logger.debug("Failed to create energy monitor: %s", exc)
+        logger.debug("Failed to load NVIDIA energy monitor: %s", exc)
 
     try:
         from openjarvis.telemetry.energy_amd import AmdEnergyMonitor
         vendor_map["amd"] = AmdEnergyMonitor
         default_order.append(AmdEnergyMonitor)
     except Exception as exc:
-        logger.debug("Failed to create energy monitor: %s", exc)
+        logger.debug("Failed to load AMD energy monitor: %s", exc)
 
     try:
         from openjarvis.telemetry.energy_apple import AppleEnergyMonitor
         vendor_map["apple"] = AppleEnergyMonitor
         default_order.append(AppleEnergyMonitor)
     except Exception as exc:
-        logger.debug("Failed to create energy monitor: %s", exc)
+        logger.debug("Failed to load Apple energy monitor: %s", exc)
 
     try:
         from openjarvis.telemetry.energy_rapl import RaplEnergyMonitor
         vendor_map["cpu_rapl"] = RaplEnergyMonitor
         default_order.append(RaplEnergyMonitor)
     except Exception as exc:
-        logger.debug("Failed to create energy monitor: %s", exc)
+        logger.debug("Failed to load RAPL energy monitor: %s", exc)
 
     if prefer_vendor and prefer_vendor.lower() in vendor_map:
         preferred_cls = vendor_map[prefer_vendor.lower()]

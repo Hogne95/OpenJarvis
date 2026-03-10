@@ -488,7 +488,10 @@ class MonitorOperativeAgent(ToolUsingAgent):
             try:
                 self._memory_backend.store(key, content[:1000])
             except Exception as exc:
-                logger.debug("Failed to store structured data in memory: %s", exc)
+                logger.debug(
+                    "Failed to store structured data for tool %s: %s",
+                    tool_name, exc,
+                )
 
     # ------------------------------------------------------------------
     # State persistence (OperativeAgent pattern)

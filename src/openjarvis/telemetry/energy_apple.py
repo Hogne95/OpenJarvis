@@ -83,7 +83,10 @@ class AppleEnergyMonitor(EnergyMonitor):
                 self._monitor = AppleSiliconMonitor()
                 self._zeus_ok = True
             except Exception as exc:
-                logger.debug("Failed to read Apple energy: %s", exc)
+                logger.debug(
+                    "Failed to initialize Apple Silicon energy monitor: %s",
+                    exc,
+                )
 
     @staticmethod
     def available() -> bool:

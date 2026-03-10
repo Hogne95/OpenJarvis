@@ -106,7 +106,7 @@ def load_public_key(path: str) -> bytes:
         try:
             raw = base64.b64decode(raw.strip())
         except Exception as exc:
-            logger.warning("Failed to generate key pair: %s", exc)
+            logger.warning("Failed to base64-decode public key from %s: %s", path, exc)
     return raw
 
 
