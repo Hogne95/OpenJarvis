@@ -147,8 +147,20 @@ def serve(
                     from openjarvis.core.registry import ToolRegistry
                     from openjarvis.tools._stubs import BaseTool
 
+                    _DEFAULT_TOOLS = {"think", "calculator", "web_search"}
+                    configured = config.agent.tools
+                    if configured:
+                        allowed = {
+                            t.strip() for t in configured.split(",")
+                            if t.strip()
+                        }
+                    else:
+                        allowed = _DEFAULT_TOOLS
+
                     tools = []
                     for name in ToolRegistry.keys():
+                        if name not in allowed:
+                            continue
                         tool_cls = ToolRegistry.get(name)
                         if isinstance(tool_cls, type) and issubclass(
                             tool_cls, BaseTool

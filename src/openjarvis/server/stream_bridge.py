@@ -115,7 +115,15 @@ class AgentStreamBridge:
         input_text = (
             self._request.messages[-1].content if self._request.messages else ""
         )
-        return self._agent.run(input_text, context=ctx)
+
+        # Override agent model for this request if the caller specified one
+        original_model = self._agent._model
+        if self._model:
+            self._agent._model = self._model
+        try:
+            return self._agent.run(input_text, context=ctx)
+        finally:
+            self._agent._model = original_model
 
     # ------------------------------------------------------------------
     # Public streaming interface

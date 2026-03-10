@@ -132,7 +132,15 @@ def _handle_agent(
 
     # Last message is the input
     input_text = req.messages[-1].content if req.messages else ""
-    result = agent.run(input_text, context=ctx)
+
+    # Override agent model for this request if the caller specified one
+    original_model = agent._model
+    if model:
+        agent._model = model
+    try:
+        result = agent.run(input_text, context=ctx)
+    finally:
+        agent._model = original_model
 
     usage = UsageInfo(
         prompt_tokens=result.metadata.get("prompt_tokens", 0),
