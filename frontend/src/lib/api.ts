@@ -228,6 +228,16 @@ export interface AgentTemplate {
   [key: string]: unknown;
 }
 
+export interface AgentMessage {
+  id: string;
+  agent_id: string;
+  direction: 'user_to_agent' | 'agent_to_user';
+  content: string;
+  mode: 'immediate' | 'queued';
+  status: 'pending' | 'delivered' | 'responded';
+  created_at: number;
+}
+
 export async function fetchManagedAgents(): Promise<ManagedAgent[]> {
   const res = await fetch(`${getBase()}/v1/managed-agents`);
   if (!res.ok) throw new Error(`Failed: ${res.status}`);
@@ -313,6 +323,53 @@ export async function fetchTemplates(): Promise<AgentTemplate[]> {
   if (!res.ok) throw new Error(`Failed: ${res.status}`);
   const data = await res.json();
   return data.templates || [];
+}
+
+export async function runManagedAgent(agentId: string): Promise<void> {
+  const res = await fetch(`${getBase()}/v1/managed-agents/${agentId}/run`, { method: 'POST' });
+  if (!res.ok) throw new Error(`Failed: ${res.status}`);
+}
+
+export async function recoverManagedAgent(agentId: string): Promise<unknown> {
+  const res = await fetch(`${getBase()}/v1/managed-agents/${agentId}/recover`, { method: 'POST' });
+  if (!res.ok) throw new Error(`Failed: ${res.status}`);
+  return res.json();
+}
+
+export async function fetchAgentState(agentId: string): Promise<{
+  agent: ManagedAgent;
+  tasks: AgentTask[];
+  channels: ChannelBinding[];
+  messages: AgentMessage[];
+  checkpoint: unknown;
+}> {
+  const res = await fetch(`${getBase()}/v1/managed-agents/${agentId}/state`);
+  if (!res.ok) throw new Error(`Failed: ${res.status}`);
+  return res.json();
+}
+
+export async function sendAgentMessage(agentId: string, content: string, mode: 'immediate' | 'queued' = 'queued'): Promise<AgentMessage> {
+  const res = await fetch(`${getBase()}/v1/managed-agents/${agentId}/messages`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ content, mode }),
+  });
+  if (!res.ok) throw new Error(`Failed: ${res.status}`);
+  return res.json();
+}
+
+export async function fetchAgentMessages(agentId: string): Promise<AgentMessage[]> {
+  const res = await fetch(`${getBase()}/v1/managed-agents/${agentId}/messages`);
+  if (!res.ok) throw new Error(`Failed: ${res.status}`);
+  const data = await res.json();
+  return data.messages || [];
+}
+
+export async function fetchErrorAgents(): Promise<ManagedAgent[]> {
+  const res = await fetch(`${getBase()}/v1/agents/errors`);
+  if (!res.ok) throw new Error(`Failed: ${res.status}`);
+  const data = await res.json();
+  return data.agents || [];
 }
 
 // ---------------------------------------------------------------------------
