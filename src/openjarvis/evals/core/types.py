@@ -47,6 +47,7 @@ class EvalResult:
     mean_itl_ms: float = 0.0
     trace_steps: int = 0
     trace_energy_joules: float = 0.0
+    trace_data: Optional[Dict[str, Any]] = None
 
 
 @dataclass(slots=True)

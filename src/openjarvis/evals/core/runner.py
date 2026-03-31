@@ -374,6 +374,7 @@ class EvalRunner:
                 energy_per_output_token_joules=energy_per_out_tok,
                 throughput_per_watt=throughput_per_w,
                 mean_itl_ms=mean_itl,
+                trace_data=full.get("trace_data"),
             )
         except Exception as exc:
             LOGGER.error("Error processing %s: %s", record.record_id, exc)
@@ -655,6 +656,7 @@ class EvalRunner:
                 completion_tokens=total_completion_tokens,
                 cost_usd=total_cost,
                 scoring_metadata=scoring_meta,
+                trace_data=full.get("trace_data"),
             )
         except Exception as exc:
             LOGGER.error(
@@ -1058,7 +1060,7 @@ def _summary_to_dict(s: RunSummary) -> Dict[str, Any]:
 
 def _result_to_trace_dict(result: EvalResult) -> Dict[str, Any]:
     """Convert an EvalResult to a full trace dict for per-sample export."""
-    return {
+    d = {
         "record_id": result.record_id,
         "model_answer": result.model_answer,
         "is_correct": result.is_correct,
@@ -1082,6 +1084,9 @@ def _result_to_trace_dict(result: EvalResult) -> Dict[str, Any]:
         "throughput_per_watt": result.throughput_per_watt,
         "mean_itl_ms": result.mean_itl_ms,
     }
+    if result.trace_data is not None:
+        d["trace_data"] = result.trace_data
+    return d
 
 
 __all__ = ["EvalRunner"]
