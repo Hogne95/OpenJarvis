@@ -24,6 +24,7 @@ import { checkHealth, fetchManagedAgents, fetchSpeechHealth } from './lib/api';
 import { useAppStore } from './lib/store';
 import type { ChatMessage, ToolCallInfo } from './types';
 import { InputArea } from './components/Chat/InputArea';
+import { useSpeech } from './hooks/useSpeech';
 
 type Status = 'Standby' | 'Listening' | 'Analyzing' | 'Responding';
 
@@ -121,6 +122,14 @@ export default function JarvisHudDashboard() {
   const [apiReachable, setApiReachable] = useState<boolean | null>(null);
   const [speechAvailable, setSpeechAvailable] = useState<boolean | null>(null);
   const [runningAgentCount, setRunningAgentCount] = useState(0);
+  const [voiceNotice, setVoiceNotice] = useState<string>('');
+  const {
+    state: hudSpeechState,
+    error: hudSpeechError,
+    available: hudSpeechAvailable,
+    startRecording: startHudRecording,
+    stopRecording: stopHudRecording,
+  } = useSpeech();
 
   useEffect(() => {
     let cancelled = false;
@@ -313,6 +322,45 @@ export default function JarvisHudDashboard() {
       ? 'Inference active. No tool approval pending.'
       : 'No pending operator decision';
 
+  const handleHudMic = async () => {
+    if (hudSpeechState === 'recording') {
+      try {
+        const transcript = await stopHudRecording();
+        if (transcript.trim()) {
+          window.dispatchEvent(
+            new CustomEvent('jarvis:set-input', { detail: { text: transcript } }),
+          );
+          setVoiceNotice('Transcript inserted into the command deck.');
+        }
+      } catch {
+        setVoiceNotice('Voice capture failed. Check backend or microphone permissions.');
+      }
+      return;
+    }
+
+    try {
+      await startHudRecording();
+      setVoiceNotice('Listening from reactor mic...');
+    } catch {
+      setVoiceNotice('Unable to access microphone.');
+    }
+  };
+
+  useEffect(() => {
+    if (!voiceNotice) return;
+    const timeout = window.setTimeout(() => setVoiceNotice(''), 4000);
+    return () => window.clearTimeout(timeout);
+  }, [voiceNotice]);
+
+  const hudMicLabel =
+    hudSpeechState === 'recording'
+      ? 'Recording'
+      : hudSpeechState === 'transcribing'
+      ? 'Transcribing'
+      : settings.speechEnabled && hudSpeechAvailable
+      ? 'Ready'
+      : 'Offline';
+
   return (
     <section className="relative min-h-screen overflow-hidden bg-[#02050d] text-slate-100">
       <div className="jarvis-vignette pointer-events-none absolute inset-0" />
@@ -432,15 +480,22 @@ export default function JarvisHudDashboard() {
                   <div className="jarvis-sweep absolute left-1/2 top-1/2 h-[1px] w-[42%] origin-left -translate-y-1/2 bg-gradient-to-r from-cyan-300/0 via-cyan-200 to-cyan-100 shadow-[0_0_18px_rgba(125,211,252,0.9)]" />
 
                   <div className="absolute inset-0 flex items-center justify-center">
-                    <div className="relative flex h-40 w-40 items-center justify-center rounded-full border border-cyan-200/28 bg-cyan-300/10 shadow-[0_0_50px_rgba(34,211,238,0.16)]">
+                    <button
+                      onClick={handleHudMic}
+                      disabled={!settings.speechEnabled || !hudSpeechAvailable || hudSpeechState === 'transcribing'}
+                      className="relative flex h-40 w-40 items-center justify-center rounded-full border border-cyan-200/28 bg-cyan-300/10 shadow-[0_0_50px_rgba(34,211,238,0.16)] transition disabled:cursor-not-allowed disabled:opacity-60"
+                    >
                       <div className="absolute inset-3 rounded-full border border-cyan-100/25" />
                       <div className="jarvis-pulse absolute inset-6 rounded-full border border-cyan-200/40" />
                       <Mic className="h-16 w-16 text-cyan-100 drop-shadow-[0_0_18px_rgba(125,211,252,0.7)]" />
-                    </div>
+                    </button>
                   </div>
 
                   <div className="absolute left-6 top-6 rounded-full border border-cyan-400/16 bg-slate-950/50 px-4 py-2 text-[11px] uppercase tracking-[0.34em] text-cyan-200/75">
                     Neural Focus
+                  </div>
+                  <div className="absolute right-6 top-6 rounded-full border border-cyan-400/16 bg-slate-950/50 px-4 py-2 text-[11px] uppercase tracking-[0.34em] text-cyan-200/75">
+                    Reactor Mic: {hudMicLabel}
                   </div>
                   <div className="absolute bottom-6 left-6 right-6 grid gap-3 sm:grid-cols-2">
                     {reactorMetrics.map((metric) => (
@@ -469,6 +524,23 @@ export default function JarvisHudDashboard() {
                       {statusMeta.label}
                     </div>
                     <p className="mt-4 text-sm leading-7 text-slate-200/75">{statusMeta.reply}</p>
+                  </div>
+
+                  <div className="rounded-[1.4rem] border border-cyan-400/12 bg-slate-950/55 p-4">
+                    <div className="mb-2 text-[10px] uppercase tracking-[0.4em] text-cyan-300/60">
+                      Reactor Voice Control
+                    </div>
+                    <div className="text-sm uppercase tracking-[0.26em] text-cyan-50">
+                      {hudMicLabel}
+                    </div>
+                    <div className="mt-2 text-sm leading-7 text-slate-200/75">
+                      {hudSpeechError
+                        ? hudSpeechError
+                        : voiceNotice ||
+                          (settings.speechEnabled
+                            ? 'Use the center mic to capture speech and inject it into the command deck.'
+                            : 'Enable Speech-to-Text in Settings to activate reactor voice control.')}
+                    </div>
                   </div>
 
                   <div className="rounded-[1.4rem] border border-amber-300/12 bg-[linear-gradient(180deg,rgba(251,191,36,0.08),rgba(15,23,42,0.55))] p-4">

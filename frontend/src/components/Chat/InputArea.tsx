@@ -74,6 +74,21 @@ export function InputArea() {
     el.style.height = Math.min(el.scrollHeight, 200) + 'px';
   }, [input]);
 
+  useEffect(() => {
+    const handleExternalInput = (event: Event) => {
+      const customEvent = event as CustomEvent<{ text?: string }>;
+      const text = customEvent.detail?.text?.trim();
+      if (!text) return;
+      setInput((prev) => (prev ? `${prev} ${text}` : text));
+      requestAnimationFrame(() => textareaRef.current?.focus());
+    };
+
+    window.addEventListener('jarvis:set-input', handleExternalInput as EventListener);
+    return () => {
+      window.removeEventListener('jarvis:set-input', handleExternalInput as EventListener);
+    };
+  }, []);
+
   const stopStreaming = useCallback(() => {
     abortRef.current?.abort();
     if (timerRef.current) {
