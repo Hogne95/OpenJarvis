@@ -74,21 +74,6 @@ export function InputArea() {
     el.style.height = Math.min(el.scrollHeight, 200) + 'px';
   }, [input]);
 
-  useEffect(() => {
-    const handleExternalInput = (event: Event) => {
-      const customEvent = event as CustomEvent<{ text?: string }>;
-      const text = customEvent.detail?.text?.trim();
-      if (!text) return;
-      setInput((prev) => (prev ? `${prev} ${text}` : text));
-      requestAnimationFrame(() => textareaRef.current?.focus());
-    };
-
-    window.addEventListener('jarvis:set-input', handleExternalInput as EventListener);
-    return () => {
-      window.removeEventListener('jarvis:set-input', handleExternalInput as EventListener);
-    };
-  }, []);
-
   const stopStreaming = useCallback(() => {
     abortRef.current?.abort();
     if (timerRef.current) {
@@ -321,6 +306,37 @@ export function InputArea() {
     setStreamState,
     resetStream,
   ]);
+
+  useEffect(() => {
+    const handleExternalInput = (event: Event) => {
+      const customEvent = event as CustomEvent<{ text?: string; replace?: boolean }>;
+      const text = customEvent.detail?.text?.trim();
+      if (!text) return;
+      if (customEvent.detail?.replace) {
+        setInput(text);
+      } else {
+        setInput((prev) => (prev ? `${prev} ${text}` : text));
+      }
+      requestAnimationFrame(() => textareaRef.current?.focus());
+    };
+
+    const handleSubmitInput = () => {
+      void sendMessage();
+    };
+
+    const handleInterruptStream = () => {
+      if (streamState.isStreaming) stopStreaming();
+    };
+
+    window.addEventListener('jarvis:set-input', handleExternalInput as EventListener);
+    window.addEventListener('jarvis:submit-input', handleSubmitInput);
+    window.addEventListener('jarvis:interrupt-stream', handleInterruptStream);
+    return () => {
+      window.removeEventListener('jarvis:set-input', handleExternalInput as EventListener);
+      window.removeEventListener('jarvis:submit-input', handleSubmitInput);
+      window.removeEventListener('jarvis:interrupt-stream', handleInterruptStream);
+    };
+  }, [sendMessage, stopStreaming, streamState.isStreaming]);
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey) {

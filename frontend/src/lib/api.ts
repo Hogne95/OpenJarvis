@@ -252,6 +252,7 @@ export interface SpeechHealth {
 
 export interface VoiceLoopStatus {
   active: boolean;
+  always_listening?: boolean;
   phase: 'idle' | 'listening' | 'recording' | 'transcribing' | 'speaking' | 'error';
   session_id: string | null;
   started_at: number | null;
@@ -259,7 +260,19 @@ export interface VoiceLoopStatus {
   backend_available: boolean;
   backend_name: string | null;
   language_hints: string[];
+  wake_phrases?: string[];
+  wake_required?: boolean;
+  wake_detected?: boolean;
+  last_wake_phrase?: string;
+  live_vad_enabled?: boolean;
+  vad_backend?: string;
+  wake_backend?: string;
+  last_vad_rms?: number;
+  last_wake_score?: number | null;
   last_transcript: string;
+  last_command?: string;
+  command_count?: number;
+  interrupted?: boolean;
   last_error: string;
 }
 
@@ -267,10 +280,15 @@ export interface SpeechProfile {
   input_languages: string[];
   reply_language: string;
   wake_phrases: string[];
+  live_vad_enabled: boolean;
+  vad_backend: string;
+  audio_chunk_ms: number;
+  wake_backend: string;
   reply_backend: string;
   reply_voice_id: string;
   reply_speed?: number;
   auto_speak: boolean;
+  auto_submit_voice_commands: boolean;
   require_wake_phrase: boolean;
 }
 
@@ -435,6 +453,41 @@ export async function ingestVoiceTranscript(transcript: string): Promise<VoiceLo
   if (!res.ok) {
     const detail = await res.json().catch(() => ({ detail: res.statusText }));
     throw new Error(detail.detail || `Voice transcript ingest failed: ${res.status}`);
+  }
+  return res.json();
+}
+
+export async function processVoiceLoopAudio(
+  audioBlob: Blob,
+  options: {
+    filename?: string;
+    languageHints?: string[];
+  } = {},
+): Promise<
+  VoiceLoopStatus & {
+    accepted: boolean;
+    wake_matched: boolean;
+    command: string;
+    message: string;
+    transcript: string;
+    language: string | null;
+    confidence: number | null;
+    duration_seconds: number;
+    interrupted: boolean;
+  }
+> {
+  const formData = new FormData();
+  formData.append('file', audioBlob, options.filename || 'voice-loop.webm');
+  if (options.languageHints?.length) {
+    formData.append('language_hints', options.languageHints.join(','));
+  }
+  const res = await fetch(`${getBase()}/v1/voice-loop/process-audio`, {
+    method: 'POST',
+    body: formData,
+  });
+  if (!res.ok) {
+    const detail = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(detail.detail || `Voice audio processing failed: ${res.status}`);
   }
   return res.json();
 }

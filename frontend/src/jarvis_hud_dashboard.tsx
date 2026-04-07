@@ -25,7 +25,6 @@ import {
   fetchSpeechHealth,
   fetchSpeechProfile,
   fetchVoiceLoopStatus,
-  ingestVoiceTranscript,
   runManagedAgent,
   startVoiceLoop,
   stopVoiceLoop,
@@ -157,13 +156,14 @@ export default function JarvisHudDashboard() {
   const lastSyncedPhaseRef = useRef('');
   const lastSpokenMessageRef = useRef<string>('');
   const audioUrlRef = useRef<string | null>(null);
+  const audioElementRef = useRef<HTMLAudioElement | null>(null);
 
   const {
     state: hudSpeechState,
     error: hudSpeechError,
     available: hudSpeechAvailable,
-    startRecording: startHudRecording,
-    stopRecording: stopHudRecording,
+    startContinuousListening,
+    stopContinuousListening,
   } = useSpeech();
 
   useEffect(() => {
@@ -215,6 +215,7 @@ export default function JarvisHudDashboard() {
 
   useEffect(() => {
     return () => {
+      audioElementRef.current?.pause();
       if (audioUrlRef.current) URL.revokeObjectURL(audioUrlRef.current);
     };
   }, []);
@@ -337,11 +338,17 @@ export default function JarvisHudDashboard() {
       },
       { label: 'Voice Loop', value: voiceLoop?.active ? voiceLoop.phase : 'Idle' },
       {
+        label: 'VAD',
+        value: speechProfile?.live_vad_enabled
+          ? voiceLoop?.vad_backend || speechProfile?.vad_backend || 'Active'
+          : 'Disabled',
+      },
+      {
         label: 'Latency',
         value: formatElapsed(latestAssistantMessage?.telemetry?.total_ms ?? streamState.elapsedMs),
       },
     ],
-    [apiReachable, latestAssistantMessage?.telemetry?.total_ms, speechAvailable, streamState.elapsedMs, voiceLoop],
+    [apiReachable, latestAssistantMessage?.telemetry?.total_ms, speechAvailable, speechProfile?.live_vad_enabled, speechProfile?.vad_backend, streamState.elapsedMs, voiceLoop],
   );
 
   const coreMatrix = [
@@ -379,8 +386,17 @@ export default function JarvisHudDashboard() {
   ];
 
   function injectCommand(text: string) {
-    window.dispatchEvent(new CustomEvent('jarvis:set-input', { detail: { text } }));
+    window.dispatchEvent(new CustomEvent('jarvis:set-input', { detail: { text, replace: true } }));
     setVoiceNotice('Command loaded into the deck.');
+  }
+
+  function submitInjectedCommand(text: string) {
+    if (streamState.isStreaming) {
+      window.dispatchEvent(new Event('jarvis:interrupt-stream'));
+    }
+    audioElementRef.current?.pause();
+    injectCommand(text);
+    window.dispatchEvent(new Event('jarvis:submit-input'));
   }
 
   async function ensureAgent(kind: 'inbox' | 'meeting-prep') {
@@ -482,58 +498,56 @@ export default function JarvisHudDashboard() {
       return;
     }
 
-    if (hudSpeechState === 'recording') {
+    if (voiceLoop?.active) {
       try {
-        const transcript = await stopHudRecording();
-        if (transcript.trim()) {
-          const ingestion = await ingestVoiceTranscript(transcript);
-          setVoiceLoop(ingestion);
-          if (ingestion.accepted && ingestion.command.trim()) {
-            injectCommand(ingestion.command);
-            setVoiceNotice('Wake phrase confirmed. Command loaded into the deck.');
-          } else {
-            setVoiceNotice(ingestion.message);
-          }
-          await updateVoiceLoopState({
-            phase: 'listening',
-            transcript,
-          }).catch(() => null);
-        }
-      } catch (error) {
-        const message = error instanceof Error ? error.message : 'Voice capture failed';
-        setVoiceNotice(message);
-        const snapshot = await updateVoiceLoopState({
-          phase: 'error',
-          error: message,
-        }).catch(() => null);
-        if (snapshot) setVoiceLoop(snapshot);
-      }
-      return;
-    }
-
-    if (!voiceLoop?.active) {
-      try {
-        const snapshot = await startVoiceLoop(detectLanguageHints());
+        await stopContinuousListening();
+        const snapshot = await stopVoiceLoop();
         setVoiceLoop(snapshot);
-        await startHudRecording();
-        setVoiceNotice('Voice loop armed. Recording from the reactor mic.');
+        setVoiceNotice('Always-listening voice loop disarmed.');
       } catch (error) {
-        setVoiceNotice(error instanceof Error ? error.message : 'Unable to start voice loop.');
+        const message = error instanceof Error ? error.message : 'Unable to stop voice loop.';
+        setVoiceNotice(message);
       }
       return;
     }
 
     try {
-      await startHudRecording();
-      setVoiceNotice('Recording from the reactor mic.');
+      const languageHints = detectLanguageHints();
+      const snapshot = await startVoiceLoop(languageHints);
+      setVoiceLoop(snapshot);
+      await startContinuousListening({
+        chunkMs: speechProfile?.audio_chunk_ms || 2200,
+        languageHints,
+        onChunkProcessed: (result) => {
+          setVoiceLoop(result);
+          if (result.accepted && result.command.trim()) {
+            if (speechProfile?.auto_submit_voice_commands ?? true) {
+              submitInjectedCommand(result.command);
+              setVoiceNotice('Wake phrase confirmed. Command sent.');
+            } else {
+              injectCommand(result.command);
+              setVoiceNotice('Wake phrase confirmed. Command loaded into the deck.');
+            }
+            return;
+          }
+          if (result.message && result.transcript.trim()) {
+            setVoiceNotice(result.message);
+          }
+        },
+        onError: (error) => {
+          setVoiceNotice(error.message);
+        },
+      });
+      setVoiceNotice('Always-listening voice loop armed.');
     } catch (error) {
-      setVoiceNotice(error instanceof Error ? error.message : 'Unable to access microphone.');
+      setVoiceNotice(error instanceof Error ? error.message : 'Unable to start voice loop.');
     }
   }
 
   async function handleDisarmVoiceLoop() {
     if (!voiceLoop?.active) return;
     try {
+      await stopContinuousListening();
       const snapshot = await stopVoiceLoop();
       setVoiceLoop(snapshot);
       setVoiceNotice('Voice loop disarmed.');
@@ -549,8 +563,8 @@ export default function JarvisHudDashboard() {
     : 'No pending operator decision';
 
   const voicePhaseLabel =
-    hudSpeechState === 'recording'
-      ? 'Recording'
+    hudSpeechState === 'listening'
+      ? 'Listening'
       : hudSpeechState === 'transcribing'
       ? 'Transcribing'
       : voiceLoop?.active
@@ -593,6 +607,7 @@ export default function JarvisHudDashboard() {
         const url = URL.createObjectURL(blob);
         audioUrlRef.current = url;
         const audio = new Audio(url);
+        audioElementRef.current = audio;
         audio.play().catch(() => {});
         lastSpokenMessageRef.current = text;
       })
@@ -623,9 +638,9 @@ export default function JarvisHudDashboard() {
                 {status}
               </div>
             </div>
-            <div className="mt-2 text-sm text-slate-200/70">
-              Norwegian + English input. English replies. Wake phrase and male voice enabled.
-            </div>
+              <div className="mt-2 text-sm text-slate-200/70">
+              Norwegian + English input. English replies. Wake phrase, male voice, and always-listening loop enabled.
+              </div>
           </div>
 
           <div className="grid gap-3 sm:grid-cols-3">
@@ -770,7 +785,7 @@ export default function JarvisHudDashboard() {
                         voiceLoop?.last_error ||
                         voiceNotice ||
                         (settings.speechEnabled
-                          ? `Press the reactor mic to arm the loop. Wake phrase: ${
+                          ? `Press the reactor mic to toggle the always-listening loop. Wake phrase: ${
                               speechProfile?.wake_phrases?.[0] || 'hey jarvis'
                             }.`
                           : 'Enable Speech-to-Text in Settings to activate voice control.')}
@@ -781,7 +796,7 @@ export default function JarvisHudDashboard() {
                         disabled={!settings.speechEnabled || !hudSpeechAvailable || hudSpeechState === 'transcribing'}
                         className="rounded-[1rem] border border-cyan-300/20 bg-cyan-400/[0.08] px-4 py-3 text-xs uppercase tracking-[0.28em] text-cyan-100 transition hover:bg-cyan-400/[0.14] disabled:cursor-not-allowed disabled:opacity-50"
                       >
-                        {voiceLoop?.active ? 'Capture Command' : 'Arm Voice'}
+                        {voiceLoop?.active ? 'Disarm Voice' : 'Arm Voice'}
                       </button>
                       <button
                         onClick={handleDisarmVoiceLoop}
@@ -800,6 +815,9 @@ export default function JarvisHudDashboard() {
                     <p className="text-sm leading-7 text-slate-200/75">{statusMeta.transcript}</p>
                     <div className="mt-4 text-[11px] uppercase tracking-[0.28em] text-cyan-300/55">
                       Reply voice: {speechProfile?.reply_voice_id || 'am_michael'} via {speechProfile?.reply_backend || 'kokoro'}
+                    </div>
+                    <div className="mt-2 text-[11px] uppercase tracking-[0.28em] text-cyan-300/55">
+                      VAD: {voiceLoop?.vad_backend || speechProfile?.vad_backend || 'energy'} · Wake: {voiceLoop?.wake_backend || speechProfile?.wake_backend || 'transcript'}
                     </div>
                   </div>
                 </div>

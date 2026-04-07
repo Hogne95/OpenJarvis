@@ -220,6 +220,13 @@ def create_app(
         language_hints=language_hints,
         wake_phrases=wake_phrases,
         wake_required=getattr(speech_cfg, "require_wake_phrase", True),
+        live_vad_enabled=getattr(speech_cfg, "live_vad_enabled", True),
+        vad_backend=getattr(speech_cfg, "vad_backend", "auto"),
+        vad_threshold=getattr(speech_cfg, "vad_threshold", 0.016),
+        vad_min_speech_ms=getattr(speech_cfg, "vad_min_speech_ms", 250),
+        wake_backend=getattr(speech_cfg, "wake_backend", "transcript"),
+        wake_model_path=getattr(speech_cfg, "wake_model_path", ""),
+        wake_threshold=getattr(speech_cfg, "wake_threshold", 0.5),
     )
     app.state.agent_manager = agent_manager
     app.state.agent_scheduler = agent_scheduler

@@ -5,7 +5,6 @@ from __future__ import annotations
 import inspect
 import json
 import logging
-import tempfile
 from typing import Any, Dict, List, Literal, Optional
 
 from fastapi import APIRouter, HTTPException, Request, Response, WebSocket, WebSocketDisconnect
@@ -73,6 +72,18 @@ class VoiceLoopUpdateRequest(BaseModel):
 
 class VoiceLoopIngestRequest(BaseModel):
     transcript: str
+
+
+class VoiceLoopProcessResponse(BaseModel):
+    accepted: bool
+    wake_matched: bool
+    command: str
+    message: str
+    transcript: str = ""
+    language: Optional[str] = None
+    confidence: Optional[float] = None
+    duration_seconds: float = 0.0
+    interrupted: bool = False
 
 
 class SpeechSynthesizeRequest(BaseModel):
@@ -744,9 +755,14 @@ async def speech_profile(request: Request):
             "input_languages": ["no", "en"],
             "reply_language": "en",
             "wake_phrases": ["hey jarvis", "ok jarvis", "jarvis"],
+            "live_vad_enabled": True,
+            "vad_backend": "energy",
+            "audio_chunk_ms": 2200,
+            "wake_backend": "transcript",
             "reply_backend": "kokoro",
             "reply_voice_id": "am_michael",
             "auto_speak": True,
+            "auto_submit_voice_commands": True,
         }
     hints = [h.strip() for h in speech_cfg.language_hints.split(",") if h.strip()]
     phrases = [p.strip() for p in speech_cfg.wake_phrases.split(",") if p.strip()]
@@ -754,10 +770,15 @@ async def speech_profile(request: Request):
         "input_languages": hints or ["no", "en"],
         "reply_language": speech_cfg.reply_language,
         "wake_phrases": phrases or ["hey jarvis", "ok jarvis", "jarvis"],
+        "live_vad_enabled": speech_cfg.live_vad_enabled,
+        "vad_backend": speech_cfg.vad_backend,
+        "audio_chunk_ms": speech_cfg.audio_chunk_ms,
+        "wake_backend": speech_cfg.wake_backend,
         "reply_backend": speech_cfg.reply_backend,
         "reply_voice_id": speech_cfg.reply_voice_id,
         "reply_speed": speech_cfg.reply_speed,
         "auto_speak": speech_cfg.auto_speak,
+        "auto_submit_voice_commands": speech_cfg.auto_submit_voice_commands,
         "require_wake_phrase": speech_cfg.require_wake_phrase,
     }
 
@@ -767,7 +788,7 @@ async def synthesize_speech(req: SpeechSynthesizeRequest, request: Request):
     """Synthesize assistant speech using the configured reply voice."""
     text = req.text.strip()
     if not text:
-      raise HTTPException(status_code=400, detail="Text is required")
+        raise HTTPException(status_code=400, detail="Text is required")
 
     config = getattr(request.app.state, "config", None)
     speech_cfg = getattr(config, "speech", None)
@@ -815,6 +836,11 @@ async def voice_loop_status(request: Request):
             "backend_available": False,
             "backend_name": None,
             "language_hints": ["no", "en"],
+            "live_vad_enabled": False,
+            "vad_backend": "energy",
+            "wake_backend": "transcript",
+            "last_vad_rms": 0.0,
+            "last_wake_score": None,
             "last_transcript": "",
             "last_error": "Voice loop manager not configured",
         }
@@ -865,6 +891,34 @@ async def voice_loop_ingest(req: VoiceLoopIngestRequest, request: Request):
     if manager is None:
         raise HTTPException(status_code=503, detail="Voice loop manager not configured")
     return manager.ingest_transcript(req.transcript)
+
+
+@voice_loop_router.post("/process-audio")
+async def voice_loop_process_audio(request: Request):
+    """Transcribe and evaluate a continuous audio chunk for the active voice loop."""
+    manager = getattr(request.app.state, "voice_loop", None)
+    if manager is None:
+        raise HTTPException(status_code=503, detail="Voice loop manager not configured")
+
+    form = await request.form()
+    audio_file = form.get("file")
+    if audio_file is None:
+        raise HTTPException(status_code=400, detail="Missing 'file' field")
+
+    filename = getattr(audio_file, "filename", "chunk.webm")
+    ext = filename.rsplit(".", 1)[-1] if "." in filename else "webm"
+    hints_raw = form.get("language_hints", "")
+    language_hints = [h.strip() for h in str(hints_raw).split(",") if h.strip()]
+    audio_bytes = await audio_file.read()
+
+    try:
+        return manager.process_audio(
+            audio_bytes,
+            format=ext,
+            language_hints=language_hints or None,
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
 
 
 # ---- Feedback routes ----

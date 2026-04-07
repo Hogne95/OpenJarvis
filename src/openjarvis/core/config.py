@@ -1209,6 +1209,15 @@ class SpeechConfig:
     language_hints: str = "no,en"
     wake_phrases: str = "hey jarvis,ok jarvis,jarvis,hei jarvis,hallo jarvis"
     require_wake_phrase: bool = True
+    live_vad_enabled: bool = True
+    vad_backend: str = "auto"  # "auto", "silero", "energy"
+    vad_threshold: float = 0.016
+    vad_min_speech_ms: int = 250
+    audio_chunk_ms: int = 2200
+    wake_backend: str = "transcript"  # "transcript", "openwakeword"
+    wake_model_path: str = ""
+    wake_threshold: float = 0.5
+    auto_submit_voice_commands: bool = True
     reply_backend: str = "kokoro"
     reply_voice_id: str = "am_michael"
     reply_language: str = "en"
