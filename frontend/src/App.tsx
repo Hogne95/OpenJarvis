@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback, useRef } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import { Routes, Route } from 'react-router';
 import { Layout } from './components/Layout';
 import { ChatPage } from './pages/ChatPage';
@@ -35,9 +35,7 @@ export default function App() {
   const optInModalOpen = useAppStore((s) => s.optInModalOpen);
   const setOptInModalOpen = useAppStore((s) => s.setOptInModalOpen);
   const markOptInModalSeen = useAppStore((s) => s.markOptInModalSeen);
-  const savings = useAppStore((s) => s.savings);
 
-  // Apply theme class to <html>
   useEffect(() => {
     const root = document.documentElement;
     root.classList.remove('dark', 'light');
@@ -45,7 +43,6 @@ export default function App() {
     else if (settings.theme === 'light') root.classList.add('light');
   }, [settings.theme]);
 
-  // Fetch models on mount
   useEffect(() => {
     fetchModels()
       .then((m) => {
@@ -56,12 +53,10 @@ export default function App() {
       .finally(() => setModelsLoading(false));
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Fetch server info
   useEffect(() => {
     fetchServerInfo().then(setServerInfo).catch(() => {});
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Poll savings and optionally share to Supabase
   useEffect(() => {
     const refresh = () =>
       fetchSavings()
@@ -99,7 +94,6 @@ export default function App() {
     return () => clearInterval(interval);
   }, [optInEnabled, optInDisplayName, optInAnonId]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Show opt-in modal on first visit
   useEffect(() => {
     if (!optInModalSeen) {
       setOptInModalOpen(true);
@@ -109,7 +103,6 @@ export default function App() {
 
   const toggleSystemPanel = useAppStore((s) => s.toggleSystemPanel);
 
-  // Global keyboard shortcuts
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
@@ -125,35 +118,6 @@ export default function App() {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [commandPaletteOpen, setCommandPaletteOpen, toggleSystemPanel]);
 
-  // Desktop auto-update check — disabled during local development.
-  // Re-enable for production releases by uncommenting below.
-  // const updateChecked = useRef(false);
-  // useEffect(() => {
-  //   if (!isTauri() || updateChecked.current) return;
-  //   updateChecked.current = true;
-  //   (async () => {
-  //     try {
-  //       const { check } = await import('@tauri-apps/plugin-updater');
-  //       const update = await check();
-  //       if (update) {
-  //         await update.downloadAndInstall();
-  //         const { toast } = await import('sonner');
-  //         toast.info('Update ready', {
-  //           description: 'A new version has been downloaded. Restart to apply.',
-  //           duration: Infinity,
-  //           action: {
-  //             label: 'Restart Now',
-  //             onClick: async () => {
-  //               const { relaunch } = await import('@tauri-apps/plugin-process');
-  //               await relaunch();
-  //             },
-  //           },
-  //         });
-  //       }
-  //     } catch {}
-  //   })();
-  // }, []);
-
   if (!setupDone) {
     return <SetupScreen onReady={handleSetupReady} />;
   }
@@ -162,8 +126,9 @@ export default function App() {
     <>
       <Routes>
         <Route element={<Layout />}>
-          <Route index element={<ChatPage />} />
+          <Route index element={<DashboardPage />} />
           <Route path="dashboard" element={<DashboardPage />} />
+          <Route path="chat" element={<ChatPage />} />
           <Route path="settings" element={<SettingsPage />} />
           <Route path="get-started" element={<GetStartedPage />} />
           <Route path="data-sources" element={<DataSourcesPage />} />

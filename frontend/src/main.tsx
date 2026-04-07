@@ -23,9 +23,6 @@ function applyTheme() {
 
 applyTheme();
 
-// Fetch the API base URL from the Tauri backend before rendering.
-// This ensures JARVIS_PORT is defined in one place (the Rust backend).
-// In non-Tauri environments this is a no-op.
 initApiBase().finally(() => {
   createRoot(document.getElementById('root')!).render(
     <StrictMode>
