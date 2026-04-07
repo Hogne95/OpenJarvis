@@ -264,6 +264,115 @@
       0 0 8px rgba(34, 211, 238, 0.6),
       0 0 20px rgba(34, 211, 238, 0.3);
   }
+
+  .jarvis-panel {
+    background:
+      linear-gradient(180deg, rgba(8, 20, 32, 0.78), rgba(2, 6, 23, 0.9));
+    border: 1px solid rgba(34, 211, 238, 0.14);
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, 0.03),
+      0 0 0 1px rgba(34, 211, 238, 0.04),
+      0 24px 60px rgba(0, 0, 0, 0.35);
+    backdrop-filter: blur(22px);
+  }
+
+  .jarvis-outline {
+    background: rgba(10, 17, 28, 0.58);
+    box-shadow: inset 0 0 0 1px rgba(34, 211, 238, 0.05);
+  }
+
+  .jarvis-grid {
+    background-image:
+      linear-gradient(rgba(56, 189, 248, 0.12) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(56, 189, 248, 0.12) 1px, transparent 1px);
+    background-size: 56px 56px;
+    mask-image: radial-gradient(circle at center, black 35%, transparent 90%);
+  }
+
+  .jarvis-scanlines {
+    background-image: linear-gradient(
+      to bottom,
+      rgba(255, 255, 255, 0.02),
+      rgba(255, 255, 255, 0.02) 1px,
+      transparent 1px,
+      transparent 4px
+    );
+    background-size: 100% 4px;
+    animation: jarvis-scanlines 18s linear infinite;
+  }
+
+  .jarvis-vignette {
+    background:
+      radial-gradient(circle at center, transparent 48%, rgba(1, 3, 8, 0.46) 76%, rgba(1, 2, 5, 0.86) 100%);
+  }
+
+  .jarvis-spin-slow {
+    animation: jarvis-spin 16s linear infinite;
+  }
+
+  .jarvis-spin-reverse {
+    animation: jarvis-spin-reverse 22s linear infinite;
+  }
+
+  .jarvis-sweep {
+    animation: jarvis-sweep 5.5s linear infinite;
+  }
+
+  .jarvis-pulse {
+    animation: jarvis-pulse 2.6s ease-in-out infinite;
+  }
+
+  .jarvis-float {
+    animation: jarvis-float 5s ease-in-out infinite;
+  }
+
+  .jarvis-bar {
+    transform-origin: bottom;
+    animation: jarvis-bar 1.3s ease-in-out infinite alternate;
+    box-shadow: 0 0 18px rgba(34, 211, 238, 0.45);
+  }
+}
+
+@keyframes jarvis-spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+@keyframes jarvis-spin-reverse {
+  from { transform: rotate(360deg); }
+  to { transform: rotate(0deg); }
+}
+
+@keyframes jarvis-sweep {
+  from { transform: rotate(0deg); opacity: 0.45; }
+  50% { opacity: 1; }
+  to { transform: rotate(360deg); opacity: 0.45; }
+}
+
+@keyframes jarvis-pulse {
+  0%, 100% {
+    transform: scale(1);
+    opacity: 0.45;
+  }
+  50% {
+    transform: scale(1.08);
+    opacity: 1;
+  }
+}
+
+@keyframes jarvis-float {
+  0%, 100% { transform: scale(0.98); opacity: 0.45; }
+  50% { transform: scale(1.02); opacity: 0.8; }
+}
+
+@keyframes jarvis-scanlines {
+  from { transform: translateY(0); }
+  to { transform: translateY(12px); }
+}
+
+@keyframes jarvis-bar {
+  from { transform: scaleY(0.72); opacity: 0.72; }
+  to { transform: scaleY(1.1); opacity: 1; }
 }
 
 :root {
