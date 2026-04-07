@@ -1202,7 +1202,7 @@ class SpeechConfig:
     """Speech-to-text settings."""
 
     backend: str = "auto"  # "auto", "faster-whisper", "openai", "deepgram"
-    model: str = "base"  # Whisper model size: tiny, base, small, medium, large-v3
+    model: str = "small"  # Whisper model size: tiny, base, small, medium, large-v3
     language: str = ""  # Empty = auto-detect
     device: str = "auto"  # "auto", "cpu", "cuda"
     compute_type: str = "float16"  # "float16", "int8", "float32"

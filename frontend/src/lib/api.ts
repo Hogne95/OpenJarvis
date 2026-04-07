@@ -250,13 +250,23 @@ export interface SpeechHealth {
   reason?: string;
 }
 
-export async function transcribeAudio(audioBlob: Blob, filename = 'recording.webm'): Promise<TranscriptionResult> {
+interface TranscribeAudioOptions {
+  filename?: string;
+  languageHints?: string[];
+}
+
+async function transcribeAudioOnce(
+  audioBlob: Blob,
+  filename: string,
+  language?: string,
+): Promise<TranscriptionResult> {
   if (isTauri()) {
     try {
       const buffer = await audioBlob.arrayBuffer();
       return await tauriInvoke<TranscriptionResult>('transcribe_audio', {
         audioData: Array.from(new Uint8Array(buffer)),
         filename,
+        language,
       });
     } catch {
       // Fall through to fetch
@@ -264,12 +274,44 @@ export async function transcribeAudio(audioBlob: Blob, filename = 'recording.web
   }
   const formData = new FormData();
   formData.append('file', audioBlob, filename);
+  if (language) formData.append('language', language);
   const res = await fetch(`${getBase()}/v1/speech/transcribe`, {
     method: 'POST',
     body: formData,
   });
   if (!res.ok) throw new Error(`Transcription failed: ${res.status}`);
   return res.json();
+}
+
+export async function transcribeAudio(
+  audioBlob: Blob,
+  options: TranscribeAudioOptions = {},
+): Promise<TranscriptionResult> {
+  const filename = options.filename || 'recording.webm';
+  const hintOrder = [undefined, ...(options.languageHints || [])];
+  const seen = new Set<string>();
+  let lastError: unknown;
+
+  for (const hint of hintOrder) {
+    const key = hint || '__auto__';
+    if (seen.has(key)) continue;
+    seen.add(key);
+
+    try {
+      const result = await transcribeAudioOnce(audioBlob, filename, hint);
+      if (result.text.trim()) return result;
+    } catch (error) {
+      lastError = error;
+    }
+  }
+
+  if (lastError) throw lastError;
+  return {
+    text: '',
+    language: null,
+    confidence: null,
+    duration_seconds: 0,
+  };
 }
 
 export async function fetchSpeechHealth(): Promise<SpeechHealth> {

@@ -22,7 +22,7 @@ class FasterWhisperBackend(SpeechBackend):
 
     def __init__(
         self,
-        model_size: str = "base",
+        model_size: str = "small",
         device: str = "auto",
         compute_type: str = "float16",
     ) -> None:

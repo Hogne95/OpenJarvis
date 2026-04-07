@@ -4,23 +4,33 @@ import {
   Activity,
   AudioLines,
   Brain,
+  CalendarDays,
   CheckCircle2,
   ChevronRight,
   Cpu,
   Folder,
   Globe,
   Logs,
+  Mail,
   Mic,
   Radio,
   ScanSearch,
   Shield,
   Sparkles,
   Terminal,
+  Wrench,
   Waves,
   XCircle,
 } from 'lucide-react';
 import { useNavigate } from 'react-router';
-import { checkHealth, fetchManagedAgents, fetchSpeechHealth } from './lib/api';
+import {
+  checkHealth,
+  createManagedAgent,
+  fetchManagedAgents,
+  fetchSpeechHealth,
+  runManagedAgent,
+} from './lib/api';
+import { listConnectors } from './lib/connectors-api';
 import { useAppStore } from './lib/store';
 import type { ChatMessage, ToolCallInfo } from './types';
 import { InputArea } from './components/Chat/InputArea';
@@ -107,6 +117,14 @@ function summarizeToolCall(toolCall: ToolCallInfo | null) {
   return `${toolCall.tool}(${compactArgs})`;
 }
 
+type ConnectorSummary = {
+  totalConnected: number;
+  emailReady: boolean;
+  calendarReady: boolean;
+  docsReady: boolean;
+  messagingReady: boolean;
+};
+
 export default function JarvisHudDashboard() {
   const navigate = useNavigate();
   const messages = useAppStore((s) => s.messages);
@@ -118,11 +136,21 @@ export default function JarvisHudDashboard() {
   const conversations = useAppStore((s) => s.conversations);
   const logEntries = useAppStore((s) => s.logEntries);
   const managedAgents = useAppStore((s) => s.managedAgents);
+  const setSelectedAgentId = useAppStore((s) => s.setSelectedAgentId);
 
   const [apiReachable, setApiReachable] = useState<boolean | null>(null);
   const [speechAvailable, setSpeechAvailable] = useState<boolean | null>(null);
   const [runningAgentCount, setRunningAgentCount] = useState(0);
   const [voiceNotice, setVoiceNotice] = useState<string>('');
+  const [agentNotice, setAgentNotice] = useState<string>('');
+  const [agentActionBusy, setAgentActionBusy] = useState<string | null>(null);
+  const [connectorSummary, setConnectorSummary] = useState<ConnectorSummary>({
+    totalConnected: 0,
+    emailReady: false,
+    calendarReady: false,
+    docsReady: false,
+    messagingReady: false,
+  });
   const {
     state: hudSpeechState,
     error: hudSpeechError,
@@ -135,10 +163,11 @@ export default function JarvisHudDashboard() {
     let cancelled = false;
 
     const refreshLiveStatus = async () => {
-      const [health, speech, agents] = await Promise.allSettled([
+      const [health, speech, agents, connectors] = await Promise.allSettled([
         checkHealth(),
         fetchSpeechHealth(),
         fetchManagedAgents(),
+        listConnectors(),
       ]);
 
       if (cancelled) return;
@@ -152,6 +181,17 @@ export default function JarvisHudDashboard() {
           ? agents.value.filter((agent) => agent.status === 'running').length
           : managedAgents.filter((agent) => agent.status === 'running').length,
       );
+      if (connectors.status === 'fulfilled') {
+        const connected = connectors.value.filter((connector) => connector.connected);
+        const ids = new Set(connected.map((connector) => connector.connector_id));
+        setConnectorSummary({
+          totalConnected: connected.length,
+          emailReady: ids.has('gmail_imap') || ids.has('outlook'),
+          calendarReady: ids.has('gcalendar') || ids.has('outlook'),
+          docsReady: ids.has('gdrive') || ids.has('notion') || ids.has('obsidian'),
+          messagingReady: ids.has('slack') || ids.has('imessage') || ids.has('whatsapp'),
+        });
+      }
     };
 
     refreshLiveStatus();
@@ -168,7 +208,8 @@ export default function JarvisHudDashboard() {
     [messages],
   );
   const latestLogEntries = useMemo(() => [...logEntries].slice(-4).reverse(), [logEntries]);
-  const activeToolCall = streamState.activeToolCalls.at(-1) ?? null;
+  const activeToolCalls = streamState.activeToolCalls;
+  const activeToolCall = activeToolCalls.length > 0 ? activeToolCalls[activeToolCalls.length - 1] : null;
 
   const status: Status = useMemo(() => {
     if (streamState.isStreaming && streamState.content.trim()) return 'Responding';
@@ -264,25 +305,166 @@ export default function JarvisHudDashboard() {
     { icon: Shield, label: 'Approval Gate', value: streamState.activeToolCalls.length > 0 ? 'Engaged' : 'Ready' },
   ];
 
-  const tools = [
-    { icon: Globe, label: 'Web Intel', sublabel: totalToolCalls > 0 ? `${totalToolCalls} calls seen` : 'Awaiting use' },
-    { icon: Folder, label: 'Files', sublabel: `${conversations.length} chats indexed` },
-    { icon: Terminal, label: 'Shell', sublabel: activeToolCall ? 'Tool path active' : 'On standby' },
-    { icon: Sparkles, label: 'Memory', sublabel: latestAssistantMessage ? 'Session context live' : 'No response yet' },
-  ];
-
   const quickActions = [
     { icon: Radio, label: 'Chat', sublabel: 'Open full conversation view', action: () => navigate('/chat') },
+    { icon: Folder, label: 'Sources', sublabel: 'Email, calendar, documents', action: () => navigate('/data-sources') },
     { icon: Terminal, label: 'Logs', sublabel: 'Inspect runtime events', action: () => navigate('/logs') },
     { icon: Brain, label: 'Agents', sublabel: 'Managed automation control', action: () => navigate('/agents') },
-    { icon: Shield, label: 'Settings', sublabel: 'Voice, model, API config', action: () => navigate('/settings') },
+    { icon: Shield, label: 'Settings', sublabel: 'Voice, model, API config', action: () => navigate('/settings') }
   ];
 
-  const missionFeed = [
-    `Model selected: ${selectedModel || serverInfo?.model || 'No model selected'}`,
-    `Server engine: ${serverInfo?.engine || 'Unavailable'}`,
-    `Speech input: ${settings.speechEnabled ? 'Enabled' : 'Disabled'}${speechAvailable === false ? ' (backend missing)' : ''}`,
-    `Estimated cloud savings: ${formatCurrency(totalSavings)}`,
+  const injectCommand = (text: string) => {
+    window.dispatchEvent(new CustomEvent('jarvis:set-input', { detail: { text } }));
+    setVoiceNotice('Command loaded into the deck.');
+  };
+
+  const ensureAgent = async (kind: 'inbox' | 'meeting-prep') => {
+    const existing = managedAgents.find((agent) =>
+      kind === 'inbox'
+        ? agent.name === 'JARVIS Inbox Triager'
+        : agent.name === 'JARVIS Meeting Prep',
+    );
+    if (existing) return existing;
+
+    if (kind === 'inbox') {
+      return createManagedAgent({
+        name: 'JARVIS Inbox Triager',
+        template_id: 'inbox_triager',
+        config: {
+          model: selectedModel || undefined,
+          schedule_type: 'manual',
+          instruction:
+            'Monitor my connected email and messaging sources, highlight urgent items first, and keep summaries concise and actionable.',
+        },
+      });
+    }
+
+    return createManagedAgent({
+      name: 'JARVIS Meeting Prep',
+      agent_type: 'deep_research',
+      config: {
+        model: selectedModel || undefined,
+        schedule_type: 'manual',
+        max_turns: 8,
+        temperature: 0.2,
+        tools: ['knowledge_search', 'knowledge_sql', 'scan_chunks', 'think'],
+        system_prompt:
+          'You are a meeting preparation assistant. Search the user knowledge base, emails, notes, and calendar context to prepare concise meeting briefs with participants, recent context, likely topics, and recommended talking points.',
+      },
+    });
+  };
+
+  const launchAssistantAgent = async (kind: 'inbox' | 'meeting-prep') => {
+    const busyKey = kind;
+    setAgentActionBusy(busyKey);
+    setAgentNotice('');
+    try {
+      const agent = await ensureAgent(kind);
+      setSelectedAgentId(agent.id);
+      if (kind === 'inbox') {
+        await runManagedAgent(agent.id);
+        setAgentNotice('Inbox Triager launched and selected in Agents.');
+      } else {
+        setAgentNotice('Meeting Prep agent is ready and selected in Agents.');
+      }
+      navigate('/agents');
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Failed to launch assistant agent';
+      setAgentNotice(message);
+    } finally {
+      setAgentActionBusy(null);
+    }
+  };
+
+  const sourceReadiness = [
+    {
+      icon: Mail,
+      label: 'Inbox',
+      value: connectorSummary.emailReady ? 'Connected' : 'Needs setup',
+      hint: connectorSummary.emailReady
+        ? 'Email sources are ready for triage and summaries.'
+        : 'Connect Gmail or Outlook in Data Sources.',
+    },
+    {
+      icon: CalendarDays,
+      label: 'Calendar',
+      value: connectorSummary.calendarReady ? 'Connected' : 'Needs setup',
+      hint: connectorSummary.calendarReady
+        ? 'Meeting and schedule context is available.'
+        : 'Connect Google Calendar or Outlook calendar.',
+    },
+    {
+      icon: Folder,
+      label: 'Knowledge',
+      value: connectorSummary.docsReady ? 'Connected' : 'Expandable',
+      hint: connectorSummary.docsReady
+        ? 'Docs and notes are available for deeper context.'
+        : 'Add Notion, Drive, or Obsidian for stronger answers.',
+    },
+    {
+      icon: Radio,
+      label: 'Messaging',
+      value: connectorSummary.messagingReady ? 'Connected' : 'Optional',
+      hint: connectorSummary.messagingReady
+        ? 'Slack/iMessage/WhatsApp can be searched by the assistant.'
+        : 'Messaging channels are optional but useful for inbox triage.',
+    },
+  ];
+
+  const missionProfiles = [
+    {
+      icon: Mail,
+      label: 'Inbox Triage',
+      sublabel: connectorSummary.emailReady ? 'Use connected mail sources' : 'Works best after Gmail/Outlook setup',
+      action: () => launchAssistantAgent('inbox'),
+    },
+    {
+      icon: CalendarDays,
+      label: 'Calendar Brief',
+      sublabel: connectorSummary.calendarReady ? 'Meetings and schedule context available' : 'Connect calendar for better planning',
+      action: () =>
+        injectCommand(
+          "What's on my calendar today, which meetings need preparation, and what should I focus on first?",
+        ),
+    },
+    {
+      icon: Brain,
+      label: 'Meeting Prep',
+      sublabel: 'Combine messages, notes, and calendar context',
+      action: () => launchAssistantAgent('meeting-prep'),
+    },
+    {
+      icon: Wrench,
+      label: 'Coding Assist',
+      sublabel: 'Use JARVIS as a repo and shell copilot',
+      action: () =>
+        injectCommand(
+          'Act as my coding assistant for this repository. Inspect the current state, propose the next concrete step, and help me execute it safely.',
+        ),
+    },
+  ];
+
+  const operatorWorkflows = [
+    {
+      icon: Globe,
+      label: 'Research',
+      sublabel: totalToolCalls > 0 ? `${totalToolCalls} tool calls seen this session` : 'Ready for web and doc lookup',
+    },
+    {
+      icon: Terminal,
+      label: 'Workbench',
+      sublabel: activeToolCall ? 'Tool execution active' : 'Ready for shell and file tasks',
+    },
+    {
+      icon: Sparkles,
+      label: 'Memory',
+      sublabel: latestAssistantMessage ? 'Session context building' : 'Awaiting first response',
+    },
+    {
+      icon: Brain,
+      label: 'Automation',
+      sublabel: runningAgentCount > 0 ? `${runningAgentCount} agents running` : 'Launch inbox or research agents',
+    },
   ];
 
   const timelineItems = latestLogEntries.length
@@ -303,16 +485,16 @@ export default function JarvisHudDashboard() {
         { icon: Activity, title: 'Telemetry', detail: 'Live system binding initialized.' },
       ];
 
-  const targetQueue = [
-    latestUserMessage
-      ? `Latest user request: ${latestUserMessage.content.slice(0, 88)}${latestUserMessage.content.length > 88 ? '...' : ''}`
-      : 'No user request yet. Start with voice or type into chat.',
-    activeToolCall
-      ? `Current tool action: ${toolSummary}`
-      : 'No active tool calls. Approval gate is standing by.',
-    latestAssistantMessage
-      ? `Latest assistant reply: ${latestAssistantMessage.content.slice(0, 88)}${latestAssistantMessage.content.length > 88 ? '...' : ''}`
-      : 'No assistant reply captured yet.',
+  const executiveQueue = [
+    connectorSummary.emailReady
+      ? 'Inbox triage can use connected email sources.'
+      : 'Connect email to unlock real inbox triage.',
+    connectorSummary.calendarReady
+      ? 'Calendar context is available for meeting prep.'
+      : 'Connect a calendar to unlock daily planning and meeting prep.',
+    runningAgentCount > 0
+      ? `${runningAgentCount} automation agent${runningAgentCount === 1 ? '' : 's'} currently active.`
+      : 'No automation agents running. Use the Agents screen to launch one.',
   ];
 
   const approvalLabel =
@@ -432,38 +614,57 @@ export default function JarvisHudDashboard() {
               </div>
             </Panel>
 
-            <Panel title="Voice Signature" kicker="Live Input">
-              <div className="mb-4 flex items-center gap-3">
-                <div className="rounded-2xl border border-emerald-400/25 bg-emerald-400/10 p-3">
-                  <AudioLines className="h-5 w-5 text-emerald-300" />
-                </div>
-                <div>
-                  <div className={`text-sm uppercase tracking-[0.28em] ${statusMeta.accent}`}>{status}</div>
-                  <div className="text-xs text-slate-300/65">{statusMeta.label}</div>
-                </div>
-              </div>
-              <Equalizer bars={statusMeta.bars} />
-              <div className="mt-4 rounded-[1.15rem] border border-cyan-400/12 bg-slate-950/55 p-4 text-sm leading-7 text-slate-200/80">
-                {statusMeta.transcript}
-              </div>
-            </Panel>
-
-            <Panel title="Mission Feed" kicker="Memory">
+            <Panel title="Source Readiness" kicker="Executive Ops">
               <div className="space-y-3">
-                {missionFeed.map((item, index) => (
+                {sourceReadiness.map(({ icon: Icon, label, value, hint }) => (
                   <div
-                    key={item}
+                    key={label}
                     className="flex gap-3 rounded-[1.15rem] border border-cyan-400/10 bg-cyan-400/[0.04] px-3 py-3"
                   >
-                    <div className="mt-1 h-2 w-2 rounded-full bg-cyan-300 shadow-[0_0_14px_rgba(34,211,238,0.85)]" />
-                    <div className="text-sm text-slate-200/78">
-                      <span className="mr-2 text-[10px] uppercase tracking-[0.3em] text-cyan-300/50">
-                        {`0${index + 1}`}
-                      </span>
-                      {item}
+                    <div className="rounded-xl border border-cyan-400/12 bg-cyan-400/[0.07] p-2">
+                      <Icon className="h-4 w-4 text-cyan-200" />
+                    </div>
+                    <div className="flex-1">
+                      <div className="flex items-center justify-between gap-3">
+                        <div className="text-sm uppercase tracking-[0.18em] text-cyan-50/92">{label}</div>
+                        <div className="text-[10px] uppercase tracking-[0.28em] text-emerald-300">{value}</div>
+                      </div>
+                      <div className="mt-1 text-sm leading-6 text-slate-200/72">{hint}</div>
                     </div>
                   </div>
                 ))}
+              </div>
+            </Panel>
+
+            <Panel title="Mission Profiles" kicker="One-click tasks">
+              <div className="grid gap-3">
+                {missionProfiles.map(({ icon: Icon, label, sublabel, action }) => (
+                  <button
+                    key={label}
+                    onClick={action}
+                    disabled={agentActionBusy !== null}
+                    className="rounded-[1.15rem] border border-cyan-400/10 bg-slate-950/55 px-4 py-4 text-left transition hover:bg-cyan-400/[0.08] disabled:cursor-not-allowed disabled:opacity-70"
+                  >
+                    <div className="flex items-center gap-3">
+                      <div className="rounded-xl border border-cyan-400/12 bg-cyan-400/[0.07] p-2">
+                        <Icon className="h-4 w-4 text-cyan-200" />
+                      </div>
+                      <div>
+                        <div className="text-sm uppercase tracking-[0.18em] text-cyan-50/92">{label}</div>
+                        <div className="mt-1 text-[10px] uppercase tracking-[0.28em] text-cyan-300/55">
+                          {agentActionBusy === 'inbox' && label === 'Inbox Triage'
+                            ? 'Launching agent...'
+                            : agentActionBusy === 'meeting-prep' && label === 'Meeting Prep'
+                            ? 'Launching agent...'
+                            : sublabel}
+                        </div>
+                      </div>
+                    </div>
+                  </button>
+                ))}
+              </div>
+              <div className="mt-4 rounded-[1.15rem] border border-cyan-400/10 bg-slate-950/55 px-4 py-3 text-sm text-slate-100/78">
+                {agentNotice || 'Inbox Triage and Meeting Prep now launch real managed agents from the HUD.'}
               </div>
             </Panel>
           </div>
@@ -625,9 +826,9 @@ export default function JarvisHudDashboard() {
                 </div>
               </Panel>
 
-              <Panel title="Tool Dock" kicker="Direct Access">
+              <Panel title="Workbench Modes" kicker="Useful surfaces">
                 <div className="grid grid-cols-2 gap-3">
-                  {tools.map(({ icon: Icon, label, sublabel }) => (
+                  {operatorWorkflows.map(({ icon: Icon, label, sublabel }) => (
                     <div
                       key={label}
                       className="rounded-[1.1rem] border border-cyan-400/12 bg-slate-950/55 px-4 py-4 text-left"
@@ -683,9 +884,9 @@ export default function JarvisHudDashboard() {
               </div>
             </Panel>
 
-            <Panel title="Target Queue" kicker="Task Stack">
+            <Panel title="Executive Queue" kicker="Assistant Priorities">
               <div className="space-y-3">
-                {targetQueue.map((item, index) => (
+                {executiveQueue.map((item, index) => (
                   <div
                     key={item}
                     className="flex items-center gap-3 rounded-[1.15rem] border border-cyan-400/10 bg-cyan-400/[0.04] px-4 py-3"
@@ -700,14 +901,14 @@ export default function JarvisHudDashboard() {
               </div>
             </Panel>
 
-            <Panel title="Operator Profile" kicker="Session">
+            <Panel title="Assistant Profile" kicker="Session">
               <div className="rounded-[1.35rem] border border-cyan-400/10 bg-[linear-gradient(180deg,rgba(34,211,238,0.10),rgba(2,6,23,0.48))] p-5">
                 <div className="mb-3 flex items-center gap-3">
                   <div className="flex h-12 w-12 items-center justify-center rounded-full border border-cyan-200/20 bg-cyan-300/10">
-                    <Mic className="h-5 w-5 text-cyan-100" />
+                    <AudioLines className="h-5 w-5 text-cyan-100" />
                   </div>
                   <div>
-                    <div className="text-sm uppercase tracking-[0.24em] text-cyan-50/92">OpenJarvis Operator</div>
+                    <div className="text-sm uppercase tracking-[0.24em] text-cyan-50/92">Executive Assistant</div>
                     <div className="text-xs uppercase tracking-[0.25em] text-cyan-300/55">Local Session Active</div>
                   </div>
                 </div>
@@ -715,6 +916,8 @@ export default function JarvisHudDashboard() {
                   <div>Input languages: Norwegian, English</div>
                   <div>Reply language: English</div>
                   <div>Current engine: {serverInfo?.engine || 'Unavailable'}</div>
+                  <div>Connected sources: {connectorSummary.totalConnected}</div>
+                  <div>Estimated cloud savings: {formatCurrency(totalSavings)}</div>
                   <div>Streaming rate: {tokenRate ? `${tokenRate.toFixed(1)} tok/s` : 'No live throughput yet'}</div>
                 </div>
               </div>

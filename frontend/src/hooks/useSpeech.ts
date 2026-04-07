@@ -18,6 +18,16 @@ export function useSpeech() {
       .catch(() => setAvailable(false));
   }, []);
 
+  const languageHints = useCallback(() => {
+    const locale = (navigator.language || '').toLowerCase();
+    const hints = ['no', 'en'];
+    if (locale.startsWith('en')) return ['en', 'no'];
+    if (locale.startsWith('nb') || locale.startsWith('nn') || locale.startsWith('no')) {
+      return ['no', 'en'];
+    }
+    return hints;
+  }, []);
+
   const startRecording = useCallback(async (): Promise<void> => {
     setError(null);
 
@@ -65,7 +75,10 @@ export function useSpeech() {
         chunksRef.current = [];
 
         try {
-          const result = await transcribeAudio(blob);
+          const result = await transcribeAudio(blob, {
+            filename: 'recording.webm',
+            languageHints: languageHints(),
+          });
           setState('idle');
           resolve(result.text);
         } catch (err) {
@@ -78,7 +91,7 @@ export function useSpeech() {
 
       recorder.stop();
     });
-  }, []);
+  }, [languageHints]);
 
   return {
     state,
