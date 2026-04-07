@@ -5,7 +5,7 @@ from __future__ import annotations
 import inspect
 import json
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Literal, Optional
 
 from fastapi import APIRouter, HTTPException, Request, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel
@@ -51,6 +51,23 @@ class OptimizeRunRequest(BaseModel):
     max_trials: int = 20
     optimizer_model: str = "claude-sonnet-4-6"
     max_samples: int = 50
+
+
+class VoiceLoopStartRequest(BaseModel):
+    language_hints: Optional[List[str]] = None
+
+
+class VoiceLoopUpdateRequest(BaseModel):
+    phase: Literal[
+        "idle",
+        "listening",
+        "recording",
+        "transcribing",
+        "speaking",
+        "error",
+    ]
+    transcript: Optional[str] = None
+    error: Optional[str] = None
 
 
 # ---- Agent routes ----
@@ -661,6 +678,7 @@ async def learning_policy(request: Request):
 # ---- Speech routes ----
 
 speech_router = APIRouter(prefix="/v1/speech", tags=["speech"])
+voice_loop_router = APIRouter(prefix="/v1/voice-loop", tags=["voice-loop"])
 
 
 @speech_router.post("/transcribe")
@@ -701,6 +719,63 @@ async def speech_health(request: Request):
         "available": backend.health(),
         "backend": backend.backend_id,
     }
+
+
+@voice_loop_router.get("/status")
+async def voice_loop_status(request: Request):
+    """Return the current HUD voice loop session state."""
+    manager = getattr(request.app.state, "voice_loop", None)
+    if manager is None:
+        return {
+            "active": False,
+            "phase": "idle",
+            "session_id": None,
+            "started_at": None,
+            "updated_at": None,
+            "backend_available": False,
+            "backend_name": None,
+            "language_hints": ["no", "en"],
+            "last_transcript": "",
+            "last_error": "Voice loop manager not configured",
+        }
+    return manager.status()
+
+
+@voice_loop_router.post("/start")
+async def voice_loop_start(req: VoiceLoopStartRequest, request: Request):
+    """Start an active HUD voice loop session."""
+    manager = getattr(request.app.state, "voice_loop", None)
+    if manager is None:
+        raise HTTPException(status_code=503, detail="Voice loop manager not configured")
+    snapshot = manager.start(language_hints=req.language_hints)
+    if not snapshot.get("backend_available"):
+        raise HTTPException(
+            status_code=503,
+            detail=snapshot.get("last_error") or "Speech backend not available",
+        )
+    return snapshot
+
+
+@voice_loop_router.post("/stop")
+async def voice_loop_stop(request: Request):
+    """Stop the active HUD voice loop session."""
+    manager = getattr(request.app.state, "voice_loop", None)
+    if manager is None:
+        raise HTTPException(status_code=503, detail="Voice loop manager not configured")
+    return manager.stop()
+
+
+@voice_loop_router.post("/state")
+async def voice_loop_state(req: VoiceLoopUpdateRequest, request: Request):
+    """Update the active HUD voice loop phase."""
+    manager = getattr(request.app.state, "voice_loop", None)
+    if manager is None:
+        raise HTTPException(status_code=503, detail="Voice loop manager not configured")
+    return manager.update(
+        phase=req.phase,
+        transcript=req.transcript,
+        error=req.error,
+    )
 
 
 # ---- Feedback routes ----
@@ -814,6 +889,7 @@ def include_all_routes(app) -> None:
     app.include_router(websocket_router)
     app.include_router(learning_router)
     app.include_router(speech_router)
+    app.include_router(voice_loop_router)
     app.include_router(feedback_router)
     app.include_router(optimize_router)
 
@@ -863,6 +939,7 @@ __all__ = [
     "websocket_router",
     "learning_router",
     "speech_router",
+    "voice_loop_router",
     "feedback_router",
     "optimize_router",
 ]

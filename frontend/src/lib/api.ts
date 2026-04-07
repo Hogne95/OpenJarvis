@@ -250,6 +250,19 @@ export interface SpeechHealth {
   reason?: string;
 }
 
+export interface VoiceLoopStatus {
+  active: boolean;
+  phase: 'idle' | 'listening' | 'recording' | 'transcribing' | 'speaking' | 'error';
+  session_id: string | null;
+  started_at: number | null;
+  updated_at: number | null;
+  backend_available: boolean;
+  backend_name: string | null;
+  language_hints: string[];
+  last_transcript: string;
+  last_error: string;
+}
+
 interface TranscribeAudioOptions {
   filename?: string;
   languageHints?: string[];
@@ -324,6 +337,51 @@ export async function fetchSpeechHealth(): Promise<SpeechHealth> {
   }
   const res = await fetch(`${getBase()}/v1/speech/health`);
   if (!res.ok) return { available: false };
+  return res.json();
+}
+
+export async function fetchVoiceLoopStatus(): Promise<VoiceLoopStatus> {
+  const res = await fetch(`${getBase()}/v1/voice-loop/status`);
+  if (!res.ok) throw new Error(`Voice loop status failed: ${res.status}`);
+  return res.json();
+}
+
+export async function startVoiceLoop(languageHints: string[] = ['no', 'en']): Promise<VoiceLoopStatus> {
+  const res = await fetch(`${getBase()}/v1/voice-loop/start`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ language_hints: languageHints }),
+  });
+  if (!res.ok) {
+    const detail = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(detail.detail || `Voice loop start failed: ${res.status}`);
+  }
+  return res.json();
+}
+
+export async function stopVoiceLoop(): Promise<VoiceLoopStatus> {
+  const res = await fetch(`${getBase()}/v1/voice-loop/stop`, { method: 'POST' });
+  if (!res.ok) {
+    const detail = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(detail.detail || `Voice loop stop failed: ${res.status}`);
+  }
+  return res.json();
+}
+
+export async function updateVoiceLoopState(body: {
+  phase: VoiceLoopStatus['phase'];
+  transcript?: string;
+  error?: string;
+}): Promise<VoiceLoopStatus> {
+  const res = await fetch(`${getBase()}/v1/voice-loop/state`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const detail = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(detail.detail || `Voice loop state update failed: ${res.status}`);
+  }
   return res.json();
 }
 

@@ -17,6 +17,7 @@ from openjarvis.server.dashboard import dashboard_router
 from openjarvis.server.digest_routes import create_digest_router
 from openjarvis.server.routes import router
 from openjarvis.server.upload_router import router as upload_router
+from openjarvis.server.voice_loop import VoiceLoopManager
 
 logger = logging.getLogger(__name__)
 
@@ -203,6 +204,7 @@ def create_app(
     app.state.config = config
     app.state.memory_backend = memory_backend
     app.state.speech_backend = speech_backend
+    app.state.voice_loop = VoiceLoopManager(speech_backend=speech_backend)
     app.state.agent_manager = agent_manager
     app.state.agent_scheduler = agent_scheduler
     app.state.session_start = time.time()
