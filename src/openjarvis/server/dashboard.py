@@ -1,4 +1,4 @@
-"""Dashboard route — serves the savings dashboard HTML page."""
+"""Legacy savings dashboard route."""
 
 from __future__ import annotations
 
@@ -426,9 +426,9 @@ setInterval(refresh, 5000);
 """
 
 
-@dashboard_router.get("/dashboard", response_class=HTMLResponse)
+@dashboard_router.get("/legacy-dashboard", response_class=HTMLResponse)
 async def dashboard():
-    """Serve the savings dashboard page."""
+    """Serve the legacy savings dashboard page."""
     return HTMLResponse(content=DASHBOARD_HTML)
 
 
