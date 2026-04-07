@@ -18,70 +18,11 @@ import {
   Waves,
   XCircle,
 } from 'lucide-react';
+import { checkHealth, fetchManagedAgents, fetchSpeechHealth } from './lib/api';
+import { useAppStore } from './lib/store';
+import type { ChatMessage, ToolCallInfo } from './types';
 
-const statuses = ['Standby', 'Listening', 'Analyzing', 'Responding'] as const;
-type Status = (typeof statuses)[number];
-
-const statusMeta: Record<
-  Status,
-  {
-    accent: string;
-    label: string;
-    transcript: string;
-    reply: string;
-    bars: number[];
-  }
-> = {
-  Standby: {
-    accent: 'text-cyan-200',
-    label: 'Wake phrase armed',
-    transcript: "Awaiting user input. Say 'Hey Jarvis' to wake the assistant.",
-    reply: 'All systems nominal. Standing by for a voice or text command.',
-    bars: [18, 26, 22, 28, 16, 24, 20, 14],
-  },
-  Listening: {
-    accent: 'text-emerald-300',
-    label: 'Voice capture live',
-    transcript: 'Jarvis, open the tactical dashboard and summarize the local system state.',
-    reply: 'Capturing multilingual speech input and assembling a local intent draft.',
-    bars: [48, 72, 84, 66, 92, 70, 56, 44],
-  },
-  Analyzing: {
-    accent: 'text-amber-300',
-    label: 'Inference in progress',
-    transcript: 'Intent parsed. Preparing a response and checking approval-gated actions.',
-    reply: 'Cross-referencing memory, tools, and system telemetry before responding.',
-    bars: [34, 40, 56, 64, 60, 52, 38, 28],
-  },
-  Responding: {
-    accent: 'text-sky-300',
-    label: 'Voice synthesis active',
-    transcript: 'Request understood. Rendering the JARVIS HUD and keeping voice controls online.',
-    reply: 'Dashboard is live. Voice pipeline remains armed and approval checks remain enforced.',
-    bars: [42, 58, 76, 62, 70, 82, 64, 46],
-  },
-};
-
-const subsystems = [
-  { icon: Cpu, label: 'Local Core', value: 'Nominal' },
-  { icon: Brain, label: 'Reasoner', value: 'Ready' },
-  { icon: Waves, label: 'Voice Loop', value: 'Armed' },
-  { icon: Shield, label: 'Approval Gate', value: 'Online' },
-];
-
-const tools = [
-  { icon: Globe, label: 'Web Intel' },
-  { icon: Folder, label: 'Files' },
-  { icon: Terminal, label: 'Shell' },
-  { icon: Sparkles, label: 'Memory' },
-];
-
-const missionFeed = [
-  'English responses locked. Norwegian speech input remains accepted.',
-  'Voice wake loop preserved to avoid breaking working mic behavior.',
-  'Dashboard route detached from default app chrome.',
-  'Legacy static dashboard moved off the primary HUD route.',
-];
+type Status = 'Standby' | 'Listening' | 'Analyzing' | 'Responding';
 
 function Panel({
   title,
@@ -129,35 +70,237 @@ function Equalizer({ bars }: { bars: number[] }) {
   );
 }
 
+function formatCurrency(value: number | undefined) {
+  const safe = value ?? 0;
+  if (safe >= 100) return `$${safe.toFixed(0)}`;
+  if (safe >= 1) return `$${safe.toFixed(2)}`;
+  return `$${safe.toFixed(3)}`;
+}
+
+function formatElapsed(ms: number) {
+  if (!ms) return '0.0s';
+  if (ms < 1000) return `${ms}ms`;
+  return `${(ms / 1000).toFixed(1)}s`;
+}
+
+function compactText(value: string, fallback: string) {
+  const trimmed = value.trim();
+  return trimmed || fallback;
+}
+
+function latestMessageByRole(messages: ChatMessage[], role: 'user' | 'assistant') {
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    if (messages[index].role === role) return messages[index];
+  }
+  return null;
+}
+
+function summarizeToolCall(toolCall: ToolCallInfo | null) {
+  if (!toolCall) return 'No active tool calls.';
+  const args = toolCall.arguments?.trim();
+  if (!args) return `${toolCall.tool} requested.`;
+  const compactArgs = args.length > 120 ? `${args.slice(0, 117)}...` : args;
+  return `${toolCall.tool}(${compactArgs})`;
+}
+
 export default function JarvisHudDashboard() {
-  const [statusIndex, setStatusIndex] = useState(0);
-  const [approved, setApproved] = useState<boolean | null>(null);
-  const status = statuses[statusIndex];
-  const meta = statusMeta[status];
+  const messages = useAppStore((s) => s.messages);
+  const streamState = useAppStore((s) => s.streamState);
+  const selectedModel = useAppStore((s) => s.selectedModel);
+  const serverInfo = useAppStore((s) => s.serverInfo);
+  const savings = useAppStore((s) => s.savings);
+  const settings = useAppStore((s) => s.settings);
+  const conversations = useAppStore((s) => s.conversations);
+  const logEntries = useAppStore((s) => s.logEntries);
+  const managedAgents = useAppStore((s) => s.managedAgents);
+
+  const [apiReachable, setApiReachable] = useState<boolean | null>(null);
+  const [speechAvailable, setSpeechAvailable] = useState<boolean | null>(null);
+  const [runningAgentCount, setRunningAgentCount] = useState(0);
 
   useEffect(() => {
-    const id = window.setInterval(() => {
-      setStatusIndex((current) => (current + 1) % statuses.length);
-    }, 3600);
-    return () => window.clearInterval(id);
-  }, []);
+    let cancelled = false;
+
+    const refreshLiveStatus = async () => {
+      const [health, speech, agents] = await Promise.allSettled([
+        checkHealth(),
+        fetchSpeechHealth(),
+        fetchManagedAgents(),
+      ]);
+
+      if (cancelled) return;
+
+      setApiReachable(health.status === 'fulfilled' ? health.value : false);
+      setSpeechAvailable(
+        speech.status === 'fulfilled' ? speech.value.available : false,
+      );
+      setRunningAgentCount(
+        agents.status === 'fulfilled'
+          ? agents.value.filter((agent) => agent.status === 'running').length
+          : managedAgents.filter((agent) => agent.status === 'running').length,
+      );
+    };
+
+    refreshLiveStatus();
+    const interval = window.setInterval(refreshLiveStatus, 30000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(interval);
+    };
+  }, [managedAgents]);
+
+  const latestUserMessage = useMemo(() => latestMessageByRole(messages, 'user'), [messages]);
+  const latestAssistantMessage = useMemo(
+    () => latestMessageByRole(messages, 'assistant'),
+    [messages],
+  );
+  const latestLogEntries = useMemo(() => [...logEntries].slice(-4).reverse(), [logEntries]);
+  const activeToolCall = streamState.activeToolCalls.at(-1) ?? null;
+
+  const status: Status = useMemo(() => {
+    if (streamState.isStreaming && streamState.content.trim()) return 'Responding';
+    if (streamState.isStreaming || streamState.activeToolCalls.length > 0) return 'Analyzing';
+    if (settings.speechEnabled && speechAvailable) return 'Listening';
+    return 'Standby';
+  }, [settings.speechEnabled, speechAvailable, streamState]);
+
+  const statusMeta = useMemo(() => {
+    switch (status) {
+      case 'Listening':
+        return {
+          accent: 'text-emerald-300',
+          label: 'Voice capture armed',
+          transcript: compactText(
+            latestUserMessage?.content || '',
+            "Microphone ready. Say 'Hey Jarvis' or use the chat input below.",
+          ),
+          reply: compactText(
+            latestAssistantMessage?.content || '',
+            'Speech backend is available and the HUD is waiting for your next command.',
+          ),
+          bars: [42, 60, 80, 66, 90, 72, 56, 40],
+        };
+      case 'Analyzing':
+        return {
+          accent: 'text-amber-300',
+          label: streamState.phase || 'Tool / inference activity detected',
+          transcript: compactText(
+            latestUserMessage?.content || '',
+            'Intent received. Preparing model inference and tool routing.',
+          ),
+          reply: compactText(
+            summarizeToolCall(activeToolCall),
+            'Inference pipeline engaged.',
+          ),
+          bars: [32, 38, 54, 62, 58, 48, 34, 22],
+        };
+      case 'Responding':
+        return {
+          accent: 'text-sky-300',
+          label: streamState.phase || 'Streaming response',
+          transcript: compactText(
+            latestUserMessage?.content || '',
+            'Active request in progress.',
+          ),
+          reply: compactText(
+            streamState.content || latestAssistantMessage?.content || '',
+            'Rendering assistant response...',
+          ),
+          bars: [46, 62, 78, 70, 84, 76, 58, 44],
+        };
+      default:
+        return {
+          accent: 'text-cyan-200',
+          label: 'System idle',
+          transcript: compactText(
+            latestUserMessage?.content || '',
+            'No active request. Use voice or chat to begin.',
+          ),
+          reply: compactText(
+            latestAssistantMessage?.content || '',
+            'All systems nominal. Standing by.',
+          ),
+          bars: [18, 24, 20, 26, 16, 22, 18, 14],
+        };
+    }
+  }, [activeToolCall, latestAssistantMessage, latestUserMessage, status, streamState.content, streamState.phase]);
+
+  const toolSummary = summarizeToolCall(activeToolCall);
+  const totalToolCalls = messages.reduce(
+    (sum, message) => sum + (message.toolCalls?.length ?? 0),
+    0,
+  );
+  const tokenRate = latestAssistantMessage?.telemetry?.tokens_per_sec;
+  const lastLatency = latestAssistantMessage?.telemetry?.total_ms ?? streamState.elapsedMs;
+  const totalSavings = savings?.per_provider.reduce((sum, provider) => sum + provider.total_cost, 0) ?? 0;
 
   const reactorMetrics = useMemo(
     () => [
-      { label: 'Wake Confidence', value: status === 'Listening' ? '0.94' : '0.81' },
-      { label: 'Response Latency', value: status === 'Analyzing' ? '1.4s' : '0.8s' },
-      { label: 'Noise Floor', value: '-42 dB' },
-      { label: 'Pending Actions', value: approved === null ? '01' : '00' },
+      { label: 'API Link', value: apiReachable ? 'Online' : apiReachable === false ? 'Offline' : 'Checking' },
+      { label: 'Speech Core', value: speechAvailable ? 'Ready' : speechAvailable === false ? 'Offline' : 'Checking' },
+      { label: 'Response Latency', value: formatElapsed(lastLatency) },
+      { label: 'Pending Actions', value: streamState.activeToolCalls.length.toString().padStart(2, '0') },
     ],
-    [approved, status],
+    [apiReachable, speechAvailable, lastLatency, streamState.activeToolCalls.length],
   );
 
+  const subsystems = [
+    { icon: Cpu, label: 'Local Core', value: apiReachable ? 'Nominal' : apiReachable === false ? 'Offline' : 'Check' },
+    { icon: Brain, label: 'Reasoner', value: serverInfo?.engine || 'Unknown' },
+    { icon: Waves, label: 'Voice Loop', value: settings.speechEnabled ? (speechAvailable ? 'Armed' : 'Needs STT') : 'Disabled' },
+    { icon: Shield, label: 'Approval Gate', value: streamState.activeToolCalls.length > 0 ? 'Engaged' : 'Ready' },
+  ];
+
+  const tools = [
+    { icon: Globe, label: 'Web Intel', sublabel: totalToolCalls > 0 ? `${totalToolCalls} calls seen` : 'Awaiting use' },
+    { icon: Folder, label: 'Files', sublabel: `${conversations.length} chats indexed` },
+    { icon: Terminal, label: 'Shell', sublabel: activeToolCall ? 'Tool path active' : 'On standby' },
+    { icon: Sparkles, label: 'Memory', sublabel: latestAssistantMessage ? 'Session context live' : 'No response yet' },
+  ];
+
+  const missionFeed = [
+    `Model selected: ${selectedModel || serverInfo?.model || 'No model selected'}`,
+    `Server engine: ${serverInfo?.engine || 'Unavailable'}`,
+    `Speech input: ${settings.speechEnabled ? 'Enabled' : 'Disabled'}${speechAvailable === false ? ' (backend missing)' : ''}`,
+    `Estimated cloud savings: ${formatCurrency(totalSavings)}`,
+  ];
+
+  const timelineItems = latestLogEntries.length
+    ? latestLogEntries.map((entry) => ({
+        icon:
+          entry.category === 'tool'
+            ? Shield
+            : entry.category === 'chat'
+            ? Radio
+            : entry.category === 'model'
+            ? Brain
+            : Activity,
+        title: `${entry.category} ${entry.level}`,
+        detail: entry.message,
+      }))
+    : [
+        { icon: Radio, title: 'Session ready', detail: 'HUD is live and waiting for activity.' },
+        { icon: Activity, title: 'Telemetry', detail: 'Live system binding initialized.' },
+      ];
+
+  const targetQueue = [
+    latestUserMessage
+      ? `Latest user request: ${latestUserMessage.content.slice(0, 88)}${latestUserMessage.content.length > 88 ? '...' : ''}`
+      : 'No user request yet. Start with voice or type into chat.',
+    activeToolCall
+      ? `Current tool action: ${toolSummary}`
+      : 'No active tool calls. Approval gate is standing by.',
+    latestAssistantMessage
+      ? `Latest assistant reply: ${latestAssistantMessage.content.slice(0, 88)}${latestAssistantMessage.content.length > 88 ? '...' : ''}`
+      : 'No assistant reply captured yet.',
+  ];
+
   const approvalLabel =
-    approved === null
-      ? 'Awaiting operator decision'
-      : approved
-      ? 'Action approved for local execution'
-      : 'Action rejected and held';
+    activeToolCall
+      ? `Tool running: ${activeToolCall.tool}`
+      : streamState.isStreaming
+      ? 'Inference active. No tool approval pending.'
+      : 'No pending operator decision';
 
   return (
     <section className="relative min-h-screen overflow-hidden bg-[#02050d] text-slate-100">
@@ -187,9 +330,9 @@ export default function JarvisHudDashboard() {
 
             <div className="grid gap-3 sm:grid-cols-3">
               {[
-                ['Voice', 'Norwegian + English input'],
-                ['Output', 'English only'],
-                ['Execution', 'Approval required'],
+                ['Voice', settings.speechEnabled ? 'Mic enabled' : 'Mic disabled'],
+                ['Model', selectedModel || serverInfo?.model || 'Unassigned'],
+                ['Agents', `${runningAgentCount} running`],
               ].map(([label, value]) => (
                 <div
                   key={label}
@@ -220,7 +363,7 @@ export default function JarvisHudDashboard() {
                       <div>
                         <div className="text-sm text-cyan-50/90">{label}</div>
                         <div className="text-[10px] uppercase tracking-[0.32em] text-cyan-300/55">
-                          Local node
+                          Live status
                         </div>
                       </div>
                     </div>
@@ -236,13 +379,13 @@ export default function JarvisHudDashboard() {
                   <AudioLines className="h-5 w-5 text-emerald-300" />
                 </div>
                 <div>
-                  <div className={`text-sm uppercase tracking-[0.28em] ${meta.accent}`}>{status}</div>
-                  <div className="text-xs text-slate-300/65">{meta.label}</div>
+                  <div className={`text-sm uppercase tracking-[0.28em] ${statusMeta.accent}`}>{status}</div>
+                  <div className="text-xs text-slate-300/65">{statusMeta.label}</div>
                 </div>
               </div>
-              <Equalizer bars={meta.bars} />
+              <Equalizer bars={statusMeta.bars} />
               <div className="mt-4 rounded-[1.15rem] border border-cyan-400/12 bg-slate-950/55 p-4 text-sm leading-7 text-slate-200/80">
-                {meta.transcript}
+                {statusMeta.transcript}
               </div>
             </Panel>
 
@@ -311,10 +454,10 @@ export default function JarvisHudDashboard() {
                     <div className="hud-glow text-2xl uppercase tracking-[0.26em] text-cyan-50">
                       {status}
                     </div>
-                    <div className={`mt-2 text-sm uppercase tracking-[0.24em] ${meta.accent}`}>
-                      {meta.label}
+                    <div className={`mt-2 text-sm uppercase tracking-[0.24em] ${statusMeta.accent}`}>
+                      {statusMeta.label}
                     </div>
-                    <p className="mt-4 text-sm leading-7 text-slate-200/75">{meta.reply}</p>
+                    <p className="mt-4 text-sm leading-7 text-slate-200/75">{statusMeta.reply}</p>
                   </div>
 
                   <div className="rounded-[1.4rem] border border-amber-300/12 bg-[linear-gradient(180deg,rgba(251,191,36,0.08),rgba(15,23,42,0.55))] p-4">
@@ -326,12 +469,13 @@ export default function JarvisHudDashboard() {
                         <div className="text-[10px] uppercase tracking-[0.36em] text-amber-200/70">
                           Current Objective
                         </div>
-                        <div className="text-sm text-amber-50/90">Render true JARVIS HUD</div>
+                        <div className="text-sm text-amber-50/90">
+                          {activeToolCall ? activeToolCall.tool : 'Awaiting next task'}
+                        </div>
                       </div>
                     </div>
                     <div className="rounded-[1rem] border border-amber-200/10 bg-black/20 p-4 text-sm leading-7 text-slate-100/78">
-                      Build a cinematic dashboard surface with motion, radial targeting geometry, and a stronger
-                      command-center silhouette while preserving the working voice pipeline.
+                      {toolSummary}
                     </div>
                   </div>
                 </div>
@@ -344,30 +488,22 @@ export default function JarvisHudDashboard() {
                   <div className="mb-2 text-[10px] uppercase tracking-[0.35em] text-cyan-300/55">
                     Proposed Action
                   </div>
-                  <div className="text-sm leading-7 text-slate-200/78">
-                    Search the web for current Ollama-compatible multimodal models and present the best local options.
-                  </div>
+                  <div className="text-sm leading-7 text-slate-200/78">{toolSummary}</div>
                 </div>
 
                 <div className="mt-4 grid gap-3 sm:grid-cols-2">
-                  <button
-                    onClick={() => setApproved(true)}
-                    className="rounded-[1.1rem] border border-emerald-400/30 bg-emerald-400/12 px-4 py-3 text-sm uppercase tracking-[0.24em] text-emerald-200 transition hover:bg-emerald-400/18"
-                  >
+                  <div className="rounded-[1.1rem] border border-emerald-400/30 bg-emerald-400/12 px-4 py-3 text-sm uppercase tracking-[0.24em] text-emerald-200">
                     <span className="flex items-center justify-center gap-2">
                       <CheckCircle2 className="h-4 w-4" />
-                      Approve
+                      Ready
                     </span>
-                  </button>
-                  <button
-                    onClick={() => setApproved(false)}
-                    className="rounded-[1.1rem] border border-rose-400/30 bg-rose-400/12 px-4 py-3 text-sm uppercase tracking-[0.24em] text-rose-200 transition hover:bg-rose-400/18"
-                  >
+                  </div>
+                  <div className="rounded-[1.1rem] border border-rose-400/30 bg-rose-400/12 px-4 py-3 text-sm uppercase tracking-[0.24em] text-rose-200">
                     <span className="flex items-center justify-center gap-2">
                       <XCircle className="h-4 w-4" />
-                      Reject
+                      Hold
                     </span>
-                  </button>
+                  </div>
                 </div>
 
                 <div className="mt-4 rounded-[1.15rem] border border-cyan-400/12 bg-cyan-400/[0.05] px-4 py-3 text-sm text-slate-100/80">
@@ -377,17 +513,17 @@ export default function JarvisHudDashboard() {
 
               <Panel title="Tool Dock" kicker="Direct Access">
                 <div className="grid grid-cols-2 gap-3">
-                  {tools.map(({ icon: Icon, label }) => (
-                    <button
+                  {tools.map(({ icon: Icon, label, sublabel }) => (
+                    <div
                       key={label}
-                      className="rounded-[1.1rem] border border-cyan-400/12 bg-slate-950/55 px-4 py-4 text-left transition hover:bg-cyan-400/[0.08]"
+                      className="rounded-[1.1rem] border border-cyan-400/12 bg-slate-950/55 px-4 py-4 text-left"
                     >
                       <Icon className="mb-3 h-5 w-5 text-cyan-200" />
                       <div className="text-sm uppercase tracking-[0.2em] text-cyan-50/92">{label}</div>
                       <div className="mt-1 text-[10px] uppercase tracking-[0.28em] text-cyan-300/55">
-                        Module Ready
+                        {sublabel}
                       </div>
-                    </button>
+                    </div>
                   ))}
                 </div>
               </Panel>
@@ -397,14 +533,9 @@ export default function JarvisHudDashboard() {
           <div className="space-y-4">
             <Panel title="Tactical Timeline" kicker="Event Stream">
               <div className="space-y-3">
-                {[
-                  { icon: Radio, title: 'Wake loop', detail: 'Hotword monitoring active with local mic input.' },
-                  { icon: Activity, title: 'Telemetry', detail: 'CPU, latency, and voice metrics synchronized.' },
-                  { icon: Shield, title: 'Action policy', detail: 'External navigation remains approval-gated.' },
-                  { icon: Brain, title: 'Memory', detail: 'Preference profile loaded for language and tone.' },
-                ].map(({ icon: Icon, title, detail }) => (
+                {timelineItems.map(({ icon: Icon, title, detail }) => (
                   <div
-                    key={title}
+                    key={`${title}-${detail}`}
                     className="flex gap-3 rounded-[1.15rem] border border-cyan-400/10 bg-slate-950/50 px-4 py-3"
                   >
                     <div className="rounded-xl border border-cyan-400/12 bg-cyan-400/[0.07] p-2">
@@ -421,11 +552,7 @@ export default function JarvisHudDashboard() {
 
             <Panel title="Target Queue" kicker="Task Stack">
               <div className="space-y-3">
-                {[
-                  'Replace stock dashboard silhouette with a dedicated HUD surface.',
-                  'Keep voice features stable while modernizing the UI shell.',
-                  'Prepare the command center for live status bindings next.',
-                ].map((item, index) => (
+                {targetQueue.map((item, index) => (
                   <div
                     key={item}
                     className="flex items-center gap-3 rounded-[1.15rem] border border-cyan-400/10 bg-cyan-400/[0.04] px-4 py-3"
@@ -454,7 +581,8 @@ export default function JarvisHudDashboard() {
                 <div className="space-y-2 text-sm text-slate-100/76">
                   <div>Input languages: Norwegian, English</div>
                   <div>Reply language: English</div>
-                  <div>Visual profile: cinematic command HUD</div>
+                  <div>Current engine: {serverInfo?.engine || 'Unavailable'}</div>
+                  <div>Streaming rate: {tokenRate ? `${tokenRate.toFixed(1)} tok/s` : 'No live throughput yet'}</div>
                 </div>
               </div>
             </Panel>
