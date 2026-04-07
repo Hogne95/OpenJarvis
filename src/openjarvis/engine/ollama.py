@@ -191,6 +191,11 @@ class OllamaEngine(InferenceEngine):
                 "num_ctx": kwargs.get("num_ctx", 8192),
             },
         }
+        # Keep streaming behavior aligned with generate().
+        if "think" not in kwargs:
+            payload["think"] = False
+        elif kwargs["think"] is not None:
+            payload["think"] = kwargs["think"]
         try:
             with self._client.stream("POST", "/api/chat", json=payload) as resp:
                 resp.raise_for_status()

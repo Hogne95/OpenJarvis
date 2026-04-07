@@ -12,7 +12,14 @@ import { CommandPalette } from './components/CommandPalette';
 import { SetupScreen } from './components/SetupScreen';
 import { Toaster } from './components/ui/sonner';
 import { useAppStore } from './lib/store';
-import { fetchModels, fetchServerInfo, fetchSavings, submitSavings, isTauri } from './lib/api';
+import {
+  fetchModels,
+  fetchRecommendedModel,
+  fetchServerInfo,
+  fetchSavings,
+  submitSavings,
+  isTauri,
+} from './lib/api';
 import { OptInModal } from './components/OptInModal';
 
 export default function App() {
@@ -45,13 +52,26 @@ export default function App() {
 
   useEffect(() => {
     fetchModels()
-      .then((m) => {
+      .then(async (m) => {
         setModels(m);
-        if (!selectedModel && m.length > 0) setSelectedModel(m[0].id);
+        if (selectedModel || m.length === 0) return;
+
+        try {
+          const recommended = await fetchRecommendedModel();
+          const recommendedId = recommended.model;
+          if (recommendedId && m.some((model) => model.id === recommendedId)) {
+            setSelectedModel(recommendedId);
+            return;
+          }
+        } catch {
+          // Fall back to the first available model when recommendation fails.
+        }
+
+        setSelectedModel(m[0].id);
       })
       .catch(() => setModels([]))
       .finally(() => setModelsLoading(false));
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [selectedModel, setModels, setModelsLoading, setSelectedModel]);
 
   useEffect(() => {
     fetchServerInfo().then(setServerInfo).catch(() => {});

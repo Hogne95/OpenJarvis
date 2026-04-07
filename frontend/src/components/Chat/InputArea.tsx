@@ -25,7 +25,7 @@ export function InputArea() {
   const updateLastAssistant = useAppStore((s) => s.updateLastAssistant);
   const setStreamState = useAppStore((s) => s.setStreamState);
   const resetStream = useAppStore((s) => s.resetStream);
-  const modelLoading = useAppStore((s) => s.modelLoading);
+  const modelsLoading = useAppStore((s) => s.modelsLoading);
 
   const { state: speechState, available: speechAvailable, startRecording, stopRecording } = useSpeech();
 
@@ -100,7 +100,7 @@ export function InputArea() {
 
   const sendMessage = useCallback(async () => {
     const content = input.trim();
-    if (!content || streamState.isStreaming) return;
+    if (!content || streamState.isStreaming || modelsLoading || !selectedModel) return;
 
     setInput('');
 
@@ -312,6 +312,7 @@ export function InputArea() {
   }, [
     input,
     activeId,
+    modelsLoading,
     selectedModel,
     streamState.isStreaming,
     createConversation,
@@ -347,7 +348,7 @@ export function InputArea() {
           rows={1}
           className="flex-1 bg-transparent outline-none resize-none text-sm leading-relaxed"
           style={{ color: 'var(--color-text)', maxHeight: '200px' }}
-          disabled={streamState.isStreaming || modelLoading}
+          disabled={streamState.isStreaming || modelsLoading || !selectedModel}
         />
         {streamState.isStreaming ? (
           <button
@@ -368,7 +369,7 @@ export function InputArea() {
             />
             <button
               onClick={sendMessage}
-              disabled={!input.trim() || modelLoading}
+              disabled={!input.trim() || modelsLoading || !selectedModel}
               className="p-2 rounded-xl transition-colors shrink-0 cursor-pointer disabled:opacity-30 disabled:cursor-default"
               style={{
                 background: input.trim() ? 'var(--color-accent)' : 'var(--color-bg-tertiary)',
