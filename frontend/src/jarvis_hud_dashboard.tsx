@@ -9,6 +9,7 @@ import {
   Cpu,
   Folder,
   Globe,
+  Logs,
   Mic,
   Radio,
   ScanSearch,
@@ -18,9 +19,11 @@ import {
   Waves,
   XCircle,
 } from 'lucide-react';
+import { useNavigate } from 'react-router';
 import { checkHealth, fetchManagedAgents, fetchSpeechHealth } from './lib/api';
 import { useAppStore } from './lib/store';
 import type { ChatMessage, ToolCallInfo } from './types';
+import { InputArea } from './components/Chat/InputArea';
 
 type Status = 'Standby' | 'Listening' | 'Analyzing' | 'Responding';
 
@@ -104,6 +107,7 @@ function summarizeToolCall(toolCall: ToolCallInfo | null) {
 }
 
 export default function JarvisHudDashboard() {
+  const navigate = useNavigate();
   const messages = useAppStore((s) => s.messages);
   const streamState = useAppStore((s) => s.streamState);
   const selectedModel = useAppStore((s) => s.selectedModel);
@@ -256,6 +260,13 @@ export default function JarvisHudDashboard() {
     { icon: Folder, label: 'Files', sublabel: `${conversations.length} chats indexed` },
     { icon: Terminal, label: 'Shell', sublabel: activeToolCall ? 'Tool path active' : 'On standby' },
     { icon: Sparkles, label: 'Memory', sublabel: latestAssistantMessage ? 'Session context live' : 'No response yet' },
+  ];
+
+  const quickActions = [
+    { icon: Radio, label: 'Chat', sublabel: 'Open full conversation view', action: () => navigate('/chat') },
+    { icon: Terminal, label: 'Logs', sublabel: 'Inspect runtime events', action: () => navigate('/logs') },
+    { icon: Brain, label: 'Agents', sublabel: 'Managed automation control', action: () => navigate('/agents') },
+    { icon: Shield, label: 'Settings', sublabel: 'Voice, model, API config', action: () => navigate('/settings') },
   ];
 
   const missionFeed = [
@@ -483,6 +494,37 @@ export default function JarvisHudDashboard() {
             </Panel>
 
             <div className="grid gap-4 lg:grid-cols-[1.05fr_0.95fr]">
+              <Panel title="Command Deck" kicker="Direct Control">
+                <div className="rounded-[1.15rem] border border-cyan-400/10 bg-slate-950/55 p-4">
+                  <div className="mb-2 text-[10px] uppercase tracking-[0.35em] text-cyan-300/55">
+                    Live Command Input
+                  </div>
+                  <div className="text-sm leading-7 text-slate-200/78">
+                    Use the built-in command bar and mic button here to talk to Jarvis directly from the HUD.
+                  </div>
+                </div>
+
+                <div className="mt-4 rounded-[1.15rem] border border-cyan-400/10 bg-black/20 py-2">
+                  <InputArea />
+                </div>
+
+                <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                  {quickActions.map(({ icon: Icon, label, sublabel, action }) => (
+                    <button
+                      key={label}
+                      onClick={action}
+                      className="rounded-[1.1rem] border border-cyan-400/12 bg-slate-950/55 px-4 py-4 text-left transition hover:bg-cyan-400/[0.08]"
+                    >
+                      <Icon className="mb-3 h-5 w-5 text-cyan-200" />
+                      <div className="text-sm uppercase tracking-[0.2em] text-cyan-50/92">{label}</div>
+                      <div className="mt-1 text-[10px] uppercase tracking-[0.28em] text-cyan-300/55">
+                        {sublabel}
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              </Panel>
+
               <Panel title="Approval Gate" kicker="Human-in-the-loop">
                 <div className="rounded-[1.15rem] border border-cyan-400/10 bg-slate-950/55 p-4">
                   <div className="mb-2 text-[10px] uppercase tracking-[0.35em] text-cyan-300/55">
@@ -547,6 +589,25 @@ export default function JarvisHudDashboard() {
                     </div>
                   </div>
                 ))}
+              </div>
+            </Panel>
+
+            <Panel title="Console Mirror" kicker="Runtime">
+              <div className="rounded-[1.15rem] border border-cyan-400/10 bg-black/30 p-4 font-mono text-xs leading-6 text-cyan-100/82">
+                {latestLogEntries.length > 0 ? (
+                  latestLogEntries.map((entry) => (
+                    <div key={`${entry.timestamp}-${entry.message}`} className="border-b border-cyan-400/8 py-2 last:border-b-0">
+                      <div className="mb-1 flex items-center gap-2 text-[10px] uppercase tracking-[0.25em] text-cyan-300/55">
+                        <Logs className="h-3.5 w-3.5" />
+                        <span>{entry.category}</span>
+                        <span>{entry.level}</span>
+                      </div>
+                      <div>{entry.message}</div>
+                    </div>
+                  ))
+                ) : (
+                  <div>No runtime logs yet. Send a command to populate the console mirror.</div>
+                )}
               </div>
             </Panel>
 
