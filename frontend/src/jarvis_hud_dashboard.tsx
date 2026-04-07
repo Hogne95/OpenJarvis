@@ -787,7 +787,7 @@ export default function JarvisHudDashboard() {
                         (settings.speechEnabled
                           ? `Press the reactor mic to toggle the always-listening loop. Wake phrase: ${
                               speechProfile?.wake_phrases?.[0] || 'hey jarvis'
-                            }.`
+                            }. Engine: ${voiceLoop?.wake_backend || speechProfile?.wake_backend || 'transcript'}.`
                           : 'Enable Speech-to-Text in Settings to activate voice control.')}
                     </div>
                     <div className="mt-4 flex gap-3">
@@ -819,6 +819,11 @@ export default function JarvisHudDashboard() {
                     <div className="mt-2 text-[11px] uppercase tracking-[0.28em] text-cyan-300/55">
                       VAD: {voiceLoop?.vad_backend || speechProfile?.vad_backend || 'energy'} · Wake: {voiceLoop?.wake_backend || speechProfile?.wake_backend || 'transcript'}
                     </div>
+                    {voiceLoop?.last_wake_score != null ? (
+                      <div className="mt-2 text-[11px] uppercase tracking-[0.28em] text-cyan-300/55">
+                        Wake score: {voiceLoop.last_wake_score.toFixed(2)}
+                      </div>
+                    ) : null}
                   </div>
                 </div>
               </div>

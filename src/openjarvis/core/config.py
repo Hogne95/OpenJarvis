@@ -1213,8 +1213,8 @@ class SpeechConfig:
     vad_backend: str = "auto"  # "auto", "silero", "energy"
     vad_threshold: float = 0.016
     vad_min_speech_ms: int = 250
-    audio_chunk_ms: int = 2200
-    wake_backend: str = "transcript"  # "transcript", "openwakeword"
+    audio_chunk_ms: int = 960
+    wake_backend: str = "openwakeword"  # "transcript", "openwakeword"
     wake_model_path: str = ""
     wake_threshold: float = 0.5
     auto_submit_voice_commands: bool = True

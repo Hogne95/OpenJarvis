@@ -99,17 +99,18 @@ class LiveAudioGate:
             return None
         if self._wake_model is not None or self._wake_failed:
             return self._wake_model
-        if not self._wake_model_path:
-            self._wake_failed = True
-            return None
-        model_path = Path(self._wake_model_path)
-        if not model_path.exists():
-            self._wake_failed = True
-            return None
         try:
             from openwakeword.model import Model
 
-            self._wake_model = Model(wakeword_models=[str(model_path)])
+            if self._wake_model_path:
+                model_path = Path(self._wake_model_path)
+                if not model_path.exists():
+                    self._wake_failed = True
+                    return None
+                self._wake_model = Model(wakeword_models=[str(model_path)])
+            else:
+                # Let openWakeWord load its bundled pretrained models.
+                self._wake_model = Model()
         except Exception:
             self._wake_failed = True
         return self._wake_model
@@ -157,7 +158,17 @@ class LiveAudioGate:
                     break
                 prediction = model.predict(frame)
                 if isinstance(prediction, dict):
-                    score = max(float(value) for value in prediction.values())
+                    interesting_keys = [
+                        key
+                        for key in prediction.keys()
+                        if "jarvis" in key.lower() or "alexa" in key.lower()
+                    ]
+                    candidates = (
+                        [float(prediction[key]) for key in interesting_keys]
+                        if interesting_keys
+                        else [float(value) for value in prediction.values()]
+                    )
+                    score = max(candidates)
                 else:
                     score = float(prediction)
                 if score > best_score:
