@@ -23,11 +23,15 @@ import {
   createManagedAgent,
   fetchManagedAgents,
   fetchSpeechHealth,
+  fetchSpeechProfile,
   fetchVoiceLoopStatus,
+  ingestVoiceTranscript,
   runManagedAgent,
   startVoiceLoop,
   stopVoiceLoop,
+  synthesizeSpeech,
   updateVoiceLoopState,
+  type SpeechProfile,
   type VoiceLoopStatus,
 } from './lib/api';
 import { listConnectors } from './lib/connectors-api';
@@ -149,7 +153,10 @@ export default function JarvisHudDashboard() {
   const [agentActionBusy, setAgentActionBusy] = useState<string | null>(null);
   const [voiceNotice, setVoiceNotice] = useState('');
   const [voiceLoop, setVoiceLoop] = useState<VoiceLoopStatus | null>(null);
+  const [speechProfile, setSpeechProfile] = useState<SpeechProfile | null>(null);
   const lastSyncedPhaseRef = useRef('');
+  const lastSpokenMessageRef = useRef<string>('');
+  const audioUrlRef = useRef<string | null>(null);
 
   const {
     state: hudSpeechState,
@@ -163,12 +170,13 @@ export default function JarvisHudDashboard() {
     let cancelled = false;
 
     const refreshLiveStatus = async () => {
-      const [health, speech, agents, connectors, loop] = await Promise.allSettled([
+      const [health, speech, agents, connectors, loop, profile] = await Promise.allSettled([
         checkHealth(),
         fetchSpeechHealth(),
         fetchManagedAgents(),
         listConnectors(),
         fetchVoiceLoopStatus(),
+        fetchSpeechProfile(),
       ]);
 
       if (cancelled) return;
@@ -194,6 +202,7 @@ export default function JarvisHudDashboard() {
       }
 
       if (loop.status === 'fulfilled') setVoiceLoop(loop.value);
+      if (profile.status === 'fulfilled') setSpeechProfile(profile.value);
     };
 
     refreshLiveStatus();
@@ -203,6 +212,12 @@ export default function JarvisHudDashboard() {
       window.clearInterval(interval);
     };
   }, [managedAgents]);
+
+  useEffect(() => {
+    return () => {
+      if (audioUrlRef.current) URL.revokeObjectURL(audioUrlRef.current);
+    };
+  }, []);
 
   useEffect(() => {
     if (!voiceNotice) return;
@@ -471,13 +486,18 @@ export default function JarvisHudDashboard() {
       try {
         const transcript = await stopHudRecording();
         if (transcript.trim()) {
-          injectCommand(transcript);
-          const snapshot = await updateVoiceLoopState({
+          const ingestion = await ingestVoiceTranscript(transcript);
+          setVoiceLoop(ingestion);
+          if (ingestion.accepted && ingestion.command.trim()) {
+            injectCommand(ingestion.command);
+            setVoiceNotice('Wake phrase confirmed. Command loaded into the deck.');
+          } else {
+            setVoiceNotice(ingestion.message);
+          }
+          await updateVoiceLoopState({
             phase: 'listening',
             transcript,
-          });
-          setVoiceLoop(snapshot);
-          setVoiceNotice('Transcript inserted into the command deck.');
+          }).catch(() => null);
         }
       } catch (error) {
         const message = error instanceof Error ? error.message : 'Voice capture failed';
@@ -554,6 +574,35 @@ export default function JarvisHudDashboard() {
         { icon: Radio, title: 'Session ready', detail: 'HUD is live and waiting for activity.' },
       ];
 
+  useEffect(() => {
+    if (!speechProfile?.auto_speak || !voiceLoop?.active) return;
+    const text = latestAssistantMessage?.content?.trim();
+    if (!text || text === lastSpokenMessageRef.current) return;
+
+    let cancelled = false;
+    synthesizeSpeech({
+      text,
+      backend: speechProfile.reply_backend,
+      voice_id: speechProfile.reply_voice_id,
+      speed: speechProfile.reply_speed,
+      output_format: 'wav',
+    })
+      .then((blob) => {
+        if (cancelled) return;
+        if (audioUrlRef.current) URL.revokeObjectURL(audioUrlRef.current);
+        const url = URL.createObjectURL(blob);
+        audioUrlRef.current = url;
+        const audio = new Audio(url);
+        audio.play().catch(() => {});
+        lastSpokenMessageRef.current = text;
+      })
+      .catch(() => {});
+
+    return () => {
+      cancelled = true;
+    };
+  }, [latestAssistantMessage?.content, speechProfile, voiceLoop?.active]);
+
   return (
     <section className="relative min-h-screen overflow-hidden bg-[#02050d] text-slate-100">
       <div className="jarvis-vignette pointer-events-none absolute inset-0" />
@@ -575,7 +624,7 @@ export default function JarvisHudDashboard() {
               </div>
             </div>
             <div className="mt-2 text-sm text-slate-200/70">
-              Norwegian + English input. English replies. Approval-first local control.
+              Norwegian + English input. English replies. Wake phrase and male voice enabled.
             </div>
           </div>
 
@@ -721,7 +770,9 @@ export default function JarvisHudDashboard() {
                         voiceLoop?.last_error ||
                         voiceNotice ||
                         (settings.speechEnabled
-                          ? 'Press the reactor mic to arm the loop and capture a command.'
+                          ? `Press the reactor mic to arm the loop. Wake phrase: ${
+                              speechProfile?.wake_phrases?.[0] || 'hey jarvis'
+                            }.`
                           : 'Enable Speech-to-Text in Settings to activate voice control.')}
                     </div>
                     <div className="mt-4 flex gap-3">
@@ -747,6 +798,9 @@ export default function JarvisHudDashboard() {
                       Latest Transcript
                     </div>
                     <p className="text-sm leading-7 text-slate-200/75">{statusMeta.transcript}</p>
+                    <div className="mt-4 text-[11px] uppercase tracking-[0.28em] text-cyan-300/55">
+                      Reply voice: {speechProfile?.reply_voice_id || 'am_michael'} via {speechProfile?.reply_backend || 'kokoro'}
+                    </div>
                   </div>
                 </div>
               </div>

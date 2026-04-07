@@ -204,7 +204,23 @@ def create_app(
     app.state.config = config
     app.state.memory_backend = memory_backend
     app.state.speech_backend = speech_backend
-    app.state.voice_loop = VoiceLoopManager(speech_backend=speech_backend)
+    speech_cfg = getattr(config, "speech", None)
+    language_hints = (
+        [h.strip() for h in speech_cfg.language_hints.split(",") if h.strip()]
+        if speech_cfg and getattr(speech_cfg, "language_hints", "")
+        else ["no", "en"]
+    )
+    wake_phrases = (
+        [p.strip() for p in speech_cfg.wake_phrases.split(",") if p.strip()]
+        if speech_cfg and getattr(speech_cfg, "wake_phrases", "")
+        else ["hey jarvis", "ok jarvis", "jarvis", "hei jarvis"]
+    )
+    app.state.voice_loop = VoiceLoopManager(
+        speech_backend=speech_backend,
+        language_hints=language_hints,
+        wake_phrases=wake_phrases,
+        wake_required=getattr(speech_cfg, "require_wake_phrase", True),
+    )
     app.state.agent_manager = agent_manager
     app.state.agent_scheduler = agent_scheduler
     app.state.session_start = time.time()

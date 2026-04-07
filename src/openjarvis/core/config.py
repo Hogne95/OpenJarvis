@@ -1199,13 +1199,21 @@ class OperatorsConfig:
 
 @dataclass(slots=True)
 class SpeechConfig:
-    """Speech-to-text settings."""
+    """Voice assistant settings."""
 
     backend: str = "auto"  # "auto", "faster-whisper", "openai", "deepgram"
-    model: str = "small"  # Whisper model size: tiny, base, small, medium, large-v3
+    model: str = "turbo"  # Whisper model size: tiny, base, small, medium, large-v3, turbo
     language: str = ""  # Empty = auto-detect
     device: str = "auto"  # "auto", "cpu", "cuda"
     compute_type: str = "float16"  # "float16", "int8", "float32"
+    language_hints: str = "no,en"
+    wake_phrases: str = "hey jarvis,ok jarvis,jarvis,hei jarvis,hallo jarvis"
+    require_wake_phrase: bool = True
+    reply_backend: str = "kokoro"
+    reply_voice_id: str = "am_michael"
+    reply_language: str = "en"
+    reply_speed: float = 0.95
+    auto_speak: bool = True
 
 
 @dataclass(slots=True)

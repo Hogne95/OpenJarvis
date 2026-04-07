@@ -263,6 +263,17 @@ export interface VoiceLoopStatus {
   last_error: string;
 }
 
+export interface SpeechProfile {
+  input_languages: string[];
+  reply_language: string;
+  wake_phrases: string[];
+  reply_backend: string;
+  reply_voice_id: string;
+  reply_speed?: number;
+  auto_speak: boolean;
+  require_wake_phrase: boolean;
+}
+
 interface TranscribeAudioOptions {
   filename?: string;
   languageHints?: string[];
@@ -340,6 +351,31 @@ export async function fetchSpeechHealth(): Promise<SpeechHealth> {
   return res.json();
 }
 
+export async function fetchSpeechProfile(): Promise<SpeechProfile> {
+  const res = await fetch(`${getBase()}/v1/speech/profile`);
+  if (!res.ok) throw new Error(`Speech profile failed: ${res.status}`);
+  return res.json();
+}
+
+export async function synthesizeSpeech(body: {
+  text: string;
+  voice_id?: string;
+  backend?: string;
+  speed?: number;
+  output_format?: 'wav' | 'mp3';
+}): Promise<Blob> {
+  const res = await fetch(`${getBase()}/v1/speech/synthesize`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const detail = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(detail.detail || `Speech synthesis failed: ${res.status}`);
+  }
+  return res.blob();
+}
+
 export async function fetchVoiceLoopStatus(): Promise<VoiceLoopStatus> {
   const res = await fetch(`${getBase()}/v1/voice-loop/status`);
   if (!res.ok) throw new Error(`Voice loop status failed: ${res.status}`);
@@ -381,6 +417,24 @@ export async function updateVoiceLoopState(body: {
   if (!res.ok) {
     const detail = await res.json().catch(() => ({ detail: res.statusText }));
     throw new Error(detail.detail || `Voice loop state update failed: ${res.status}`);
+  }
+  return res.json();
+}
+
+export async function ingestVoiceTranscript(transcript: string): Promise<VoiceLoopStatus & {
+  accepted: boolean;
+  wake_matched: boolean;
+  command: string;
+  message: string;
+}> {
+  const res = await fetch(`${getBase()}/v1/voice-loop/ingest`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ transcript }),
+  });
+  if (!res.ok) {
+    const detail = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(detail.detail || `Voice transcript ingest failed: ${res.status}`);
   }
   return res.json();
 }

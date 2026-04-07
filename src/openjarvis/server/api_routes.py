@@ -5,9 +5,10 @@ from __future__ import annotations
 import inspect
 import json
 import logging
+import tempfile
 from typing import Any, Dict, List, Literal, Optional
 
-from fastapi import APIRouter, HTTPException, Request, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, HTTPException, Request, Response, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)
@@ -68,6 +69,18 @@ class VoiceLoopUpdateRequest(BaseModel):
     ]
     transcript: Optional[str] = None
     error: Optional[str] = None
+
+
+class VoiceLoopIngestRequest(BaseModel):
+    transcript: str
+
+
+class SpeechSynthesizeRequest(BaseModel):
+    text: str
+    voice_id: Optional[str] = None
+    backend: Optional[str] = None
+    speed: Optional[float] = None
+    output_format: str = "wav"
 
 
 # ---- Agent routes ----
@@ -721,6 +734,73 @@ async def speech_health(request: Request):
     }
 
 
+@speech_router.get("/profile")
+async def speech_profile(request: Request):
+    """Return the active speech + reply voice profile."""
+    config = getattr(request.app.state, "config", None)
+    speech_cfg = getattr(config, "speech", None)
+    if speech_cfg is None:
+        return {
+            "input_languages": ["no", "en"],
+            "reply_language": "en",
+            "wake_phrases": ["hey jarvis", "ok jarvis", "jarvis"],
+            "reply_backend": "kokoro",
+            "reply_voice_id": "am_michael",
+            "auto_speak": True,
+        }
+    hints = [h.strip() for h in speech_cfg.language_hints.split(",") if h.strip()]
+    phrases = [p.strip() for p in speech_cfg.wake_phrases.split(",") if p.strip()]
+    return {
+        "input_languages": hints or ["no", "en"],
+        "reply_language": speech_cfg.reply_language,
+        "wake_phrases": phrases or ["hey jarvis", "ok jarvis", "jarvis"],
+        "reply_backend": speech_cfg.reply_backend,
+        "reply_voice_id": speech_cfg.reply_voice_id,
+        "reply_speed": speech_cfg.reply_speed,
+        "auto_speak": speech_cfg.auto_speak,
+        "require_wake_phrase": speech_cfg.require_wake_phrase,
+    }
+
+
+@speech_router.post("/synthesize")
+async def synthesize_speech(req: SpeechSynthesizeRequest, request: Request):
+    """Synthesize assistant speech using the configured reply voice."""
+    text = req.text.strip()
+    if not text:
+      raise HTTPException(status_code=400, detail="Text is required")
+
+    config = getattr(request.app.state, "config", None)
+    speech_cfg = getattr(config, "speech", None)
+    backend_key = req.backend or getattr(speech_cfg, "reply_backend", "kokoro")
+    voice_id = req.voice_id or getattr(speech_cfg, "reply_voice_id", "am_michael")
+    speed = req.speed if req.speed is not None else getattr(speech_cfg, "reply_speed", 0.95)
+
+    import openjarvis.speech  # noqa: F401
+    from openjarvis.core.registry import TTSRegistry
+
+    if not TTSRegistry.contains(backend_key):
+        raise HTTPException(status_code=501, detail=f"TTS backend '{backend_key}' not available")
+
+    try:
+        backend_cls = TTSRegistry.get(backend_key)
+        backend = backend_cls()
+        result = backend.synthesize(
+            text,
+            voice_id=voice_id,
+            speed=speed,
+            output_format=req.output_format,
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+
+    media_type = "audio/mpeg" if result.format == "mp3" else "audio/wav"
+    headers = {
+        "X-Jarvis-Voice-Backend": backend_key,
+        "X-Jarvis-Voice-Id": result.voice_id,
+    }
+    return Response(content=result.audio, media_type=media_type, headers=headers)
+
+
 @voice_loop_router.get("/status")
 async def voice_loop_status(request: Request):
     """Return the current HUD voice loop session state."""
@@ -776,6 +856,15 @@ async def voice_loop_state(req: VoiceLoopUpdateRequest, request: Request):
         transcript=req.transcript,
         error=req.error,
     )
+
+
+@voice_loop_router.post("/ingest")
+async def voice_loop_ingest(req: VoiceLoopIngestRequest, request: Request):
+    """Evaluate a transcript against the configured wake phrase flow."""
+    manager = getattr(request.app.state, "voice_loop", None)
+    if manager is None:
+        raise HTTPException(status_code=503, detail="Voice loop manager not configured")
+    return manager.ingest_transcript(req.transcript)
 
 
 # ---- Feedback routes ----
