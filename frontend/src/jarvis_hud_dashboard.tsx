@@ -571,6 +571,14 @@ export default function JarvisHudDashboard() {
       ? voiceLoop.phase[0].toUpperCase() + voiceLoop.phase.slice(1)
       : 'Idle';
 
+  const reactorMicDisabledReason = !settings.speechEnabled
+    ? 'Enable Speech-to-Text in Settings'
+    : !hudSpeechAvailable
+    ? 'Speech backend not ready'
+    : hudSpeechState === 'transcribing'
+    ? 'Transcription in progress'
+    : '';
+
   const timelineItems = latestLogEntries.length
     ? latestLogEntries.map((entry) => ({
         icon:
@@ -728,11 +736,17 @@ export default function JarvisHudDashboard() {
                   <button
                     onClick={handleReactorMic}
                     disabled={!settings.speechEnabled || !hudSpeechAvailable || hudSpeechState === 'transcribing'}
+                    title={reactorMicDisabledReason || (voiceLoop?.active ? 'Disarm always-listening loop' : 'Arm always-listening loop')}
                     className="relative flex h-40 w-40 items-center justify-center rounded-full border border-cyan-200/28 bg-cyan-300/10 shadow-[0_0_50px_rgba(34,211,238,0.16)] transition hover:bg-cyan-300/14 disabled:cursor-not-allowed disabled:opacity-60"
                   >
                     <div className="absolute inset-3 rounded-full border border-cyan-100/25" />
                     <div className="jarvis-pulse absolute inset-6 rounded-full border border-cyan-200/40" />
                     <Mic className="h-16 w-16 text-cyan-100 drop-shadow-[0_0_18px_rgba(125,211,252,0.7)]" />
+                    {reactorMicDisabledReason ? (
+                      <div className="absolute -bottom-16 left-1/2 w-56 -translate-x-1/2 rounded-2xl border border-amber-300/20 bg-slate-950/85 px-3 py-2 text-center text-[10px] uppercase tracking-[0.24em] text-amber-200/90 shadow-[0_0_30px_rgba(251,191,36,0.12)]">
+                        {reactorMicDisabledReason}
+                      </div>
+                    ) : null}
                   </button>
 
                   <div className="absolute left-6 top-6 rounded-full border border-cyan-400/16 bg-slate-950/50 px-4 py-2 text-[11px] uppercase tracking-[0.34em] text-cyan-200/75">

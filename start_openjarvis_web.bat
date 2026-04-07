@@ -7,12 +7,12 @@ set "UBUNTU_CMD=wsl.exe bash -lc"
 
 echo Starting OpenJarvis web workflow...
 echo.
-echo WSL command 1: uv sync --extra server --extra speech --extra speech-live --extra speech-wake --extra speech-tts-local
+echo WSL command 1: try full voice stack, then fall back if speech-wake is unsupported
 echo WSL command 2: uv run jarvis serve --port 8000
 echo WSL command 3: npm run dev
 echo.
 
-start "OpenJarvis Backend" cmd /k %UBUNTU_CMD% "cd \"%ROOT_WSL%\" && uv sync --extra server --extra speech --extra speech-live --extra speech-wake --extra speech-tts-local && uv run jarvis serve --port 8000; exec bash"
+start "OpenJarvis Backend" cmd /k %UBUNTU_CMD% "cd \"%ROOT_WSL%\" && if ! uv sync --extra server --extra speech --extra speech-live --extra speech-wake --extra speech-tts-local; then echo speech-wake unavailable on this Python build, retrying without it...; uv sync --extra server --extra speech --extra speech-live --extra speech-tts-local; fi && uv run jarvis serve --port 8000; exec bash"
 timeout /t 6 /nobreak >nul
 start "OpenJarvis Frontend" cmd /k %UBUNTU_CMD% "cd \"%FRONTEND_WSL%\" && npm install && npm run dev; exec bash"
 timeout /t 4 /nobreak >nul
