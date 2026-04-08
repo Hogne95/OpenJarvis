@@ -3,6 +3,7 @@ import type { ReactNode } from 'react';
 import {
   Activity,
   AudioLines,
+  BookOpen,
   Brain,
   CalendarDays,
   CheckCircle2,
@@ -10,11 +11,14 @@ import {
   Cpu,
   Flag,
   Folder,
+  Globe,
   Mail,
   Mic,
+  Monitor,
   Radio,
   Reply,
   Siren,
+  Sparkles,
   Shield,
   Terminal,
   Wrench,
@@ -24,19 +28,25 @@ import { useNavigate } from 'react-router';
 import {
   checkHealth,
   approveActionCenterItem,
+  approveCodeEdit,
   approveWorkbenchCommand,
   createManagedAgent,
   fetchActionCenterStatus,
   fetchAutomationLogs,
   fetchAutomationStatus,
+  fetchCodingStatus,
   fetchDailyDigest,
   fetchDigestSchedule,
   fetchInboxSummary,
+  executeJarvisIntent,
   fetchManagedAgents,
   fetchOperatorMemory,
+  parseJarvisIntent,
   fetchReminders,
   fetchSpeechHealth,
   fetchSpeechProfile,
+  fetchWorkspaceChecks,
+  fetchWorkspaceRepos,
   fetchTaskSummary,
   fetchWorkspaceSummary,
   fetchVoiceLoopStatus,
@@ -44,11 +54,18 @@ import {
   generateDailyDigest,
   getDailyDigestAudioUrl,
   holdActionCenterItem,
+  holdCodeEdit,
   holdWorkbenchCommand,
+  prepareWorkspaceCommit,
+  prepareWorkspacePush,
   recordOperatorMemorySignal,
+  readCodingFile,
+  registerWorkspaceRepo,
   runManagedAgent,
+  selectWorkspaceRepo,
   startVoiceLoop,
   stageCalendarBrief,
+  stageCodeEdit,
   stageEmailDraft,
   stageInboxAction,
   stageTask,
@@ -64,15 +81,20 @@ import {
   type ActionCenterStatus,
   type AutomationLogEntry,
   type AutomationStatus,
+  type CodingWorkspaceStatus,
   type DailyDigest,
   type DigestSchedule,
   type DurableOperatorMemory,
   type InboxSummaryItem,
+  type JarvisIntent,
+  type JarvisIntentExecution,
   type ReminderItem,
   type SpeechProfile,
   type TaskSummaryItem,
   type VoiceLoopStatus,
+  type WorkspaceChecks,
   type WorkspaceSummary,
+  type WorkspaceRepoCatalog,
   type WorkbenchStatus,
 } from './lib/api';
 import { listConnectors } from './lib/connectors-api';
@@ -186,6 +208,7 @@ function normalizeMeetingKey(value: string) {
 
 const DISMISSED_AUTOMATION_ALERTS_KEY = 'jarvis-dismissed-automation-alerts';
 const REVIEW_QUEUE_STATE_KEY = 'jarvis-review-queue-state';
+const CODING_TASKS_KEY = 'jarvis-coding-tasks';
 
 function loadDismissedAutomationAlerts() {
   if (typeof window === 'undefined') return [];
@@ -213,6 +236,40 @@ function loadReviewQueueState() {
     );
   } catch {
     return {};
+  }
+}
+
+function loadCodingTasks() {
+  if (typeof window === 'undefined') return [] as Array<{
+    id: string;
+    title: string;
+    filePath: string;
+    mode: 'review' | 'debug' | 'inspect' | 'fix';
+    status: 'pending' | 'in_progress' | 'done';
+  }>;
+  try {
+    const raw = window.localStorage.getItem(CODING_TASKS_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed)
+      ? parsed.filter(
+          (item): item is {
+            id: string;
+            title: string;
+            filePath: string;
+            mode: 'review' | 'debug' | 'inspect' | 'fix';
+            status: 'pending' | 'in_progress' | 'done';
+          } =>
+            item &&
+            typeof item.id === 'string' &&
+            typeof item.title === 'string' &&
+            typeof item.filePath === 'string' &&
+            ['review', 'debug', 'inspect', 'fix'].includes(String(item.mode)) &&
+            ['pending', 'in_progress', 'done'].includes(String(item.status)),
+        )
+      : [];
+  } catch {
+    return [];
   }
 }
 
@@ -278,7 +335,29 @@ export default function JarvisHudDashboard() {
   const [reviewQueueState, setReviewQueueState] = useState<Record<string, 'pending' | 'in_progress' | 'done'>>(
     () => loadReviewQueueState(),
   );
+  const [codingTasks, setCodingTasks] = useState<
+    Array<{
+      id: string;
+      title: string;
+      filePath: string;
+      mode: 'review' | 'debug' | 'inspect' | 'fix';
+      status: 'pending' | 'in_progress' | 'done';
+    }>
+  >(() => loadCodingTasks());
   const [workspaceSummary, setWorkspaceSummary] = useState<WorkspaceSummary | null>(null);
+  const [workspaceRepos, setWorkspaceRepos] = useState<WorkspaceRepoCatalog | null>(null);
+  const [workspaceChecks, setWorkspaceChecks] = useState<WorkspaceChecks | null>(null);
+  const [codingWorkspace, setCodingWorkspace] = useState<CodingWorkspaceStatus | null>(null);
+  const [editorFilePath, setEditorFilePath] = useState('');
+  const [editorContent, setEditorContent] = useState('');
+  const [editorOriginalContent, setEditorOriginalContent] = useState('');
+  const [editorBusy, setEditorBusy] = useState<'load' | 'stage' | 'approve' | 'hold' | null>(null);
+  const [editorNotice, setEditorNotice] = useState('');
+  const [gitCommitMessage, setGitCommitMessage] = useState('');
+  const [repoPathInput, setRepoPathInput] = useState('');
+  const [repoCloneUrl, setRepoCloneUrl] = useState('');
+  const [repoBusy, setRepoBusy] = useState<'register' | 'select' | null>(null);
+  const [repoNotice, setRepoNotice] = useState('');
   const [workbenchCommand, setWorkbenchCommand] = useState('');
   const [workbenchDirectory, setWorkbenchDirectory] = useState('');
   const [workbenchTimeout, setWorkbenchTimeout] = useState(30);
@@ -308,6 +387,12 @@ export default function JarvisHudDashboard() {
   const [relationshipNotice, setRelationshipNotice] = useState('');
   const [projectMemoryNotice, setProjectMemoryNotice] = useState('');
   const [voiceSensitivity, setVoiceSensitivity] = useState<'sensitive' | 'balanced' | 'strict'>('balanced');
+  const [intentCommand, setIntentCommand] = useState('');
+  const [intentBusy, setIntentBusy] = useState<'classify' | 'run' | 'capture' | null>(null);
+  const [intentPreview, setIntentPreview] = useState<JarvisIntent | null>(null);
+  const [intentExecution, setIntentExecution] = useState<JarvisIntentExecution | null>(null);
+  const [screenSnapshot, setScreenSnapshot] = useState<{ dataUrl: string; capturedAt: number } | null>(null);
+  const [screenContextNote, setScreenContextNote] = useState('');
   const lastSyncedPhaseRef = useRef('');
   const hasAutoRequestedDigestRef = useRef(false);
   const lastSpokenDigestRef = useRef('');
@@ -318,6 +403,8 @@ export default function JarvisHudDashboard() {
   const lastAutomationAnnouncementRef = useRef('');
   const audioUrlRef = useRef<string | null>(null);
   const audioElementRef = useRef<HTMLAudioElement | null>(null);
+  const lastAutoValidationFailureRef = useRef('');
+  const lastAutoValidationSuccessRef = useRef('');
 
   const {
     state: hudSpeechState,
@@ -327,15 +414,27 @@ export default function JarvisHudDashboard() {
     startContinuousListening,
     stopContinuousListening,
   } = useSpeech();
+  const voicePersona = useMemo(() => {
+    const tone = (durableOperatorMemory?.profile.reply_tone || operatorProfile.replyTone || '').toLowerCase();
+    let speed = speechProfile?.reply_speed ?? 0.95;
+    if (tone.includes('concise') || tone.includes('direct')) speed += 0.06;
+    if (tone.includes('confident')) speed -= 0.03;
+    if (tone.includes('calm') || tone.includes('warm')) speed -= 0.06;
+    return {
+      speed: Math.max(0.8, Math.min(speed, 1.08)),
+      honorific: durableOperatorMemory?.profile.honorific || operatorProfile.honorific || 'sir',
+    };
+  }, [durableOperatorMemory?.profile.honorific, durableOperatorMemory?.profile.reply_tone, operatorProfile.honorific, operatorProfile.replyTone, speechProfile?.reply_speed]);
 
   useEffect(() => {
     let cancelled = false;
 
     const refreshLiveStatus = async () => {
-      const [action, automation, automationLogResult, digest, digestSched, operatorMemory, inbox, tasks, reminderItems, health, speech, agents, connectors, loop, profile, wb, workspace] = await Promise.allSettled([
+      const [action, automation, automationLogResult, coding, digest, digestSched, operatorMemory, inbox, tasks, reminderItems, health, speech, agents, connectors, loop, profile, wb, workspace, repos, checks] = await Promise.allSettled([
         fetchActionCenterStatus(),
         fetchAutomationStatus(),
         fetchAutomationLogs(),
+        fetchCodingStatus(),
         fetchDailyDigest(),
         fetchDigestSchedule(),
         fetchOperatorMemory(),
@@ -350,6 +449,8 @@ export default function JarvisHudDashboard() {
         fetchSpeechProfile(),
         fetchWorkbenchStatus(),
         fetchWorkspaceSummary(),
+        fetchWorkspaceRepos(),
+        fetchWorkspaceChecks(),
       ]);
 
       if (cancelled) return;
@@ -357,6 +458,7 @@ export default function JarvisHudDashboard() {
       if (action.status === 'fulfilled') setActionCenter(action.value);
       if (automation.status === 'fulfilled') setAutomationStatus(automation.value);
       if (automationLogResult.status === 'fulfilled') setAutomationLogs(automationLogResult.value.items || []);
+      if (coding.status === 'fulfilled') setCodingWorkspace(coding.value);
       if (digest.status === 'fulfilled') setDailyDigest(digest.value);
       if (digestSched.status === 'fulfilled') setDigestSchedule(digestSched.value);
       if (operatorMemory.status === 'fulfilled') setDurableOperatorMemory(operatorMemory.value);
@@ -364,6 +466,8 @@ export default function JarvisHudDashboard() {
       if (tasks.status === 'fulfilled') setTaskSummary(tasks.value);
       if (reminderItems.status === 'fulfilled') setReminders(reminderItems.value);
       if (workspace.status === 'fulfilled') setWorkspaceSummary(workspace.value);
+      if (repos.status === 'fulfilled') setWorkspaceRepos(repos.value);
+      if (checks.status === 'fulfilled') setWorkspaceChecks(checks.value);
       setApiReachable(health.status === 'fulfilled' ? health.value : false);
       setSpeechAvailable(speech.status === 'fulfilled' ? speech.value.available : false);
       setRunningAgentCount(
@@ -421,6 +525,23 @@ export default function JarvisHudDashboard() {
   }, [workbenchNotice]);
 
   useEffect(() => {
+    if (!repoNotice) return;
+    const timeout = window.setTimeout(() => setRepoNotice(''), 5000);
+    return () => window.clearTimeout(timeout);
+  }, [repoNotice]);
+
+  useEffect(() => {
+    if (!editorNotice) return;
+    const timeout = window.setTimeout(() => setEditorNotice(''), 5000);
+    return () => window.clearTimeout(timeout);
+  }, [editorNotice]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    window.localStorage.setItem(CODING_TASKS_KEY, JSON.stringify(codingTasks));
+  }, [codingTasks]);
+
+  useEffect(() => {
     if (!actionNotice) return;
     const timeout = window.setTimeout(() => setActionNotice(''), 5000);
     return () => window.clearTimeout(timeout);
@@ -470,10 +591,10 @@ export default function JarvisHudDashboard() {
     if (lastSpokenDigestRef.current === dailyDigest.generated_at) return;
     let cancelled = false;
     synthesizeSpeech({
-      text: dailyDigest.text,
+      text: buildSpokenLine(dailyDigest.text, 'digest'),
       backend: speechProfile.reply_backend,
       voice_id: speechProfile.reply_voice_id,
-      speed: speechProfile.reply_speed,
+      speed: voicePersona.speed,
       output_format: 'wav',
     })
       .then((blob) => {
@@ -491,7 +612,7 @@ export default function JarvisHudDashboard() {
     return () => {
       cancelled = true;
     };
-  }, [dailyDigest?.generated_at, dailyDigest?.text, speechProfile]);
+  }, [dailyDigest?.generated_at, dailyDigest?.text, speechProfile, voicePersona.speed]);
 
   useEffect(() => {
     const latestLog = automationLogs[0] ?? null;
@@ -523,10 +644,10 @@ export default function JarvisHudDashboard() {
 
     let cancelled = false;
     synthesizeSpeech({
-      text: announcement,
+      text: buildSpokenLine(announcement, 'announcement'),
       backend: speechProfile.reply_backend,
       voice_id: speechProfile.reply_voice_id,
-      speed: speechProfile.reply_speed,
+      speed: voicePersona.speed,
       output_format: 'wav',
     })
       .then((blob) => {
@@ -544,7 +665,7 @@ export default function JarvisHudDashboard() {
     return () => {
       cancelled = true;
     };
-  }, [automationLogs, hudSpeechState, speechProfile, streamState.isStreaming]);
+  }, [automationLogs, hudSpeechState, speechProfile, streamState.isStreaming, voicePersona.speed]);
 
   useEffect(() => {
     if (!voiceLoop?.active) {
@@ -581,9 +702,39 @@ export default function JarvisHudDashboard() {
   const latestLogEntries = useMemo(() => [...logEntries].slice(-5).reverse(), [logEntries]);
   const toolSummary = summarizeToolCall(activeToolCall);
   const pendingAction = actionCenter?.pending ?? null;
+  const pendingCodeEdit = codingWorkspace?.pending ?? null;
   const pendingWorkbench = workbench?.pending ?? null;
   const latestActionResult = actionCenter?.history?.[0] ?? null;
+  const latestCodeResult = codingWorkspace?.history?.[0] ?? null;
   const latestWorkbenchResult = workbench?.history?.[0] ?? null;
+  const latestValidationFailure = useMemo(() => {
+    if (!latestWorkbenchResult || latestWorkbenchResult.status !== 'error') return null;
+    const command = latestWorkbenchResult.command.toLowerCase();
+    const isValidation =
+      command.includes('pytest') ||
+      command.includes('ruff') ||
+      command.includes('npm test') ||
+      command.includes('npm run lint') ||
+      command.includes('npm run build') ||
+      command.includes('cargo test') ||
+      command.includes('cargo check');
+    return isValidation ? latestWorkbenchResult : null;
+  }, [latestWorkbenchResult]);
+  const latestValidationSuccess = useMemo(() => {
+    if (!latestWorkbenchResult || latestWorkbenchResult.status !== 'success') return null;
+    const command = latestWorkbenchResult.command.toLowerCase();
+    const isValidation =
+      command.includes('pytest') ||
+      command.includes('ruff') ||
+      command.includes('npm test') ||
+      command.includes('npm run lint') ||
+      command.includes('npm run build') ||
+      command.includes('cargo test') ||
+      command.includes('cargo check');
+    if (!isValidation) return null;
+    if (latestCodeResult && latestWorkbenchResult.completed_at < latestCodeResult.completed_at) return null;
+    return latestWorkbenchResult;
+  }, [latestCodeResult, latestWorkbenchResult]);
   const latestAutomationLog = automationLogs[0] ?? null;
   const activeAutomationAlerts = useMemo(
     () =>
@@ -698,6 +849,114 @@ export default function JarvisHudDashboard() {
     () => structuredReviewQueue.find((item) => item.status !== 'done') || structuredReviewQueue[0] || null,
     [structuredReviewQueue],
   );
+  const nextCodingTask = useMemo(
+    () => codingTasks.find((task) => task.status !== 'done') || codingTasks[0] || null,
+    [codingTasks],
+  );
+  useEffect(() => {
+    if (!latestValidationFailure) {
+      lastAutoValidationFailureRef.current = '';
+      return;
+    }
+    const failureKey = latestValidationFailure.id;
+    if (lastAutoValidationFailureRef.current === failureKey) return;
+    lastAutoValidationFailureRef.current = failureKey;
+
+    const likelyFile =
+      latestCodeResult?.file_path ||
+      editorFilePath ||
+      nextReviewQueueItem?.filePath ||
+      workspaceSummary?.changed_files?.[0] ||
+      '';
+
+    if (likelyFile) {
+      setCodingTasks((current) => {
+        const exists = current.some(
+          (item) => item.filePath === likelyFile && item.mode === 'fix' && item.status !== 'done',
+        );
+        if (exists) return current;
+        return [
+          {
+            id: `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`,
+            title: `Fix validation failure in ${likelyFile}`,
+            filePath: likelyFile,
+            mode: 'fix',
+            status: 'pending',
+          },
+          ...current,
+        ];
+      });
+    }
+
+    if (!streamState.isStreaming && !pendingAction && !pendingCodeEdit && !pendingWorkbench) {
+      injectCommand(
+        buildValidationFixPrompt(
+          latestValidationFailure.command,
+          latestValidationFailure.output,
+          likelyFile || undefined,
+        ),
+      );
+      setWorkbenchNotice('Validation failure detected. Fix prompt loaded into the command deck.');
+    }
+  }, [
+    editorFilePath,
+    latestCodeResult?.file_path,
+    latestValidationFailure,
+    nextReviewQueueItem?.filePath,
+    pendingAction,
+    pendingCodeEdit,
+    pendingWorkbench,
+    streamState.isStreaming,
+    workspaceSummary?.changed_files,
+  ]);
+  useEffect(() => {
+    if (!latestValidationSuccess) {
+      lastAutoValidationSuccessRef.current = '';
+      return;
+    }
+    const successKey = latestValidationSuccess.id;
+    if (lastAutoValidationSuccessRef.current === successKey) return;
+    lastAutoValidationSuccessRef.current = successKey;
+
+    const likelyFile =
+      latestCodeResult?.file_path ||
+      editorFilePath ||
+      nextReviewQueueItem?.filePath ||
+      workspaceSummary?.changed_files?.[0] ||
+      '';
+    const suggestedMessage = buildSuggestedCommitMessage(likelyFile || undefined);
+
+    if (!gitCommitMessage.trim()) {
+      setGitCommitMessage(suggestedMessage);
+    }
+
+    if (likelyFile) {
+      setCodingTasks((current) =>
+        current.map((item) =>
+          item.filePath === likelyFile && item.status !== 'done' ? { ...item, status: 'done' } : item,
+        ),
+      );
+      setReviewQueueState((current) =>
+        current[likelyFile] && current[likelyFile] !== 'done' ? { ...current, [likelyFile]: 'done' } : current,
+      );
+    }
+
+    if (!pendingAction && !pendingCodeEdit && !pendingWorkbench) {
+      prepareCommitCommand(suggestedMessage, 'Validation passed. Commit command prepared and ready for approval.');
+    } else {
+      setWorkbenchNotice('Validation passed. Commit message drafted for the next approval step.');
+    }
+  }, [
+    editorFilePath,
+    gitCommitMessage,
+    latestCodeResult?.file_path,
+    latestValidationSuccess,
+    nextReviewQueueItem?.filePath,
+    pendingAction,
+    pendingCodeEdit,
+    pendingWorkbench,
+    workspaceSummary?.changed_files,
+  ]);
   const commanderQueue = useMemo(() => {
     const items: Array<{
       id: string;
@@ -729,6 +988,18 @@ export default function JarvisHudDashboard() {
         title: pendingWorkbench.command,
         detail: 'Terminal work is staged and waiting for approval.',
         actionLabel: 'Review Command',
+        action: () => setFocusMode(false),
+      });
+    }
+
+    if (pendingCodeEdit) {
+      items.push({
+        id: `approval-code-${pendingCodeEdit.id}`,
+        priority: 93,
+        label: 'Code Edit',
+        title: pendingCodeEdit.file_path,
+        detail: `Staged diff with ${pendingCodeEdit.line_count} lines is waiting for approval.`,
+        actionLabel: 'Review Diff',
         action: () => setFocusMode(false),
       });
     }
@@ -787,6 +1058,49 @@ export default function JarvisHudDashboard() {
       });
     }
 
+    if (latestValidationFailure) {
+      items.push({
+        id: `validation-${latestValidationFailure.id}`,
+        priority: 57,
+        label: 'Validation',
+        title: latestValidationFailure.command,
+        detail: 'Latest validation run failed. Load a fix prompt or rerun after another patch.',
+        actionLabel: 'Fix Failure',
+        action: () =>
+          injectCommand(
+            `A validation command failed.\nCommand: ${latestValidationFailure.command}\nOutput:\n${latestValidationFailure.output}\nDiagnose the root cause and propose the next safe code change.`,
+          ),
+      });
+    }
+
+    if (latestValidationSuccess) {
+      items.push({
+        id: `validation-success-${latestValidationSuccess.id}`,
+        priority: 55,
+        label: 'Ready To Commit',
+        title: latestValidationSuccess.command,
+        detail: 'Latest validation run passed. Prepare the commit and keep the coding loop moving.',
+        actionLabel: 'Prepare Commit',
+        action: () =>
+          prepareCommitCommand(
+            gitCommitMessage.trim() || buildSuggestedCommitMessage(latestCodeResult?.file_path || editorFilePath || undefined),
+            'Commit command prepared from the latest green validation run.',
+          ),
+      });
+    }
+
+    if (nextCodingTask) {
+      items.push({
+        id: `coding-task-${nextCodingTask.id}`,
+        priority: nextCodingTask.status === 'in_progress' ? 54 : 52,
+        label: 'Coding Task',
+        title: nextCodingTask.title,
+        detail: `${nextCodingTask.filePath} is queued for ${nextCodingTask.mode}.`,
+        actionLabel: nextCodingTask.status === 'in_progress' ? 'Continue Task' : 'Start Task',
+        action: () => loadFileCodingPrompt(nextCodingTask.filePath, nextCodingTask.mode === 'fix' ? 'debug' : nextCodingTask.mode),
+      });
+    }
+
     if (activeAutomationAlerts.find((item) => item.success && item.routine_id === 'daily_ops')) {
       items.push({
         id: 'daily-ops-ready',
@@ -800,7 +1114,7 @@ export default function JarvisHudDashboard() {
     }
 
     return items.sort((left, right) => right.priority - left.priority).slice(0, 6);
-  }, [activeAutomationAlerts, inboxFocusQueue, nextReviewQueueItem, pendingAction, pendingWorkbench, prepQueue]);
+  }, [activeAutomationAlerts, editorFilePath, gitCommitMessage, inboxFocusQueue, latestCodeResult?.file_path, latestValidationFailure, latestValidationSuccess, nextCodingTask, nextReviewQueueItem, pendingAction, pendingCodeEdit, pendingWorkbench, prepQueue]);
   const connectorCapabilities = useMemo(() => {
     const ids = new Set(connectedConnectorIds);
     const gmailConnected = ids.has('gmail') || ids.has('gmail_imap');
@@ -993,6 +1307,10 @@ export default function JarvisHudDashboard() {
     [workspaceSummary?.branch, workspaceSummary?.root],
   );
   const currentProjectMemory = durableOperatorMemory?.projects?.[currentProjectKey] || null;
+  const activeWorkspaceRepo = useMemo(
+    () => workspaceRepos?.repos.find((repo) => repo.root === workspaceRepos.active_root) || null,
+    [workspaceRepos],
+  );
 
   const reactorMetrics = useMemo(
     () => [
@@ -1050,7 +1368,7 @@ export default function JarvisHudDashboard() {
     {
       icon: Shield,
       label: 'Approval',
-      value: activeToolCall || pendingAction || pendingWorkbench ? 'Engaged' : 'Ready',
+      value: activeToolCall || pendingAction || pendingCodeEdit || pendingWorkbench ? 'Engaged' : 'Ready',
     },
   ];
 
@@ -1064,6 +1382,162 @@ export default function JarvisHudDashboard() {
   function injectCommand(text: string) {
     window.dispatchEvent(new CustomEvent('jarvis:set-input', { detail: { text, replace: true } }));
     setVoiceNotice('Command loaded into the deck.');
+  }
+
+  function buildSpokenLine(text: string, purpose: 'digest' | 'announcement' | 'reply' = 'reply') {
+    const cleaned = text.trim();
+    if (!cleaned) return cleaned;
+    const honorific = voicePersona.honorific.trim();
+    if (purpose === 'announcement' && honorific && !cleaned.toLowerCase().startsWith(honorific.toLowerCase())) {
+      return `${honorific}, ${cleaned}`;
+    }
+    return cleaned;
+  }
+
+  async function classifyIntentCommand() {
+    const text = intentCommand.trim();
+    if (!text) {
+      setWorkbenchNotice('Enter a command to classify first.');
+      return;
+    }
+    setIntentBusy('classify');
+    try {
+      const preview = await parseJarvisIntent(text);
+      setIntentPreview(preview);
+      setIntentExecution(null);
+      setWorkbenchNotice(`Intent classified as ${preview.type}.${preview.action ? ` ${preview.action}` : ''}`);
+    } catch (error) {
+      setWorkbenchNotice(error instanceof Error ? error.message : 'Intent classification failed.');
+    } finally {
+      setIntentBusy(null);
+    }
+  }
+
+  async function captureScreenSnapshot() {
+    if (typeof navigator === 'undefined' || !navigator.mediaDevices?.getDisplayMedia) {
+      setWorkbenchNotice('Screen capture is not available in this browser.');
+      return null;
+    }
+    setIntentBusy('capture');
+    try {
+      const stream = await navigator.mediaDevices.getDisplayMedia({ video: true });
+      const video = document.createElement('video');
+      video.srcObject = stream;
+      video.muted = true;
+      await video.play();
+      await new Promise((resolve) => {
+        if (video.readyState >= 2) resolve(null);
+        else video.onloadedmetadata = () => resolve(null);
+      });
+      const canvas = document.createElement('canvas');
+      canvas.width = video.videoWidth;
+      canvas.height = video.videoHeight;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) throw new Error('Canvas capture unavailable.');
+      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+      stream.getTracks().forEach((track) => track.stop());
+      const dataUrl = canvas.toDataURL('image/png');
+      setScreenSnapshot({ dataUrl, capturedAt: Date.now() });
+      setScreenContextNote('');
+      setWorkbenchNotice('Screen snapshot captured. Review it in the HUD and load a screen-help prompt when needed.');
+      return dataUrl;
+    } catch (error) {
+      setWorkbenchNotice(error instanceof Error ? error.message : 'Screen capture failed.');
+      return null;
+    } finally {
+      setIntentBusy(null);
+    }
+  }
+
+  async function runIntentCommand() {
+    const text = intentCommand.trim();
+    if (!text) {
+      setWorkbenchNotice('Enter a command to run first.');
+      return;
+    }
+    setIntentBusy('run');
+    try {
+      const next = await executeJarvisIntent(text);
+      setIntentPreview(next.intent);
+      setIntentExecution(next);
+      if (next.result.pending || next.result.history) {
+        setWorkbench((current) => ({
+          pending: next.result.pending ?? current?.pending ?? null,
+          history: next.result.history ?? current?.history ?? [],
+          default_working_dir: next.result.default_working_dir ?? current?.default_working_dir ?? workbenchDirectory,
+        }));
+      }
+      if (next.status === 'client_action_required' || next.intent.client_action === 'capture_screen') {
+        const captured = await captureScreenSnapshot();
+        if (captured) {
+          injectCommand(
+            'I captured a fresh screen snapshot in the HUD. Help me reason about what I should focus on next, then ask one clarifying question before giving step-by-step guidance.',
+          );
+        }
+      }
+      setWorkbenchNotice(next.message);
+    } catch (error) {
+      setWorkbenchNotice(error instanceof Error ? error.message : 'Intent execution failed.');
+    } finally {
+      setIntentBusy(null);
+    }
+  }
+
+  function loadIntentPreset(text: string) {
+    setIntentCommand(text);
+    setIntentPreview(null);
+    setIntentExecution(null);
+    setWorkbenchNotice('Preset loaded into the intent console.');
+  }
+
+  async function createTaskFromScreenContext() {
+    if (!screenSnapshot) {
+      setWorkbenchNotice('Capture a screen snapshot first.');
+      return;
+    }
+    const note = screenContextNote.trim();
+    if (!note) {
+      setWorkbenchNotice('Add a short screen context note first.');
+      return;
+    }
+    setActionBusy('stage');
+    try {
+      const next = await stageTask({
+        title: `Screen follow-up · ${new Date(screenSnapshot.capturedAt).toLocaleTimeString()}`,
+        notes: note,
+      });
+      setActionCenter(next);
+      setActionNotice('Screen follow-up task staged for approval.');
+    } catch (error) {
+      setActionNotice(error instanceof Error ? error.message : 'Unable to stage task from screen context.');
+    } finally {
+      setActionBusy(null);
+    }
+  }
+
+  async function rememberScreenContext() {
+    if (!screenSnapshot) {
+      setWorkbenchNotice('Capture a screen snapshot first.');
+      return;
+    }
+    const note = screenContextNote.trim();
+    if (!note) {
+      setWorkbenchNotice('Add a short screen context note first.');
+      return;
+    }
+    setIntentBusy('run');
+    try {
+      const next = await executeJarvisIntent(`Remember ${note}`);
+      setIntentPreview(next.intent);
+      setIntentExecution(next);
+      const memory = await fetchOperatorMemory().catch(() => null);
+      if (memory) setDurableOperatorMemory(memory);
+      setWorkbenchNotice('Screen context saved to explicit memory.');
+    } catch (error) {
+      setWorkbenchNotice(error instanceof Error ? error.message : 'Unable to remember screen context.');
+    } finally {
+      setIntentBusy(null);
+    }
   }
 
   function interruptAssistantOutput(reason?: string) {
@@ -1125,6 +1599,136 @@ export default function JarvisHudDashboard() {
     setWorkbenchNotice('Workbench preset loaded. Stage it when ready.');
   }
 
+  async function handleRegisterRepo() {
+    const path = repoPathInput.trim();
+    if (!path) {
+      setRepoNotice('Enter a local Git repo path first.');
+      return;
+    }
+    setRepoBusy('register');
+    try {
+      const next = await registerWorkspaceRepo(path);
+      setWorkspaceRepos(next);
+      const active = next.repos.find((repo) => repo.root === next.active_root);
+      if (active) {
+        setWorkbenchDirectory(active.root);
+        const summary = await fetchWorkspaceSummary();
+        setWorkspaceSummary(summary);
+        setRepoNotice(`Connected ${active.name}.`);
+      }
+      setRepoPathInput('');
+    } catch (error) {
+      setRepoNotice(error instanceof Error ? error.message : 'Repo registration failed.');
+    } finally {
+      setRepoBusy(null);
+    }
+  }
+
+  async function handleSelectRepo(root: string) {
+    setRepoBusy('select');
+    try {
+      const next = await selectWorkspaceRepo(root);
+      setWorkspaceRepos(next);
+      setWorkbenchDirectory(root);
+      const summary = await fetchWorkspaceSummary();
+      setWorkspaceSummary(summary);
+      const active = next.repos.find((repo) => repo.root === root);
+      setRepoNotice(active ? `Switched to ${active.name}.` : 'Repository selected.');
+    } catch (error) {
+      setRepoNotice(error instanceof Error ? error.message : 'Repo selection failed.');
+    } finally {
+      setRepoBusy(null);
+    }
+  }
+
+  function loadCloneRepoCommand() {
+    const cloneUrl = repoCloneUrl.trim();
+    if (!cloneUrl) {
+      setRepoNotice('Enter a GitHub clone URL first.');
+      return;
+    }
+    const summaryRoot = workspaceSummary?.root || workbench?.default_working_dir || workbenchDirectory;
+    const workingRoot = summaryRoot.replace(/[\\/][^\\/]+$/, '') || summaryRoot;
+    setWorkbenchDirectory(workingRoot || workbenchDirectory);
+    setWorkbenchCommand(`git clone ${cloneUrl}`);
+    setWorkbenchNotice('Clone command loaded. Review and stage it when ready.');
+  }
+
+  async function openFileInEditor(filePath: string) {
+    const repoRoot = workspaceSummary?.root;
+    if (!repoRoot) {
+      setEditorNotice('No active repository selected.');
+      return;
+    }
+    setEditorBusy('load');
+    try {
+      const result = await readCodingFile(repoRoot, filePath);
+      setEditorFilePath(result.file_path);
+      setEditorContent(result.content);
+      setEditorOriginalContent(result.content);
+      setEditorNotice(`Loaded ${result.file_path} into the editor.`);
+      setReviewQueueState((current) => ({ ...current, [filePath]: 'in_progress' }));
+    } catch (error) {
+      setEditorNotice(error instanceof Error ? error.message : 'Failed to load file.');
+    } finally {
+      setEditorBusy(null);
+    }
+  }
+
+  function stageSuggestedCommand(command: string) {
+    setWorkbenchCommand(command);
+    setWorkbenchDirectory(workspaceSummary?.root || workbenchDirectory);
+    setWorkbenchNotice('Suggested command loaded. Stage it when ready.');
+  }
+
+  function buildValidationFixPrompt(command: string, output: string, filePath?: string) {
+    const projectContext = currentProjectMemory
+      ? `\nKnown project focus: ${currentProjectMemory.focus || 'none'}\nProject status: ${currentProjectMemory.status || 'unknown'}\nNext step: ${currentProjectMemory.next_step || 'not recorded'}`
+      : '';
+    const fileHint = filePath ? `\nLikely file to inspect first: ${filePath}` : '';
+    return `A validation command failed.\nCommand: ${command}${fileHint}\nOutput:\n${output}\nDiagnose the root cause, identify the highest-signal next patch, and keep the fix safe and minimal.${projectContext}`;
+  }
+
+  function buildSuggestedCommitMessage(filePath?: string) {
+    const normalized = filePath?.split('/').pop()?.split('\\').pop() || 'workspace';
+    const focus = currentProjectMemory?.focus?.trim();
+    if (focus) {
+      return `feat: advance ${focus.toLowerCase()}`;
+    }
+    const cleanName = normalized.replace(/\.[^.]+$/, '').replace(/[_\s]+/g, '-');
+    return `feat: update ${cleanName}`;
+  }
+
+  async function prepareCommitCommand(message: string, notice = 'Commit command prepared. Stage it when ready.') {
+    if (!message) {
+      setWorkbenchNotice('Enter a commit message first.');
+      return;
+    }
+    try {
+      const prepared = await prepareWorkspaceCommit(message);
+      setWorkbenchDirectory(prepared.root);
+      setWorkbenchCommand(prepared.command);
+      setWorkbenchNotice(notice);
+    } catch (error) {
+      setWorkbenchNotice(error instanceof Error ? error.message : 'Unable to prepare commit command.');
+    }
+  }
+
+  async function loadPreparedCommitCommand() {
+    await prepareCommitCommand(gitCommitMessage.trim());
+  }
+
+  async function loadPreparedPushCommand() {
+    try {
+      const prepared = await prepareWorkspacePush();
+      setWorkbenchDirectory(prepared.root);
+      setWorkbenchCommand(prepared.command);
+      setWorkbenchNotice('Push command prepared. Stage it when ready.');
+    } catch (error) {
+      setWorkbenchNotice(error instanceof Error ? error.message : 'Unable to prepare push command.');
+    }
+  }
+
   function loadFileCodingPrompt(
     filePath: string,
     mode: 'inspect' | 'debug' | 'review',
@@ -1140,6 +1744,13 @@ export default function JarvisHudDashboard() {
         : `Review this file in the context of the current repository. Focus on bugs, regressions, missing tests, and risky behavior.\nFile: ${filePath}${projectContext}`;
     injectCommand(prompt);
     setReviewQueueState((current) => ({ ...current, [filePath]: 'in_progress' }));
+    setCodingTasks((current) =>
+      current.map((item) =>
+        item.filePath === filePath && (item.mode === mode || (item.mode === 'fix' && mode === 'debug'))
+          ? { ...item, status: 'in_progress' }
+          : item,
+      ),
+    );
     setWorkbenchNotice(`${mode === 'inspect' ? 'Inspect' : mode === 'debug' ? 'Debug' : 'Review'} prompt loaded for ${filePath}.`);
   }
 
@@ -1157,6 +1768,31 @@ export default function JarvisHudDashboard() {
         : status === 'in_progress'
         ? `${filePath} marked in progress.`
         : `${filePath} moved back to pending.`,
+    );
+  }
+
+  function addCodingTask(
+    filePath: string,
+    mode: 'review' | 'debug' | 'inspect' | 'fix',
+    title?: string,
+  ) {
+    const id = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
+    setCodingTasks((current) => [
+      {
+        id,
+        title: title || `${mode === 'fix' ? 'Fix' : mode[0].toUpperCase() + mode.slice(1)} ${filePath}`,
+        filePath,
+        mode,
+        status: 'pending',
+      },
+      ...current.filter((item) => !(item.filePath === filePath && item.mode === mode)),
+    ]);
+    setWorkbenchNotice(`Coding task added for ${filePath}.`);
+  }
+
+  function updateCodingTaskStatus(taskId: string, status: 'pending' | 'in_progress' | 'done') {
+    setCodingTasks((current) =>
+      current.map((item) => (item.id === taskId ? { ...item, status } : item)),
     );
   }
 
@@ -1808,10 +2444,78 @@ export default function JarvisHudDashboard() {
     }
   }
 
+  async function handleStageCodeEdit() {
+    if (!workspaceSummary?.root || !editorFilePath.trim()) {
+      setEditorNotice('Load a file into the editor first.');
+      return;
+    }
+    setEditorBusy('stage');
+    try {
+      const next = await stageCodeEdit({
+        repo_root: workspaceSummary.root,
+        file_path: editorFilePath,
+        updated_content: editorContent,
+      });
+      setCodingWorkspace(next);
+      setEditorNotice(`Staged diff for ${editorFilePath}.`);
+    } catch (error) {
+      setEditorNotice(error instanceof Error ? error.message : 'Unable to stage code edit.');
+    } finally {
+      setEditorBusy(null);
+    }
+  }
+
+  async function handleApproveCodeEdit() {
+    setEditorBusy('approve');
+    try {
+      const next = await approveCodeEdit();
+      setCodingWorkspace(next);
+      setEditorOriginalContent(editorContent);
+      setEditorNotice(next.result?.result || 'Code edit applied.');
+      const summary = await fetchWorkspaceSummary();
+      setWorkspaceSummary(summary);
+      const checks = await fetchWorkspaceChecks().catch(() => null);
+      if (checks) {
+        setWorkspaceChecks(checks);
+        const primaryCheck = checks.checks[0];
+        if (primaryCheck) {
+          setWorkbenchCommand(primaryCheck.command);
+          setWorkbenchDirectory(summary.root);
+          setWorkbenchNotice(`Primary validation check loaded: ${primaryCheck.label}. Stage it when ready.`);
+        }
+      }
+      useAppStore.getState().addLogEntry({
+        timestamp: Date.now(),
+        level: 'info',
+        category: 'tool',
+        message: next.result?.result || 'Code edit applied.',
+      });
+    } catch (error) {
+      setEditorNotice(error instanceof Error ? error.message : 'Unable to apply code edit.');
+    } finally {
+      setEditorBusy(null);
+    }
+  }
+
+  async function handleHoldCodeEdit() {
+    setEditorBusy('hold');
+    try {
+      const next = await holdCodeEdit();
+      setCodingWorkspace(next);
+      setEditorNotice('Pending code edit held.');
+    } catch (error) {
+      setEditorNotice(error instanceof Error ? error.message : 'Unable to hold code edit.');
+    } finally {
+      setEditorBusy(null);
+    }
+  }
+
   const approvalLabel = activeToolCall
     ? `Tool running: ${activeToolCall.tool}`
     : pendingAction
     ? `${pendingAction.action_type.replace('_', ' ')} is waiting for approval.`
+    : pendingCodeEdit
+    ? `Code edit for ${pendingCodeEdit.file_path} is waiting for approval.`
     : pendingWorkbench
     ? 'Workbench command is waiting for approval.'
     : streamState.isStreaming
@@ -2172,6 +2876,8 @@ export default function JarvisHudDashboard() {
                   <div className="text-sm leading-7 text-slate-200/78">
                     {pendingAction
                       ? `${pendingAction.title} - ${pendingAction.summary}`
+                      : pendingCodeEdit
+                      ? `${pendingCodeEdit.file_path} - staged code diff awaiting approval`
                       : pendingWorkbench
                       ? `${pendingWorkbench.command} [${pendingWorkbench.working_dir}]`
                       : toolSummary}
@@ -2180,18 +2886,18 @@ export default function JarvisHudDashboard() {
 
                 <div className="mt-4 grid gap-3 sm:grid-cols-2">
                   <button
-                    onClick={pendingAction ? handleApproveAction : handleApproveWorkbench}
-                    disabled={(!pendingAction && !pendingWorkbench) || workbenchBusy !== null || actionBusy !== null}
+                    onClick={pendingAction ? handleApproveAction : pendingCodeEdit ? handleApproveCodeEdit : handleApproveWorkbench}
+                    disabled={(!pendingAction && !pendingCodeEdit && !pendingWorkbench) || workbenchBusy !== null || actionBusy !== null || editorBusy !== null}
                     className="rounded-[1.1rem] border border-emerald-400/30 bg-emerald-400/12 px-4 py-3 text-sm uppercase tracking-[0.24em] text-emerald-200 transition hover:bg-emerald-400/20 disabled:cursor-not-allowed disabled:opacity-45"
                   >
                     <span className="flex items-center justify-center gap-2">
                       <CheckCircle2 className="h-4 w-4" />
-                      {workbenchBusy === 'approve' || actionBusy === 'approve' ? 'Running' : 'Approve'}
+                      {workbenchBusy === 'approve' || actionBusy === 'approve' || editorBusy === 'approve' ? 'Running' : 'Approve'}
                     </span>
                   </button>
                   <button
-                    onClick={pendingAction ? handleHoldAction : handleHoldWorkbench}
-                    disabled={(!pendingAction && !pendingWorkbench) || workbenchBusy !== null || actionBusy !== null}
+                    onClick={pendingAction ? handleHoldAction : pendingCodeEdit ? handleHoldCodeEdit : handleHoldWorkbench}
+                    disabled={(!pendingAction && !pendingCodeEdit && !pendingWorkbench) || workbenchBusy !== null || actionBusy !== null || editorBusy !== null}
                     className="rounded-[1.1rem] border border-rose-400/30 bg-rose-400/12 px-4 py-3 text-sm uppercase tracking-[0.24em] text-rose-200 transition hover:bg-rose-400/20 disabled:cursor-not-allowed disabled:opacity-45"
                   >
                     <span className="flex items-center justify-center gap-2">
@@ -2206,9 +2912,12 @@ export default function JarvisHudDashboard() {
                 </div>
                 <div className="mt-3 rounded-[1.15rem] border border-cyan-400/10 bg-slate-950/45 px-4 py-3 text-sm text-slate-200/76">
                   {actionNotice ||
+                    editorNotice ||
                     workbenchNotice ||
                     (pendingAction
                       ? 'Approve to send the staged email or finalize the calendar plan.'
+                      : pendingCodeEdit
+                      ? 'Approve to apply the staged file diff to the active repository.'
                       : pendingWorkbench
                       ? 'Approve to execute the staged terminal command.'
                       : 'No staged action right now.')}
@@ -2227,6 +2936,181 @@ export default function JarvisHudDashboard() {
 
                 <div className="mt-4 rounded-[1.15rem] border border-cyan-400/10 bg-black/20 py-2">
                   <InputArea />
+                </div>
+
+                <div className="mt-4 rounded-[1.15rem] border border-cyan-400/10 bg-slate-950/55 p-4">
+                  <div className="mb-2 flex items-center justify-between gap-3">
+                    <div className="text-[10px] uppercase tracking-[0.35em] text-cyan-300/55">
+                      Intent Console
+                    </div>
+                    <div className="text-[10px] uppercase tracking-[0.24em] text-cyan-200/60">
+                      memory · web · desktop · screen
+                    </div>
+                  </div>
+                  <div className="text-sm leading-7 text-slate-200/78">
+                    One structured lane for “remember this”, “search the web”, desktop actions, and screen capture.
+                  </div>
+                  <div className="mt-3 grid gap-3 md:grid-cols-[1fr_140px_140px]">
+                    <input
+                      value={intentCommand}
+                      onChange={(event) => setIntentCommand(event.target.value)}
+                      placeholder="Remember my gym is at 18:00 on weekdays"
+                      className="rounded-[0.9rem] border border-cyan-400/10 bg-slate-950/70 px-4 py-3 text-sm text-slate-100 outline-none placeholder:text-slate-500"
+                    />
+                    <button
+                      onClick={classifyIntentCommand}
+                      disabled={intentBusy !== null}
+                      className="rounded-[0.9rem] border border-cyan-400/12 bg-slate-950/70 px-4 py-3 text-xs uppercase tracking-[0.24em] text-cyan-100 transition hover:bg-cyan-400/[0.08] disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      {intentBusy === 'classify' ? 'Reading' : 'Classify'}
+                    </button>
+                    <button
+                      onClick={runIntentCommand}
+                      disabled={intentBusy !== null}
+                      className="rounded-[0.9rem] border border-cyan-300/20 bg-cyan-400/[0.08] px-4 py-3 text-xs uppercase tracking-[0.24em] text-cyan-100 transition hover:bg-cyan-400/[0.14] disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      {intentBusy === 'run' ? 'Running' : 'Run Intent'}
+                    </button>
+                  </div>
+                  <div className="mt-3 grid gap-2 sm:grid-cols-3">
+                    {([
+                      { label: 'Remember', text: 'Remember my gym is at 18:00 on weekdays', icon: BookOpen },
+                      { label: 'Recall', text: 'What do you know about my workday?', icon: Sparkles },
+                      { label: 'List Memory', text: 'List my memories', icon: Brain },
+                      { label: 'Forget', text: 'Forget gym', icon: XCircle },
+                      { label: 'Web Search', text: 'Search the web for the latest Ollama models', icon: Globe },
+                      { label: 'Open YouTube', text: 'Open YouTube', icon: Radio },
+                      { label: 'Find PDFs', text: 'Find all PDFs in downloads', icon: Folder },
+                      { label: 'Screen Brief', text: 'What is on my screen?', icon: Monitor },
+                    ] as const).map(({ label, text, icon: Icon }) => (
+                      <button
+                        key={label}
+                        onClick={() => loadIntentPreset(text)}
+                        className="rounded-[0.95rem] border border-cyan-400/12 bg-black/20 px-3 py-3 text-left transition hover:bg-cyan-400/[0.08]"
+                      >
+                        <div className="flex items-center gap-2">
+                          <Icon className="h-4 w-4 text-cyan-200" />
+                          <div className="text-xs uppercase tracking-[0.22em] text-cyan-50/92">{label}</div>
+                        </div>
+                        <div className="mt-2 text-xs text-slate-300/72">{text}</div>
+                      </button>
+                    ))}
+                  </div>
+                  {intentPreview ? (
+                    <div className="mt-3 rounded-[0.95rem] border border-cyan-400/10 bg-black/20 px-3 py-3">
+                      <div className="text-[10px] uppercase tracking-[0.22em] text-cyan-300/55">Intent Preview</div>
+                      <div className="mt-1 text-sm text-cyan-50/92">
+                        {intentPreview.type} · {intentPreview.action}
+                      </div>
+                      <div className="mt-1 text-xs uppercase tracking-[0.22em] text-cyan-300/55">
+                        Risk: {intentPreview.risk} {intentPreview.requires_approval ? '· approval required' : ''}
+                      </div>
+                      <div className="mt-2 text-sm text-slate-200/76">
+                        {intentPreview.content || intentPreview.query || intentPreview.target || intentPreview.command || 'No extra detail.'}
+                      </div>
+                    </div>
+                  ) : null}
+                  {intentExecution?.result?.content ? (
+                    <div className="mt-3 rounded-[0.95rem] border border-cyan-400/10 bg-black/20 px-3 py-3">
+                      <div className="text-[10px] uppercase tracking-[0.22em] text-cyan-300/55">Intent Result</div>
+                      <pre className="mt-2 max-h-48 overflow-auto whitespace-pre-wrap break-words text-sm text-slate-200/76">
+                        {intentExecution.result.content}
+                      </pre>
+                    </div>
+                  ) : null}
+                  {intentExecution?.result?.items?.length ? (
+                    <div className="mt-3 space-y-2">
+                      {intentExecution.result.items.slice(0, 3).map((item, index) => (
+                        <div
+                          key={`${item.content}-${index}`}
+                          className="rounded-[0.95rem] border border-cyan-400/10 bg-black/20 px-3 py-3"
+                        >
+                          <div className="text-[10px] uppercase tracking-[0.22em] text-cyan-300/55">
+                            Memory Match · {item.score.toFixed(2)}
+                          </div>
+                          <div className="mt-2 text-sm text-slate-200/76">{item.content}</div>
+                        </div>
+                      ))}
+                    </div>
+                  ) : null}
+                  {intentExecution?.result?.sources?.length ? (
+                    <div className="mt-3 grid gap-2">
+                      {intentExecution.result.sources.slice(0, 4).map((item) => (
+                        <div
+                          key={`${item.url}-${item.title}`}
+                          className="rounded-[0.95rem] border border-cyan-400/10 bg-black/20 px-3 py-3"
+                        >
+                          <div className="text-[10px] uppercase tracking-[0.22em] text-cyan-300/55">Web Source</div>
+                          <div className="mt-1 text-sm text-cyan-50/92">{item.title}</div>
+                          <a
+                            href={item.url}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="mt-1 block text-xs text-cyan-300/80 underline-offset-4 hover:underline"
+                          >
+                            {item.url}
+                          </a>
+                          <div className="mt-2 text-sm text-slate-200/76">{item.snippet}</div>
+                        </div>
+                      ))}
+                    </div>
+                  ) : null}
+                  {screenSnapshot ? (
+                    <div className="mt-3 rounded-[0.95rem] border border-cyan-400/10 bg-black/20 px-3 py-3">
+                      <div className="flex items-center justify-between gap-3">
+                        <div className="text-[10px] uppercase tracking-[0.22em] text-cyan-300/55">Screen Snapshot</div>
+                        <div className="text-[10px] uppercase tracking-[0.22em] text-cyan-300/45">
+                          {new Date(screenSnapshot.capturedAt).toLocaleTimeString()}
+                        </div>
+                      </div>
+                      <img
+                        src={screenSnapshot.dataUrl}
+                        alt="Captured screen snapshot"
+                        className="mt-3 max-h-48 w-full rounded-[0.95rem] border border-cyan-400/10 object-cover"
+                      />
+                      <textarea
+                        value={screenContextNote}
+                        onChange={(event) => setScreenContextNote(event.target.value)}
+                        placeholder="What matters in this screenshot? Add a short note so JARVIS can turn it into a task or memory."
+                        className="mt-3 min-h-[84px] w-full rounded-[0.95rem] border border-cyan-400/10 bg-slate-950/70 px-3 py-3 text-sm text-slate-100 outline-none placeholder:text-slate-500"
+                      />
+                      <div className="mt-3 flex gap-2">
+                        <button
+                          onClick={() =>
+                            injectCommand(
+                              'I captured a screen snapshot in the HUD. Help me figure out what the most important visible task is, then ask one clarifying question before you suggest the next action.',
+                            )
+                          }
+                          className="rounded-[0.85rem] border border-cyan-400/12 bg-cyan-400/[0.08] px-3 py-2 text-[10px] uppercase tracking-[0.22em] text-cyan-100 transition hover:bg-cyan-400/[0.14]"
+                        >
+                          Load Screen Prompt
+                        </button>
+                        <button
+                          onClick={createTaskFromScreenContext}
+                          disabled={actionBusy !== null || !screenContextNote.trim()}
+                          className="rounded-[0.85rem] border border-cyan-400/12 bg-cyan-400/[0.08] px-3 py-2 text-[10px] uppercase tracking-[0.22em] text-cyan-100 transition hover:bg-cyan-400/[0.14] disabled:cursor-not-allowed disabled:opacity-50"
+                        >
+                          Make Task
+                        </button>
+                        <button
+                          onClick={rememberScreenContext}
+                          disabled={intentBusy !== null || !screenContextNote.trim()}
+                          className="rounded-[0.85rem] border border-cyan-400/12 bg-slate-950/70 px-3 py-2 text-[10px] uppercase tracking-[0.22em] text-cyan-100 transition hover:bg-cyan-400/[0.08] disabled:cursor-not-allowed disabled:opacity-50"
+                        >
+                          Remember
+                        </button>
+                        <button
+                          onClick={() => {
+                            setScreenSnapshot(null);
+                            setScreenContextNote('');
+                          }}
+                          className="rounded-[0.85rem] border border-cyan-400/12 bg-slate-950/70 px-3 py-2 text-[10px] uppercase tracking-[0.22em] text-cyan-100 transition hover:bg-cyan-400/[0.08]"
+                        >
+                          Clear Snapshot
+                        </button>
+                      </div>
+                    </div>
+                  ) : null}
                 </div>
 
                 <div className="mt-4 rounded-[1.15rem] border border-cyan-400/10 bg-slate-950/55 p-4">
@@ -2377,6 +3261,178 @@ export default function JarvisHudDashboard() {
 
                 <div className="mt-4 rounded-[1.15rem] border border-cyan-400/10 bg-slate-950/55 p-4">
                   <div className="mb-2 text-[10px] uppercase tracking-[0.35em] text-cyan-300/55">
+                    Repo Dock
+                  </div>
+                  <div className="grid gap-3">
+                    <div className="rounded-[0.95rem] border border-cyan-400/10 bg-black/20 px-3 py-3">
+                      <div className="text-[10px] uppercase tracking-[0.22em] text-cyan-300/55">Active Repo</div>
+                      <div className="mt-1 text-sm text-cyan-50/92">
+                        {activeWorkspaceRepo?.name || workspaceSummary?.root?.split(/[\\\\/]/).slice(-1)[0] || 'Workspace'}
+                      </div>
+                      <div className="mt-1 text-xs text-slate-300/70">
+                        {activeWorkspaceRepo?.remote_url || workspaceSummary?.remote_url || workspaceSummary?.root || 'No repo registered yet.'}
+                      </div>
+                    </div>
+                    <div className="grid gap-3 md:grid-cols-[1fr_160px]">
+                      <input
+                        value={repoPathInput}
+                        onChange={(event) => setRepoPathInput(event.target.value)}
+                        placeholder="C:\\dev\\my-repo or /mnt/c/dev/my-repo"
+                        className="rounded-[0.9rem] border border-cyan-400/10 bg-slate-950/70 px-4 py-3 text-sm text-slate-100 outline-none placeholder:text-slate-500"
+                      />
+                      <button
+                        onClick={handleRegisterRepo}
+                        disabled={repoBusy !== null}
+                        className="rounded-[0.9rem] border border-cyan-300/20 bg-cyan-400/[0.08] px-4 py-3 text-xs uppercase tracking-[0.28em] text-cyan-100 transition hover:bg-cyan-400/[0.14] disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        {repoBusy === 'register' ? 'Connecting' : 'Connect Repo'}
+                      </button>
+                    </div>
+                    <div className="grid gap-3 md:grid-cols-[1fr_160px]">
+                      <input
+                        value={repoCloneUrl}
+                        onChange={(event) => setRepoCloneUrl(event.target.value)}
+                        placeholder="https://github.com/org/repo.git"
+                        className="rounded-[0.9rem] border border-cyan-400/10 bg-slate-950/70 px-4 py-3 text-sm text-slate-100 outline-none placeholder:text-slate-500"
+                      />
+                      <button
+                        onClick={loadCloneRepoCommand}
+                        className="rounded-[0.9rem] border border-cyan-400/12 bg-slate-950/70 px-4 py-3 text-xs uppercase tracking-[0.28em] text-cyan-100 transition hover:bg-cyan-400/[0.08]"
+                      >
+                        Load Clone Cmd
+                      </button>
+                    </div>
+                    {workspaceRepos?.repos?.length ? (
+                      <div className="grid gap-2 sm:grid-cols-2">
+                        {workspaceRepos.repos.slice(0, 6).map((repo) => (
+                          <button
+                            key={repo.root}
+                            onClick={() => handleSelectRepo(repo.root)}
+                            disabled={repoBusy !== null || repo.root === workspaceRepos.active_root}
+                            className="rounded-[0.95rem] border border-cyan-400/10 bg-black/20 px-3 py-3 text-left transition hover:bg-cyan-400/[0.08] disabled:cursor-not-allowed disabled:opacity-60"
+                          >
+                            <div className="text-xs uppercase tracking-[0.22em] text-cyan-300/55">
+                              {repo.root === workspaceRepos.active_root ? 'Active' : 'Tracked'}
+                            </div>
+                            <div className="mt-1 text-sm text-cyan-50/92">{repo.name}</div>
+                            <div className="mt-1 text-xs text-slate-300/70">{repo.branch}</div>
+                          </button>
+                        ))}
+                      </div>
+                    ) : null}
+                    {repoNotice ? <div className="text-sm text-cyan-100/80">{repoNotice}</div> : null}
+                  </div>
+                </div>
+
+                <div className="mt-4 rounded-[1.15rem] border border-cyan-400/10 bg-slate-950/55 p-4">
+                  <div className="mb-2 text-[10px] uppercase tracking-[0.35em] text-cyan-300/55">
+                    Validation Loop
+                  </div>
+                  <div className="text-sm leading-7 text-slate-200/78">
+                    Suggested checks for the active repo. Load them into the workbench, then approve execution from the gate.
+                  </div>
+                  <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                    {(workspaceChecks?.checks || []).map((item) => (
+                      <button
+                        key={`${item.kind}-${item.command}`}
+                        onClick={() => stageSuggestedCommand(item.command)}
+                        className="rounded-[0.95rem] border border-cyan-400/12 bg-cyan-400/[0.08] px-3 py-3 text-left transition hover:bg-cyan-400/[0.14]"
+                      >
+                        <div className="text-xs uppercase tracking-[0.22em] text-cyan-50/92">{item.label}</div>
+                        <div className="mt-1 text-xs text-slate-300/72">{item.command}</div>
+                      </button>
+                    ))}
+                    {!workspaceChecks?.checks?.length ? (
+                      <div className="rounded-[0.95rem] border border-cyan-400/10 bg-black/20 px-3 py-3 text-sm text-slate-200/72 sm:col-span-2">
+                        No suggested checks detected for this repo yet.
+                      </div>
+                    ) : null}
+                  </div>
+                  <div className="mt-3 grid gap-3 md:grid-cols-[1fr_180px_180px]">
+                    <input
+                      value={gitCommitMessage}
+                      onChange={(event) => setGitCommitMessage(event.target.value)}
+                      placeholder="feat: improve HUD coding workflow"
+                      className="rounded-[0.9rem] border border-cyan-400/10 bg-slate-950/70 px-4 py-3 text-sm text-slate-100 outline-none placeholder:text-slate-500"
+                    />
+                    <button
+                      onClick={loadPreparedCommitCommand}
+                      className="rounded-[0.9rem] border border-cyan-400/12 bg-slate-950/70 px-4 py-3 text-xs uppercase tracking-[0.24em] text-cyan-100 transition hover:bg-cyan-400/[0.08]"
+                    >
+                      Prepare Commit
+                    </button>
+                    <button
+                      onClick={loadPreparedPushCommand}
+                      className="rounded-[0.9rem] border border-cyan-400/12 bg-slate-950/70 px-4 py-3 text-xs uppercase tracking-[0.24em] text-cyan-100 transition hover:bg-cyan-400/[0.08]"
+                    >
+                      Prepare Push
+                    </button>
+                  </div>
+                  <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                    {(workspaceChecks?.git_actions || []).map((item) => (
+                      <button
+                        key={`${item.kind}-${item.command}`}
+                        onClick={() => stageSuggestedCommand(item.command)}
+                        className="rounded-[0.95rem] border border-cyan-400/12 bg-slate-950/70 px-3 py-3 text-left transition hover:bg-cyan-400/[0.08]"
+                      >
+                        <div className="text-xs uppercase tracking-[0.22em] text-cyan-50/92">{item.label}</div>
+                        <div className="mt-1 text-xs text-slate-300/72">{item.command}</div>
+                      </button>
+                    ))}
+                  </div>
+                  {latestValidationFailure ? (
+                    <div className="mt-3 rounded-[0.95rem] border border-amber-400/20 bg-amber-400/[0.06] px-3 py-3">
+                      <div className="text-[10px] uppercase tracking-[0.22em] text-amber-200/70">Latest Failure</div>
+                      <div className="mt-1 text-sm text-amber-50/90">{latestValidationFailure.command}</div>
+                      <div className="mt-2 flex gap-2">
+                        <button
+                          onClick={() =>
+                            injectCommand(
+                              `A validation command failed.\nCommand: ${latestValidationFailure.command}\nOutput:\n${latestValidationFailure.output}\nDiagnose the root cause and propose the next safe patch.`,
+                            )
+                          }
+                          className="rounded-[0.85rem] border border-amber-300/20 bg-amber-400/[0.08] px-3 py-2 text-[10px] uppercase tracking-[0.22em] text-amber-100 transition hover:bg-amber-400/[0.14]"
+                        >
+                          Load Fix Prompt
+                        </button>
+                        <button
+                          onClick={() => stageSuggestedCommand(latestValidationFailure.command)}
+                          className="rounded-[0.85rem] border border-cyan-400/12 bg-slate-950/70 px-3 py-2 text-[10px] uppercase tracking-[0.22em] text-cyan-100 transition hover:bg-cyan-400/[0.08]"
+                        >
+                          Rerun Check
+                        </button>
+                      </div>
+                    </div>
+                  ) : null}
+                  {latestValidationSuccess ? (
+                    <div className="mt-3 rounded-[0.95rem] border border-emerald-400/20 bg-emerald-400/[0.06] px-3 py-3">
+                      <div className="text-[10px] uppercase tracking-[0.22em] text-emerald-200/70">Latest Green Check</div>
+                      <div className="mt-1 text-sm text-emerald-50/90">{latestValidationSuccess.command}</div>
+                      <div className="mt-2 flex gap-2">
+                        <button
+                          onClick={() =>
+                            prepareCommitCommand(
+                              gitCommitMessage.trim() || buildSuggestedCommitMessage(latestCodeResult?.file_path || editorFilePath || undefined),
+                              'Commit command prepared from the latest green validation run.',
+                            )
+                          }
+                          className="rounded-[0.85rem] border border-emerald-300/20 bg-emerald-400/[0.08] px-3 py-2 text-[10px] uppercase tracking-[0.22em] text-emerald-100 transition hover:bg-emerald-400/[0.14]"
+                        >
+                          Prepare Commit
+                        </button>
+                        <button
+                          onClick={loadPreparedPushCommand}
+                          className="rounded-[0.85rem] border border-cyan-400/12 bg-slate-950/70 px-3 py-2 text-[10px] uppercase tracking-[0.22em] text-cyan-100 transition hover:bg-cyan-400/[0.08]"
+                        >
+                          Prepare Push
+                        </button>
+                      </div>
+                    </div>
+                  ) : null}
+                </div>
+
+                <div className="mt-4 rounded-[1.15rem] border border-cyan-400/10 bg-slate-950/55 p-4">
+                  <div className="mb-2 text-[10px] uppercase tracking-[0.35em] text-cyan-300/55">
                     Coding Presets
                   </div>
                   <div className="text-sm leading-7 text-slate-200/78">
@@ -2471,6 +3527,18 @@ export default function JarvisHudDashboard() {
                               >
                                 Diff
                               </button>
+                              <button
+                                onClick={() => openFileInEditor(filePath)}
+                                className="rounded-[0.8rem] border border-cyan-400/12 bg-slate-950/70 px-2 py-2 text-[10px] uppercase tracking-[0.18em] text-cyan-100 transition hover:bg-cyan-400/[0.08]"
+                              >
+                                Edit
+                              </button>
+                              <button
+                                onClick={() => addCodingTask(filePath, 'fix', `Fix ${filePath}`)}
+                                className="rounded-[0.8rem] border border-amber-300/20 bg-amber-400/[0.08] px-2 py-2 text-[10px] uppercase tracking-[0.18em] text-amber-100 transition hover:bg-amber-400/[0.14]"
+                              >
+                                Task
+                              </button>
                             </div>
                           </div>
                         ))}
@@ -2486,6 +3554,61 @@ export default function JarvisHudDashboard() {
                     <div className="mt-2 text-sm leading-6 text-slate-200/76">
                       {workspaceSummary?.top_level?.length ? workspaceSummary.top_level.join(' · ') : 'Loading workspace layout...'}
                     </div>
+                  </div>
+                </div>
+
+                <div className="mt-4 rounded-[1.15rem] border border-cyan-400/10 bg-slate-950/55 p-4">
+                  <div className="mb-2 text-[10px] uppercase tracking-[0.35em] text-cyan-300/55">
+                    Code Editor
+                  </div>
+                  <div className="grid gap-3">
+                    <input
+                      value={editorFilePath}
+                      onChange={(event) => setEditorFilePath(event.target.value)}
+                      placeholder="Relative file path inside the active repo"
+                      className="rounded-[0.9rem] border border-cyan-400/10 bg-slate-950/70 px-4 py-3 text-sm text-slate-100 outline-none placeholder:text-slate-500"
+                    />
+                    <textarea
+                      value={editorContent}
+                      onChange={(event) => setEditorContent(event.target.value)}
+                      rows={12}
+                      placeholder="Load a file from Repo State, then edit it here."
+                      className="rounded-[0.9rem] border border-cyan-400/10 bg-slate-950/70 px-4 py-3 font-mono text-sm text-slate-100 outline-none placeholder:text-slate-500"
+                    />
+                    <div className="grid gap-3 md:grid-cols-[1fr_1fr_180px]">
+                      <button
+                        onClick={() => editorFilePath && openFileInEditor(editorFilePath)}
+                        disabled={editorBusy !== null || !editorFilePath.trim()}
+                        className="rounded-[0.9rem] border border-cyan-400/12 bg-slate-950/70 px-4 py-3 text-xs uppercase tracking-[0.24em] text-cyan-100 transition hover:bg-cyan-400/[0.08] disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        {editorBusy === 'load' ? 'Loading' : 'Reload File'}
+                      </button>
+                      <button
+                        onClick={() => {
+                          setEditorContent(editorOriginalContent);
+                          setEditorNotice('Editor reset to the last loaded file state.');
+                        }}
+                        disabled={editorBusy !== null || !editorFilePath.trim()}
+                        className="rounded-[0.9rem] border border-cyan-400/12 bg-slate-950/70 px-4 py-3 text-xs uppercase tracking-[0.24em] text-cyan-100 transition hover:bg-cyan-400/[0.08] disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        Reset Draft
+                      </button>
+                      <button
+                        onClick={handleStageCodeEdit}
+                        disabled={editorBusy !== null || !editorFilePath.trim()}
+                        className="rounded-[0.9rem] border border-cyan-300/20 bg-cyan-400/[0.08] px-4 py-3 text-xs uppercase tracking-[0.28em] text-cyan-100 transition hover:bg-cyan-400/[0.14] disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        {editorBusy === 'stage' ? 'Staging' : 'Stage Diff'}
+                      </button>
+                    </div>
+                    {pendingCodeEdit ? (
+                      <div className="rounded-[0.95rem] border border-cyan-400/10 bg-black/20 px-3 py-3">
+                        <div className="text-[10px] uppercase tracking-[0.22em] text-cyan-300/55">Staged Diff</div>
+                        <pre className="mt-2 max-h-56 overflow-auto whitespace-pre-wrap break-words font-mono text-xs leading-6 text-slate-200/76">
+                          {pendingCodeEdit.diff}
+                        </pre>
+                      </div>
+                    ) : null}
                   </div>
                 </div>
 
@@ -2519,6 +3642,12 @@ export default function JarvisHudDashboard() {
                                 Open
                               </button>
                               <button
+                                onClick={() => openFileInEditor(item.filePath)}
+                                className="rounded-[0.8rem] border border-cyan-400/12 bg-slate-950/70 px-2 py-2 text-[10px] uppercase tracking-[0.18em] text-cyan-100 transition hover:bg-cyan-400/[0.08]"
+                              >
+                                Edit
+                              </button>
+                              <button
                                 onClick={() => markReviewQueueStatus(item.filePath, item.status === 'done' ? 'pending' : 'done')}
                                 className="rounded-[0.8rem] border border-cyan-400/12 bg-slate-950/70 px-2 py-2 text-[10px] uppercase tracking-[0.18em] text-cyan-100 transition hover:bg-cyan-400/[0.08]"
                               >
@@ -2532,6 +3661,49 @@ export default function JarvisHudDashboard() {
                   ) : (
                     <div className="text-sm leading-6 text-slate-200/76">
                       No changed files in queue right now.
+                    </div>
+                  )}
+                </div>
+
+                <div className="mt-4 rounded-[1.15rem] border border-cyan-400/10 bg-slate-950/55 p-4">
+                  <div className="mb-2 text-[10px] uppercase tracking-[0.35em] text-cyan-300/55">
+                    Coding Tasks
+                  </div>
+                  {codingTasks.length ? (
+                    <div className="space-y-2">
+                      {codingTasks.slice(0, 8).map((task) => (
+                        <div
+                          key={task.id}
+                          className="rounded-[0.95rem] border border-cyan-400/10 bg-black/20 px-3 py-3"
+                        >
+                          <div className="flex items-start justify-between gap-3">
+                            <div>
+                              <div className="text-sm text-cyan-50/92">{task.title}</div>
+                              <div className="mt-1 text-[10px] uppercase tracking-[0.22em] text-cyan-300/55">
+                                {task.status === 'done' ? 'done' : task.status === 'in_progress' ? 'in progress' : 'pending'} · {task.filePath}
+                              </div>
+                            </div>
+                            <div className="flex gap-2">
+                              <button
+                                onClick={() => loadFileCodingPrompt(task.filePath, task.mode === 'fix' ? 'debug' : task.mode)}
+                                className="rounded-[0.8rem] border border-cyan-400/12 bg-cyan-400/[0.08] px-2 py-2 text-[10px] uppercase tracking-[0.18em] text-cyan-100 transition hover:bg-cyan-400/[0.14]"
+                              >
+                                Open
+                              </button>
+                              <button
+                                onClick={() => updateCodingTaskStatus(task.id, task.status === 'done' ? 'pending' : 'done')}
+                                className="rounded-[0.8rem] border border-cyan-400/12 bg-slate-950/70 px-2 py-2 text-[10px] uppercase tracking-[0.18em] text-cyan-100 transition hover:bg-cyan-400/[0.08]"
+                              >
+                                {task.status === 'done' ? 'Reopen' : 'Done'}
+                              </button>
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="text-sm leading-6 text-slate-200/76">
+                      No coding tasks yet. Add one from a changed file with Review, Debug, Inspect, or Edit.
                     </div>
                   )}
                 </div>
@@ -2596,6 +3768,8 @@ export default function JarvisHudDashboard() {
                     ? `${latestAutomationLog.success ? 'ok' : 'error'} · routine ${latestAutomationLog.routine_id}`
                     : latestActionResult
                     ? `${latestActionResult.status} · ${latestActionResult.title}`
+                    : latestCodeResult
+                    ? `${latestCodeResult.status} · ${latestCodeResult.file_path}`
                     : latestWorkbenchResult
                     ? `${latestWorkbenchResult.status} · ${latestWorkbenchResult.command}`
                     : 'No operator output yet'}
@@ -2604,6 +3778,7 @@ export default function JarvisHudDashboard() {
                   {latestAutomationLog?.result ||
                     latestAutomationLog?.error ||
                     latestActionResult?.result ||
+                    latestCodeResult?.diff ||
                     latestWorkbenchResult?.output ||
                     'Stage an action or a safe terminal command and approve it from the gate to see output here.'}
                 </pre>

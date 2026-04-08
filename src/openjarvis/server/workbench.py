@@ -55,6 +55,9 @@ class WorkbenchManager:
             "default_working_dir": self._default_working_dir,
         }
 
+    def set_default_working_dir(self, working_dir: str) -> None:
+        self._default_working_dir = str(Path(working_dir).resolve())
+
     def stage(self, *, command: str, working_dir: str | None = None, timeout: int = 30) -> dict:
         cleaned = command.strip()
         if not cleaned:

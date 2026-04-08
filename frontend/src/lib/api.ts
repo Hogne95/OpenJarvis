@@ -320,6 +320,41 @@ export interface WorkbenchStatus {
   result?: WorkbenchEntry;
 }
 
+export interface PendingCodeEdit {
+  id: string;
+  repo_root: string;
+  file_path: string;
+  original_content: string;
+  updated_content: string;
+  diff: string;
+  created_at: number;
+  status: string;
+  line_count: number;
+}
+
+export interface CodeEditEntry {
+  id: string;
+  repo_root: string;
+  file_path: string;
+  diff: string;
+  created_at: number;
+  completed_at: number;
+  status: string;
+  result: string;
+}
+
+export interface CodingWorkspaceStatus {
+  pending: PendingCodeEdit | null;
+  history: CodeEditEntry[];
+  result?: CodeEditEntry;
+}
+
+export interface CodingFileContents {
+  repo_root: string;
+  file_path: string;
+  content: string;
+}
+
 export interface ActionCenterEntry {
   id: string;
   action_type: string;
@@ -416,6 +451,33 @@ export interface WorkspaceSummary {
   changed_count: number;
   changed_files: string[];
   top_level: string[];
+  remote_url?: string;
+  active_root?: string;
+}
+
+export interface WorkspaceRepoEntry {
+  root: string;
+  name: string;
+  branch: string;
+  remote_url: string;
+  last_selected_at: number;
+}
+
+export interface WorkspaceRepoCatalog {
+  active_root: string;
+  repos: WorkspaceRepoEntry[];
+}
+
+export interface WorkspaceCommandSuggestion {
+  label: string;
+  command: string;
+  kind: string;
+}
+
+export interface WorkspaceChecks {
+  root: string;
+  checks: WorkspaceCommandSuggestion[];
+  git_actions: WorkspaceCommandSuggestion[];
 }
 
 export interface DurableOperatorProfile {
@@ -437,6 +499,12 @@ export interface DurableOperatorSignals {
 export interface DurableOperatorMemory {
   profile: DurableOperatorProfile;
   signals: DurableOperatorSignals;
+  explicit_memories?: Array<{
+    id: string;
+    content: string;
+    created_at: string;
+    tags: string[];
+  }>;
   relationships: Record<
     string,
     {
@@ -468,6 +536,42 @@ export interface DurableOperatorMemory {
       notes: string;
     }
   >;
+}
+
+export interface JarvisIntent {
+  type: string;
+  action: string;
+  target: string;
+  query: string;
+  content: string;
+  command: string;
+  requires_approval: boolean;
+  risk: 'low' | 'medium' | 'high';
+  client_action?: string;
+}
+
+export interface JarvisIntentExecution {
+  intent: JarvisIntent;
+  status: 'completed' | 'staged' | 'unsupported' | 'client_action_required';
+  message: string;
+  result: {
+    content?: string;
+    metadata?: Record<string, unknown>;
+    items?: Array<{
+      content: string;
+      score: number;
+      metadata: Record<string, unknown>;
+    }>;
+    sources?: Array<{
+      title: string;
+      url: string;
+      snippet: string;
+    }>;
+    pending?: PendingWorkbenchCommand | null;
+    history?: WorkbenchEntry[];
+    default_working_dir?: string;
+    client_action?: string;
+  };
 }
 
 export interface ReminderItem {
@@ -719,6 +823,60 @@ export async function holdWorkbenchCommand(): Promise<WorkbenchStatus> {
   return res.json();
 }
 
+export async function fetchCodingStatus(): Promise<CodingWorkspaceStatus> {
+  const res = await fetch(`${getBase()}/v1/coding/status`);
+  if (!res.ok) throw new Error(`Coding status failed: ${res.status}`);
+  return res.json();
+}
+
+export async function readCodingFile(repo_root: string, file_path: string): Promise<CodingFileContents> {
+  const res = await fetch(`${getBase()}/v1/coding/read-file`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ repo_root, file_path }),
+  });
+  if (!res.ok) {
+    const detail = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(detail.detail || `Read file failed: ${res.status}`);
+  }
+  return res.json();
+}
+
+export async function stageCodeEdit(body: {
+  repo_root: string;
+  file_path: string;
+  updated_content: string;
+}): Promise<CodingWorkspaceStatus> {
+  const res = await fetch(`${getBase()}/v1/coding/stage-edit`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const detail = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(detail.detail || `Stage code edit failed: ${res.status}`);
+  }
+  return res.json();
+}
+
+export async function approveCodeEdit(): Promise<CodingWorkspaceStatus> {
+  const res = await fetch(`${getBase()}/v1/coding/approve`, { method: 'POST' });
+  if (!res.ok) {
+    const detail = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(detail.detail || `Approve code edit failed: ${res.status}`);
+  }
+  return res.json();
+}
+
+export async function holdCodeEdit(): Promise<CodingWorkspaceStatus> {
+  const res = await fetch(`${getBase()}/v1/coding/hold`, { method: 'POST' });
+  if (!res.ok) {
+    const detail = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(detail.detail || `Hold code edit failed: ${res.status}`);
+  }
+  return res.json();
+}
+
 export async function fetchActionCenterStatus(): Promise<ActionCenterStatus> {
   const res = await fetch(`${getBase()}/v1/action-center/status`);
   if (!res.ok) throw new Error(`Action center status failed: ${res.status}`);
@@ -929,6 +1087,72 @@ export async function fetchWorkspaceSummary(): Promise<WorkspaceSummary> {
   return res.json();
 }
 
+export async function fetchWorkspaceRepos(): Promise<WorkspaceRepoCatalog> {
+  const res = await fetch(`${getBase()}/v1/workspace/repos`);
+  if (!res.ok) {
+    const detail = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(detail.detail || `Workspace repos fetch failed: ${res.status}`);
+  }
+  return res.json();
+}
+
+export async function registerWorkspaceRepo(path: string): Promise<WorkspaceRepoCatalog> {
+  const res = await fetch(`${getBase()}/v1/workspace/repos/register`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ path }),
+  });
+  if (!res.ok) {
+    const detail = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(detail.detail || `Workspace repo register failed: ${res.status}`);
+  }
+  return res.json();
+}
+
+export async function selectWorkspaceRepo(root: string): Promise<WorkspaceRepoCatalog> {
+  const res = await fetch(`${getBase()}/v1/workspace/repos/select`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ root }),
+  });
+  if (!res.ok) {
+    const detail = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(detail.detail || `Workspace repo select failed: ${res.status}`);
+  }
+  return res.json();
+}
+
+export async function fetchWorkspaceChecks(): Promise<WorkspaceChecks> {
+  const res = await fetch(`${getBase()}/v1/workspace/checks`);
+  if (!res.ok) {
+    const detail = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(detail.detail || `Workspace checks fetch failed: ${res.status}`);
+  }
+  return res.json();
+}
+
+export async function prepareWorkspaceCommit(message: string): Promise<{ root: string; command: string }> {
+  const res = await fetch(`${getBase()}/v1/workspace/git/prepare-commit`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ message }),
+  });
+  if (!res.ok) {
+    const detail = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(detail.detail || `Prepare commit failed: ${res.status}`);
+  }
+  return res.json();
+}
+
+export async function prepareWorkspacePush(): Promise<{ root: string; command: string }> {
+  const res = await fetch(`${getBase()}/v1/workspace/git/prepare-push`);
+  if (!res.ok) {
+    const detail = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(detail.detail || `Prepare push failed: ${res.status}`);
+  }
+  return res.json();
+}
+
 export async function fetchOperatorMemory(): Promise<DurableOperatorMemory> {
   const res = await fetch(`${getBase()}/v1/operator-memory`);
   if (!res.ok) {
@@ -1033,6 +1257,33 @@ export async function fetchReminders(limit: number = 8): Promise<ReminderItem[]>
   }
   const data = await res.json();
   return data.items || [];
+}
+
+export async function parseJarvisIntent(text: string): Promise<JarvisIntent> {
+  const res = await fetch(`${getBase()}/v1/jarvis/intent`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ text }),
+  });
+  if (!res.ok) {
+    const detail = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(detail.detail || `Intent parsing failed: ${res.status}`);
+  }
+  const data = await res.json();
+  return data.intent;
+}
+
+export async function executeJarvisIntent(text: string): Promise<JarvisIntentExecution> {
+  const res = await fetch(`${getBase()}/v1/jarvis/intent/execute`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ text }),
+  });
+  if (!res.ok) {
+    const detail = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(detail.detail || `Intent execution failed: ${res.status}`);
+  }
+  return res.json();
 }
 
 // ---------------------------------------------------------------------------

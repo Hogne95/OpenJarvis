@@ -62,6 +62,10 @@ OpenJarvis is that stack. It is an opinionated framework for local-first persona
 
     !!! warning "macOS: run `xattr -cr /Applications/OpenJarvis.app` if the app shows as \"damaged\"."
 
+    !!! note "Windows local builds"
+        If local Tauri builds fail with `os error 4551`, use the repo diagnostics and see the
+        [Windows desktop unblock guide](deployment/windows-desktop-unblock.md).
+
 === "Python SDK"
 
     ```python
@@ -169,7 +173,7 @@ OpenJarvis is built around five composable layers. Each has a clean interface an
 
     ---
 
-    CLI, Python SDK, and guides for [Morning Digest](user-guide/morning-digest.md), [Deep Research](user-guide/deep-research.md), [Code Assistant](user-guide/code-assistant.md), [Scheduled Monitor](user-guide/scheduled-monitor.md), [Simple Chat](user-guide/chat-simple.md), agents, memory, tools, and telemetry.
+    CLI, Python SDK, and guides for [JARVIS Operator](user-guide/jarvis-operator.md), [Morning Digest](user-guide/morning-digest.md), [Deep Research](user-guide/deep-research.md), [Code Assistant](user-guide/code-assistant.md), [Scheduled Monitor](user-guide/scheduled-monitor.md), [Simple Chat](user-guide/chat-simple.md), agents, memory, tools, and telemetry.
 
 -   **[Architecture](architecture/overview.md)**
 

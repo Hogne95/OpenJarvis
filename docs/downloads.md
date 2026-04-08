@@ -77,6 +77,30 @@ npm run tauri build
 
 The built installer will be in `desktop/src-tauri/target/release/bundle/`.
 
+### Windows source-build troubleshooting
+
+If local Windows builds fail with `os error 4551`, check the repo diagnostics before changing the app:
+
+```powershell
+cd C:\Users\hogne\OpenJarvis
+.\check_openjarvis_desktop.ps1
+.\check_openjarvis_desktop_policy.ps1
+.\collect_openjarvis_desktop_report.ps1
+```
+
+These scripts verify:
+
+- Node, npm, cargo, rustc, and WebView2
+- frontend dependency shims
+- WDAC / Smart App Control / Code Integrity signals
+- whether Windows policy is blocking Rust build helpers
+
+The combined output is saved to `desktop-readiness-report.txt`. See [deployment/windows-desktop-unblock.md](deployment/windows-desktop-unblock.md) for the full guide.
+
+!!! tip "Working fallback"
+    If Windows policy blocks native Tauri development, the web HUD remains the supported local fallback:
+    run `uv run jarvis serve --port 8000`, then `cd frontend && npm run dev`, and open `http://localhost:5173`.
+
 ---
 
 ## Browser App

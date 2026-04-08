@@ -13,6 +13,27 @@ cargo tauri dev    # Hot-reload development mode
 cargo tauri build  # Production build
 ```
 
+### Windows policy note
+
+If Windows Tauri builds fail with `os error 4551`, the usual root cause is not missing desktop code. It is often Windows code-execution policy blocking generated Rust build helpers under `src-tauri/target/debug/build`.
+
+Use the repo-root diagnostics before changing app code:
+
+```powershell
+cd C:\Users\hogne\OpenJarvis
+.\check_openjarvis_desktop.ps1
+.\check_openjarvis_desktop_policy.ps1
+.\collect_openjarvis_desktop_report.ps1
+```
+
+The combined report is written to:
+
+```text
+C:\Users\hogne\OpenJarvis\desktop-readiness-report.txt
+```
+
+See [../docs/deployment/windows-desktop-unblock.md](../docs/deployment/windows-desktop-unblock.md) for the current unblock workflow.
+
 ### Linux System Dependencies
 
 ```bash

@@ -56,6 +56,14 @@ class ProjectMemory:
     notes: str = ""
 
 
+@dataclass(slots=True)
+class ExplicitMemory:
+    id: str
+    content: str
+    created_at: str = ""
+    tags: list[str] = field(default_factory=list)
+
+
 class OperatorMemory:
     """Simple JSON-backed operator memory for cross-session HUD personalization."""
 
@@ -67,6 +75,7 @@ class OperatorMemory:
         self._relationships: dict[str, ContactMemory] = {}
         self._meetings: dict[str, MeetingMemory] = {}
         self._projects: dict[str, ProjectMemory] = {}
+        self._explicit_memories: list[ExplicitMemory] = []
         self._load()
 
     def _load(self) -> None:
@@ -126,6 +135,17 @@ class OperatorMemory:
             )
             for key, value in projects.items()
         }
+        explicit_memories = data.get("explicit_memories", [])
+        self._explicit_memories = [
+            ExplicitMemory(
+                id=str(value.get("id", "")),
+                content=str(value.get("content", "")),
+                created_at=str(value.get("created_at", "")),
+                tags=[str(tag).strip().lower() for tag in value.get("tags", []) if str(tag).strip()],
+            )
+            for value in explicit_memories
+            if str(value.get("content", "")).strip()
+        ]
 
     def _save(self) -> None:
         payload = {
@@ -134,6 +154,7 @@ class OperatorMemory:
             "relationships": {key: asdict(value) for key, value in self._relationships.items()},
             "meetings": {key: asdict(value) for key, value in self._meetings.items()},
             "projects": {key: asdict(value) for key, value in self._projects.items()},
+            "explicit_memories": [asdict(value) for value in self._explicit_memories],
         }
         self._path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
 
@@ -144,6 +165,7 @@ class OperatorMemory:
             "relationships": {key: asdict(value) for key, value in self._relationships.items()},
             "meetings": {key: asdict(value) for key, value in self._meetings.items()},
             "projects": {key: asdict(value) for key, value in self._projects.items()},
+            "explicit_memories": [asdict(value) for value in self._explicit_memories],
         }
 
     def update_profile(self, partial: dict[str, Any]) -> dict[str, Any]:
@@ -238,6 +260,60 @@ class OperatorMemory:
 
         self._save()
         return self.snapshot()
+
+    def add_explicit_memory(self, content: str, *, tags: list[str] | None = None, created_at: str = "") -> dict[str, Any]:
+        cleaned = content.strip()
+        if not cleaned:
+            raise ValueError("Memory content is required")
+        memory_id = cleaned.lower()
+        self._explicit_memories = [
+            item for item in self._explicit_memories if item.id != memory_id and item.content.strip().lower() != cleaned.lower()
+        ]
+        self._explicit_memories.insert(
+            0,
+            ExplicitMemory(
+                id=memory_id,
+                content=cleaned,
+                created_at=created_at,
+                tags=[tag.strip().lower() for tag in (tags or []) if tag.strip()],
+            ),
+        )
+        self._explicit_memories = self._explicit_memories[:100]
+        self._save()
+        return self.snapshot()
+
+    def search_explicit_memories(self, query: str, *, limit: int = 5) -> list[dict[str, Any]]:
+        cleaned = query.strip().lower()
+        items = self._explicit_memories
+        if not cleaned:
+            items = items[:limit]
+        else:
+            ranked = []
+            for item in items:
+                haystack = f"{item.content} {' '.join(item.tags)}".lower()
+                if cleaned in haystack:
+                    score = 1.0
+                else:
+                    overlap = len(set(cleaned.split()) & set(haystack.split()))
+                    score = overlap / max(len(set(cleaned.split())), 1)
+                if score > 0:
+                    ranked.append((score, item))
+            items = [item for _, item in sorted(ranked, key=lambda pair: pair[0], reverse=True)[:limit]]
+        return [asdict(item) for item in items]
+
+    def delete_explicit_memory(self, query: str) -> dict[str, Any]:
+        cleaned = query.strip().lower()
+        if not cleaned:
+            raise ValueError("Memory query is required")
+        original_len = len(self._explicit_memories)
+        self._explicit_memories = [
+            item
+            for item in self._explicit_memories
+            if cleaned not in item.content.lower() and cleaned != item.id
+        ]
+        deleted = original_len - len(self._explicit_memories)
+        self._save()
+        return {"deleted": deleted, "snapshot": self.snapshot()}
 
 
 __all__ = ["OperatorMemory"]

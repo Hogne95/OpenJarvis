@@ -105,6 +105,29 @@ class WorkbenchStageRequest(BaseModel):
     timeout: int = 30
 
 
+class WorkspaceRepoRegisterRequest(BaseModel):
+    path: str
+
+
+class WorkspaceRepoSelectRequest(BaseModel):
+    root: str
+
+
+class WorkspaceGitActionRequest(BaseModel):
+    message: Optional[str] = None
+
+
+class CodingReadFileRequest(BaseModel):
+    repo_root: str
+    file_path: str
+
+
+class CodingStageEditRequest(BaseModel):
+    repo_root: str
+    file_path: str
+    updated_content: str
+
+
 class ActionEmailDraftRequest(BaseModel):
     recipient: str
     subject: str
@@ -794,6 +817,7 @@ action_center_router = APIRouter(prefix="/v1/action-center", tags=["action-cente
 operator_memory_router = APIRouter(prefix="/v1/operator-memory", tags=["operator-memory"])
 automation_router = APIRouter(prefix="/v1/automation", tags=["automation"])
 workspace_router = APIRouter(prefix="/v1/workspace", tags=["workspace"])
+coding_router = APIRouter(prefix="/v1/coding", tags=["coding"])
 
 
 @speech_router.post("/transcribe")
@@ -1520,13 +1544,20 @@ async def automation_schedule_routine(req: RoutineScheduleRequest, request: Requ
 
 
 @workspace_router.get("/summary")
-async def workspace_summary():
-    root = Path(__file__).resolve().parents[3]
+async def workspace_summary(request: Request, root: Optional[str] = None):
+    registry = getattr(request.app.state, "workspace_registry", None)
+    if registry is not None:
+        try:
+            return registry.summary(root)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+
+    root_path = Path(root).expanduser().resolve() if root else Path(__file__).resolve().parents[3]
 
     def run_git(*args: str) -> str:
         result = subprocess.run(
             ["git", *args],
-            cwd=root,
+            cwd=root_path,
             capture_output=True,
             text=True,
             check=False,
@@ -1539,17 +1570,200 @@ async def workspace_summary():
     changed_files = [line.strip() for line in run_git("status", "--short").splitlines() if line.strip()]
     top_level = sorted(
         item.name
-        for item in root.iterdir()
+        for item in root_path.iterdir()
         if item.is_dir() and not item.name.startswith(".")
     )[:12]
     return {
-        "root": str(root),
+        "root": str(root_path),
         "branch": branch,
         "dirty": bool(changed_files),
         "changed_count": len(changed_files),
         "changed_files": changed_files[:8],
         "top_level": top_level,
+        "remote_url": run_git("config", "--get", "remote.origin.url"),
+        "active_root": str(root_path),
     }
+
+
+@workspace_router.get("/repos")
+async def workspace_repos(request: Request):
+    registry = getattr(request.app.state, "workspace_registry", None)
+    if registry is None:
+        root = str(Path(__file__).resolve().parents[3])
+        return {"active_root": root, "repos": []}
+    return registry.list()
+
+
+@workspace_router.post("/repos/register")
+async def workspace_register_repo(req: WorkspaceRepoRegisterRequest, request: Request):
+    registry = getattr(request.app.state, "workspace_registry", None)
+    if registry is None:
+        raise HTTPException(status_code=503, detail="Workspace registry not configured")
+    workbench = getattr(request.app.state, "workbench", None)
+    try:
+        entry = registry.register(req.path)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    if workbench is not None:
+        workbench.set_default_working_dir(entry["root"])
+    return registry.list()
+
+
+@workspace_router.post("/repos/select")
+async def workspace_select_repo(req: WorkspaceRepoSelectRequest, request: Request):
+    registry = getattr(request.app.state, "workspace_registry", None)
+    if registry is None:
+        raise HTTPException(status_code=503, detail="Workspace registry not configured")
+    workbench = getattr(request.app.state, "workbench", None)
+    try:
+        entry = registry.select(req.root)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    if workbench is not None:
+        workbench.set_default_working_dir(entry["root"])
+    return registry.list()
+
+
+@workspace_router.get("/checks")
+async def workspace_checks(request: Request, root: Optional[str] = None):
+    registry = getattr(request.app.state, "workspace_registry", None)
+    try:
+        summary = registry.summary(root) if registry is not None else await workspace_summary(request, root)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    repo_root = Path(summary["root"])
+    checks: list[dict[str, str]] = []
+    git_actions: list[dict[str, str]] = []
+
+    if (repo_root / "pyproject.toml").exists():
+        checks.extend(
+            [
+                {"label": "Pytest", "command": "python -m pytest tests -q", "kind": "test"},
+                {"label": "Ruff", "command": "python -m ruff check src tests", "kind": "lint"},
+            ]
+        )
+
+    package_json = repo_root / "package.json"
+    if package_json.exists():
+        try:
+            package = json.loads(package_json.read_text(encoding="utf-8"))
+            scripts = package.get("scripts", {})
+        except Exception:
+            scripts = {}
+        if isinstance(scripts, dict):
+            if "test" in scripts:
+                checks.append({"label": "npm test", "command": "npm test", "kind": "test"})
+            if "build" in scripts:
+                checks.append({"label": "npm build", "command": "npm run build", "kind": "typecheck"})
+            if "lint" in scripts:
+                checks.append({"label": "npm lint", "command": "npm run lint", "kind": "lint"})
+
+    if (repo_root / "Cargo.toml").exists():
+        checks.extend(
+            [
+                {"label": "cargo test", "command": "cargo test", "kind": "test"},
+                {"label": "cargo check", "command": "cargo check", "kind": "typecheck"},
+            ]
+        )
+
+    changed_files = summary.get("changed_files") or []
+    git_actions.append({"label": "Git Status", "command": "git status --short", "kind": "status"})
+    if changed_files:
+        git_actions.append({"label": "Stage All", "command": "git add -A", "kind": "stage"})
+        git_actions.append({"label": "Diff Cached", "command": "git diff --cached", "kind": "diff"})
+
+    return {
+        "root": summary["root"],
+        "checks": checks,
+        "git_actions": git_actions,
+    }
+
+
+@workspace_router.post("/git/prepare-commit")
+async def workspace_prepare_commit(req: WorkspaceGitActionRequest, request: Request, root: Optional[str] = None):
+    registry = getattr(request.app.state, "workspace_registry", None)
+    try:
+        summary = registry.summary(root) if registry is not None else await workspace_summary(request, root)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    message = (req.message or "").strip()
+    if not message:
+        raise HTTPException(status_code=400, detail="Commit message is required")
+
+    return {
+        "root": summary["root"],
+        "command": f'git commit -m "{message.replace(chr(34), chr(39))}"',
+    }
+
+
+@workspace_router.get("/git/prepare-push")
+async def workspace_prepare_push(request: Request, root: Optional[str] = None):
+    registry = getattr(request.app.state, "workspace_registry", None)
+    try:
+        summary = registry.summary(root) if registry is not None else await workspace_summary(request, root)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    branch = summary.get("branch") or "HEAD"
+    return {
+        "root": summary["root"],
+        "command": f"git push origin {branch}",
+    }
+
+
+@coding_router.get("/status")
+async def coding_status(request: Request):
+    manager = getattr(request.app.state, "coding_workspace", None)
+    if manager is None:
+        raise HTTPException(status_code=503, detail="Coding workspace not configured")
+    return manager.status()
+
+
+@coding_router.post("/read-file")
+async def coding_read_file(req: CodingReadFileRequest, request: Request):
+    manager = getattr(request.app.state, "coding_workspace", None)
+    if manager is None:
+        raise HTTPException(status_code=503, detail="Coding workspace not configured")
+    try:
+        return manager.read_file(repo_root=req.repo_root, file_path=req.file_path)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@coding_router.post("/stage-edit")
+async def coding_stage_edit(req: CodingStageEditRequest, request: Request):
+    manager = getattr(request.app.state, "coding_workspace", None)
+    if manager is None:
+        raise HTTPException(status_code=503, detail="Coding workspace not configured")
+    try:
+        return manager.stage_edit(
+            repo_root=req.repo_root,
+            file_path=req.file_path,
+            updated_content=req.updated_content,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@coding_router.post("/approve")
+async def coding_approve(request: Request):
+    manager = getattr(request.app.state, "coding_workspace", None)
+    if manager is None:
+        raise HTTPException(status_code=503, detail="Coding workspace not configured")
+    try:
+        return manager.approve()
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@coding_router.post("/hold")
+async def coding_hold(request: Request):
+    manager = getattr(request.app.state, "coding_workspace", None)
+    if manager is None:
+        raise HTTPException(status_code=503, detail="Coding workspace not configured")
+    return manager.hold()
 
 
 # ---- Feedback routes ----
@@ -1669,6 +1883,7 @@ def include_all_routes(app) -> None:
     app.include_router(operator_memory_router)
     app.include_router(automation_router)
     app.include_router(workspace_router)
+    app.include_router(coding_router)
     app.include_router(feedback_router)
     app.include_router(optimize_router)
 
@@ -1724,6 +1939,7 @@ __all__ = [
     "operator_memory_router",
     "automation_router",
     "workspace_router",
+    "coding_router",
     "feedback_router",
     "optimize_router",
 ]

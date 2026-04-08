@@ -12,11 +12,14 @@ from fastapi.staticfiles import StaticFiles
 
 from openjarvis.server.api_routes import include_all_routes
 from openjarvis.server.action_center import ActionCenterManager
+from openjarvis.server.coding_workspace import CodingWorkspaceManager
 from openjarvis.server.comparison import comparison_router
 from openjarvis.server.connectors_router import create_connectors_router
 from openjarvis.server.dashboard import dashboard_router
 from openjarvis.server.digest_routes import create_digest_router
+from openjarvis.server.jarvis_intent import create_jarvis_intent_router
 from openjarvis.server.operator_memory import OperatorMemory
+from openjarvis.server.repo_registry import RepoRegistry
 from openjarvis.server.routes import router
 from openjarvis.server.upload_router import router as upload_router
 from openjarvis.server.voice_loop import VoiceLoopManager
@@ -233,7 +236,15 @@ def create_app(
         wake_model_path=getattr(speech_cfg, "wake_model_path", ""),
         wake_threshold=getattr(speech_cfg, "wake_threshold", 0.5),
     )
-    app.state.workbench = WorkbenchManager(default_working_dir=str(pathlib.Path.cwd()))
+    from openjarvis.core.config import DEFAULT_CONFIG_DIR
+
+    repo_registry = RepoRegistry(
+        storage_path=DEFAULT_CONFIG_DIR / "workspace_repos.json",
+        default_root=str(pathlib.Path.cwd()),
+    )
+    app.state.workspace_registry = repo_registry
+    app.state.workbench = WorkbenchManager(default_working_dir=repo_registry.active_root())
+    app.state.coding_workspace = CodingWorkspaceManager()
     app.state.action_center = ActionCenterManager()
     app.state.operator_memory = OperatorMemory()
     app.state.agent_manager = agent_manager
@@ -263,6 +274,7 @@ def create_app(
     app.include_router(comparison_router)
     app.include_router(create_connectors_router())
     app.include_router(create_digest_router())
+    app.include_router(create_jarvis_intent_router())
     app.include_router(upload_router)
     include_all_routes(app)
 
