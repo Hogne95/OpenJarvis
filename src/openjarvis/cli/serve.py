@@ -397,6 +397,40 @@ def serve(
         except Exception as exc:
             logger.debug("Memory backend init failed: %s", exc)
 
+    # Set up general task scheduler for server-side routines
+    task_scheduler = None
+    task_scheduler_store = None
+    if config.scheduler.enabled:
+        try:
+            from pathlib import Path
+
+            from openjarvis.scheduler.scheduler import TaskScheduler
+            from openjarvis.scheduler.store import SchedulerStore
+            from openjarvis.system import SystemBuilder
+
+            scheduler_db = config.scheduler.db_path or str(
+                Path("~/.openjarvis/scheduler.db").expanduser()
+            )
+            task_scheduler_store = SchedulerStore(scheduler_db)
+            scheduler_system = SystemBuilder(config).build()
+            task_scheduler = TaskScheduler(
+                task_scheduler_store,
+                system=scheduler_system,
+                poll_interval=config.scheduler.poll_interval,
+                bus=bus,
+            )
+            task_scheduler.start()
+            console.print("  TaskScheduler: [cyan]active[/cyan]")
+        except Exception as exc:
+            logger.debug("General task scheduler init failed: %s", exc)
+            task_scheduler = None
+            if task_scheduler_store is not None:
+                try:
+                    task_scheduler_store.close()
+                except Exception:
+                    pass
+                task_scheduler_store = None
+
     # --- Channel Gateway: API key, sessions, ChannelBridge ---
     import os as _os
 
@@ -473,6 +507,8 @@ def serve(
         speech_backend=speech_backend,
         agent_manager=agent_manager,
         agent_scheduler=agent_scheduler,
+        task_scheduler=task_scheduler,
+        task_scheduler_store=task_scheduler_store,
         api_key=api_key,
         webhook_config=webhook_config,
         cors_origins=config.server.cors_origins,

@@ -78,6 +78,8 @@ export interface OperatorProfile {
   workdayEnd: string;
   prepLeadMinutes: number;
   autoPrepareMeetings: boolean;
+  autoTriageInbox: boolean;
+  inboxFocusCount: number;
 }
 
 export interface OperatorSignals {
@@ -121,6 +123,8 @@ function loadOperatorProfile(): OperatorProfile {
     workdayEnd: '17:00',
     prepLeadMinutes: 90,
     autoPrepareMeetings: true,
+    autoTriageInbox: true,
+    inboxFocusCount: 3,
   };
   try {
     const raw = localStorage.getItem(PROFILE_KEY);

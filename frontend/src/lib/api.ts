@@ -385,6 +385,30 @@ export interface DigestSchedule {
   cron: string;
 }
 
+export interface AutomationRoutineStatus {
+  routine_id: 'daily_ops' | 'inbox_sweep' | 'meeting_prep';
+  status: string;
+  next_run: string | null;
+  last_run: string | null;
+  cron: string;
+  agent: string;
+}
+
+export interface AutomationStatus {
+  available: boolean;
+  items: AutomationRoutineStatus[];
+}
+
+export interface AutomationLogEntry {
+  routine_id: 'daily_ops' | 'inbox_sweep' | 'meeting_prep';
+  task_id: string;
+  started_at: string;
+  finished_at: string | null;
+  success: boolean;
+  result: string;
+  error: string;
+}
+
 export interface DurableOperatorProfile {
   honorific: string;
   reply_tone: string;
@@ -833,6 +857,45 @@ export async function updateDigestSchedule(body: DigestSchedule): Promise<Digest
   if (!res.ok) {
     const detail = await res.json().catch(() => ({ detail: res.statusText }));
     throw new Error(detail.detail || `Digest schedule update failed: ${res.status}`);
+  }
+  return res.json();
+}
+
+export async function fetchAutomationStatus(): Promise<AutomationStatus> {
+  const res = await fetch(`${getBase()}/v1/automation/status`);
+  if (!res.ok) {
+    const detail = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(detail.detail || `Automation status fetch failed: ${res.status}`);
+  }
+  return res.json();
+}
+
+export async function updateAutomationRoutine(body: {
+  routine_id: 'daily_ops' | 'inbox_sweep' | 'meeting_prep';
+  enabled: boolean;
+  cron?: string;
+  agent?: string;
+}): Promise<AutomationStatus> {
+  const res = await fetch(`${getBase()}/v1/automation/routine`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const detail = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(detail.detail || `Automation routine update failed: ${res.status}`);
+  }
+  return res.json();
+}
+
+export async function fetchAutomationLogs(limit: number = 12): Promise<{
+  available: boolean;
+  items: AutomationLogEntry[];
+}> {
+  const res = await fetch(`${getBase()}/v1/automation/logs?limit=${limit}`);
+  if (!res.ok) {
+    const detail = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(detail.detail || `Automation logs fetch failed: ${res.status}`);
   }
   return res.json();
 }

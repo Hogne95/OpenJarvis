@@ -156,6 +156,8 @@ def create_app(
     speech_backend=None,
     agent_manager=None,
     agent_scheduler=None,
+    task_scheduler=None,
+    task_scheduler_store=None,
     api_key: str = "",
     webhook_config: dict | None = None,
     cors_origins: list[str] | None = None,
@@ -236,6 +238,8 @@ def create_app(
     app.state.operator_memory = OperatorMemory()
     app.state.agent_manager = agent_manager
     app.state.agent_scheduler = agent_scheduler
+    app.state.task_scheduler = task_scheduler
+    app.state.task_scheduler_store = task_scheduler_store
     app.state.session_start = time.time()
 
     # Wire up trace store if traces are enabled
@@ -264,6 +268,21 @@ def create_app(
 
     # Restore SendBlue channel bindings from database on startup
     _restore_sendblue_bindings(app)
+
+    @app.on_event("shutdown")
+    async def _shutdown_background_services() -> None:
+        scheduler = getattr(app.state, "task_scheduler", None)
+        if scheduler is not None:
+            try:
+                scheduler.stop()
+            except Exception:
+                logger.debug("Task scheduler shutdown skipped", exc_info=True)
+        scheduler_store = getattr(app.state, "task_scheduler_store", None)
+        if scheduler_store is not None:
+            try:
+                scheduler_store.close()
+            except Exception:
+                logger.debug("Task scheduler store close skipped", exc_info=True)
 
     # Add security headers middleware
     try:

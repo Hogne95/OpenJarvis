@@ -27,6 +27,8 @@ import {
   approveWorkbenchCommand,
   createManagedAgent,
   fetchActionCenterStatus,
+  fetchAutomationLogs,
+  fetchAutomationStatus,
   fetchDailyDigest,
   fetchDigestSchedule,
   fetchInboxSummary,
@@ -52,11 +54,14 @@ import {
   stageWorkbenchCommand,
   stopVoiceLoop,
   synthesizeSpeech,
+  updateAutomationRoutine,
   updateDigestSchedule,
   updateOperatorMeeting,
   updateOperatorRelationship,
   updateVoiceLoopState,
   type ActionCenterStatus,
+  type AutomationLogEntry,
+  type AutomationStatus,
   type DailyDigest,
   type DigestSchedule,
   type DurableOperatorMemory,
@@ -176,6 +181,38 @@ function normalizeMeetingKey(value: string) {
   return value.trim().toLowerCase();
 }
 
+const DISMISSED_AUTOMATION_ALERTS_KEY = 'jarvis-dismissed-automation-alerts';
+
+function loadDismissedAutomationAlerts() {
+  if (typeof window === 'undefined') return [];
+  try {
+    const raw = window.localStorage.getItem(DISMISSED_AUTOMATION_ALERTS_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed.filter((item): item is string => typeof item === 'string') : [];
+  } catch {
+    return [];
+  }
+}
+
+function formatRoutineLabel(routineId: AutomationLogEntry['routine_id']) {
+  switch (routineId) {
+    case 'daily_ops':
+      return 'Daily Ops';
+    case 'inbox_sweep':
+      return 'Inbox Sweep';
+    case 'meeting_prep':
+      return 'Meeting Prep';
+    default:
+      return routineId;
+  }
+}
+
+function buildAutomationAnnouncement(log: AutomationLogEntry) {
+  const label = formatRoutineLabel(log.routine_id);
+  return log.success ? `${label} completed.` : `${label} needs attention.`;
+}
+
 export default function JarvisHudDashboard() {
   const navigate = useNavigate();
   const messages = useAppStore((s) => s.messages);
@@ -209,6 +246,13 @@ export default function JarvisHudDashboard() {
   const [focusMode, setFocusMode] = useState(false);
   const [workbench, setWorkbench] = useState<WorkbenchStatus | null>(null);
   const [actionCenter, setActionCenter] = useState<ActionCenterStatus | null>(null);
+  const [automationStatus, setAutomationStatus] = useState<AutomationStatus | null>(null);
+  const [automationLogs, setAutomationLogs] = useState<AutomationLogEntry[]>([]);
+  const [automationNotice, setAutomationNotice] = useState('');
+  const [dismissedAutomationAlerts, setDismissedAutomationAlerts] = useState<string[]>(() =>
+    loadDismissedAutomationAlerts(),
+  );
+  const [alertFilter, setAlertFilter] = useState<'all' | 'errors' | 'ready'>('all');
   const [workbenchCommand, setWorkbenchCommand] = useState('');
   const [workbenchDirectory, setWorkbenchDirectory] = useState('');
   const [workbenchTimeout, setWorkbenchTimeout] = useState(30);
@@ -241,7 +285,9 @@ export default function JarvisHudDashboard() {
   const lastSpokenDigestRef = useRef('');
   const lastChimedReminderRef = useRef('');
   const lastAutoPrepReminderRef = useRef('');
+  const lastAutoInboxRef = useRef('');
   const lastSpokenMessageRef = useRef<string>('');
+  const lastAutomationAnnouncementRef = useRef('');
   const audioUrlRef = useRef<string | null>(null);
   const audioElementRef = useRef<HTMLAudioElement | null>(null);
 
@@ -257,8 +303,10 @@ export default function JarvisHudDashboard() {
     let cancelled = false;
 
     const refreshLiveStatus = async () => {
-      const [action, digest, digestSched, operatorMemory, inbox, tasks, reminderItems, health, speech, agents, connectors, loop, profile, wb] = await Promise.allSettled([
+      const [action, automation, automationLogResult, digest, digestSched, operatorMemory, inbox, tasks, reminderItems, health, speech, agents, connectors, loop, profile, wb] = await Promise.allSettled([
         fetchActionCenterStatus(),
+        fetchAutomationStatus(),
+        fetchAutomationLogs(),
         fetchDailyDigest(),
         fetchDigestSchedule(),
         fetchOperatorMemory(),
@@ -277,6 +325,8 @@ export default function JarvisHudDashboard() {
       if (cancelled) return;
 
       if (action.status === 'fulfilled') setActionCenter(action.value);
+      if (automation.status === 'fulfilled') setAutomationStatus(automation.value);
+      if (automationLogResult.status === 'fulfilled') setAutomationLogs(automationLogResult.value.items || []);
       if (digest.status === 'fulfilled') setDailyDigest(digest.value);
       if (digestSched.status === 'fulfilled') setDigestSchedule(digestSched.value);
       if (operatorMemory.status === 'fulfilled') setDurableOperatorMemory(operatorMemory.value);
@@ -357,6 +407,20 @@ export default function JarvisHudDashboard() {
   }, [relationshipNotice]);
 
   useEffect(() => {
+    if (!automationNotice) return;
+    const timeout = window.setTimeout(() => setAutomationNotice(''), 7000);
+    return () => window.clearTimeout(timeout);
+  }, [automationNotice]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    window.localStorage.setItem(
+      DISMISSED_AUTOMATION_ALERTS_KEY,
+      JSON.stringify(dismissedAutomationAlerts),
+    );
+  }, [dismissedAutomationAlerts]);
+
+  useEffect(() => {
     if (hasAutoRequestedDigestRef.current) return;
     if (digestBusy) return;
     if (dailyDigest || apiReachable === false) return;
@@ -391,6 +455,59 @@ export default function JarvisHudDashboard() {
       cancelled = true;
     };
   }, [dailyDigest?.generated_at, dailyDigest?.text, speechProfile]);
+
+  useEffect(() => {
+    const latestLog = automationLogs[0] ?? null;
+    if (!latestLog?.started_at) return;
+    const announcementKey = `${latestLog.task_id}:${latestLog.started_at}:${latestLog.success}`;
+    if (lastAutomationAnnouncementRef.current === announcementKey) return;
+    lastAutomationAnnouncementRef.current = announcementKey;
+
+    const announcement = buildAutomationAnnouncement(latestLog);
+    const detail = latestLog.success
+      ? latestLog.result || 'Background routine completed and results are ready.'
+      : latestLog.error || 'Background routine reported an error.';
+    setAutomationNotice(`${announcement} ${detail}`);
+
+    if (typeof window !== 'undefined' && 'Notification' in window) {
+      if (Notification.permission === 'granted') {
+        new Notification(`JARVIS · ${formatRoutineLabel(latestLog.routine_id)}`, {
+          body: detail,
+          silent: true,
+        });
+      } else if (Notification.permission === 'default') {
+        Notification.requestPermission().catch(() => {});
+      }
+    }
+
+    if (!speechProfile?.auto_speak || streamState.isStreaming || hudSpeechState === 'recording' || hudSpeechState === 'transcribing') {
+      return;
+    }
+
+    let cancelled = false;
+    synthesizeSpeech({
+      text: announcement,
+      backend: speechProfile.reply_backend,
+      voice_id: speechProfile.reply_voice_id,
+      speed: speechProfile.reply_speed,
+      output_format: 'wav',
+    })
+      .then((blob) => {
+        if (cancelled) return;
+        audioElementRef.current?.pause();
+        if (audioUrlRef.current) URL.revokeObjectURL(audioUrlRef.current);
+        const url = URL.createObjectURL(blob);
+        audioUrlRef.current = url;
+        const audio = new Audio(url);
+        audioElementRef.current = audio;
+        audio.play().catch(() => {});
+      })
+      .catch(() => {});
+
+    return () => {
+      cancelled = true;
+    };
+  }, [automationLogs, hudSpeechState, speechProfile, streamState.isStreaming]);
 
   useEffect(() => {
     if (!voiceLoop?.active) {
@@ -430,6 +547,35 @@ export default function JarvisHudDashboard() {
   const pendingWorkbench = workbench?.pending ?? null;
   const latestActionResult = actionCenter?.history?.[0] ?? null;
   const latestWorkbenchResult = workbench?.history?.[0] ?? null;
+  const latestAutomationLog = automationLogs[0] ?? null;
+  const activeAutomationAlerts = useMemo(
+    () =>
+      [...automationLogs]
+        .sort((left, right) => {
+          if (left.success !== right.success) return left.success ? 1 : -1;
+          return new Date(right.started_at).getTime() - new Date(left.started_at).getTime();
+        })
+        .slice(0, 4)
+        .filter((item) => !dismissedAutomationAlerts.includes(`${item.task_id}:${item.started_at}`)),
+    [automationLogs, dismissedAutomationAlerts],
+  );
+  const filteredAutomationAlerts = useMemo(
+    () =>
+      activeAutomationAlerts.filter((item) => {
+        if (alertFilter === 'errors') return !item.success;
+        if (alertFilter === 'ready') return item.success;
+        return true;
+      }),
+    [activeAutomationAlerts, alertFilter],
+  );
+  const alertCounts = useMemo(
+    () => ({
+      all: activeAutomationAlerts.length,
+      errors: activeAutomationAlerts.filter((item) => !item.success).length,
+      ready: activeAutomationAlerts.filter((item) => item.success).length,
+    }),
+    [activeAutomationAlerts],
+  );
   const prioritizedContacts = useMemo(
     () =>
       [
@@ -460,6 +606,10 @@ export default function JarvisHudDashboard() {
       return (right.timestamp || '').localeCompare(left.timestamp || '');
     });
   }, [inboxSummary, prioritizedContacts]);
+  const inboxFocusQueue = useMemo(
+    () => sortedInboxSummary.slice(0, Math.max(1, Math.min(5, operatorProfile.inboxFocusCount || 3))),
+    [operatorProfile.inboxFocusCount, sortedInboxSummary],
+  );
   const immediateReminder = useMemo(() => {
     const now = Date.now();
     const enriched = reminders
@@ -500,6 +650,94 @@ export default function JarvisHudDashboard() {
       })
       .slice(0, 3);
   }, [durableOperatorMemory?.meetings, reminders]);
+  const commanderQueue = useMemo(() => {
+    const items: Array<{
+      id: string;
+      priority: number;
+      label: string;
+      title: string;
+      detail: string;
+      actionLabel: string;
+      action: () => void;
+    }> = [];
+
+    if (pendingAction) {
+      items.push({
+        id: `approval-action-${pendingAction.id}`,
+        priority: 100,
+        label: 'Approval',
+        title: pendingAction.title,
+        detail: `${pendingAction.action_type.replace('_', ' ')} is waiting in the approval gate.`,
+        actionLabel: 'Open Gate',
+        action: () => setFocusMode(false),
+      });
+    }
+
+    if (pendingWorkbench) {
+      items.push({
+        id: `approval-workbench-${pendingWorkbench.id}`,
+        priority: 95,
+        label: 'Workbench',
+        title: pendingWorkbench.command,
+        detail: 'Terminal work is staged and waiting for approval.',
+        actionLabel: 'Review Command',
+        action: () => setFocusMode(false),
+      });
+    }
+
+    activeAutomationAlerts
+      .filter((item) => !item.success)
+      .slice(0, 2)
+      .forEach((item, index) => {
+        items.push({
+          id: `alert-${item.task_id}-${item.started_at}`,
+          priority: 90 - index,
+          label: 'Routine Error',
+          title: formatRoutineLabel(item.routine_id),
+          detail: item.error || 'Background routine needs attention.',
+          actionLabel: 'Open Alert',
+          action: () => setAlertFilter('errors'),
+        });
+      });
+
+    if (prepQueue[0]) {
+      items.push({
+        id: `meeting-${prepQueue[0].title}-${prepQueue[0].when}`,
+        priority: 70,
+        label: 'Meeting Prep',
+        title: prepQueue[0].title,
+        detail: `Upcoming ${formatReminderMoment(prepQueue[0].when)}${prepQueue[0].memory ? ' with saved context' : ''}.`,
+        actionLabel: 'Prep Meeting',
+        action: () => prepareMeetingFromReminder(prepQueue[0]),
+      });
+    }
+
+    if (inboxFocusQueue[0]) {
+      items.push({
+        id: `inbox-${inboxFocusQueue[0].doc_id}`,
+        priority: 60,
+        label: 'Inbox',
+        title: inboxFocusQueue[0].title,
+        detail: `From ${inboxFocusQueue[0].author}. ${inboxFocusQueue[0].snippet || 'Priority message ready for draft.'}`,
+        actionLabel: 'Draft Reply',
+        action: () => prepareReplyDraft(inboxFocusQueue[0]),
+      });
+    }
+
+    if (activeAutomationAlerts.find((item) => item.success && item.routine_id === 'daily_ops')) {
+      items.push({
+        id: 'daily-ops-ready',
+        priority: 40,
+        label: 'Briefing',
+        title: 'Daily Ops ready',
+        detail: 'A fresh cross-system operations brief is available.',
+        actionLabel: 'Open Brief',
+        action: () => setFocusMode(false),
+      });
+    }
+
+    return items.sort((left, right) => right.priority - left.priority).slice(0, 5);
+  }, [activeAutomationAlerts, inboxFocusQueue, pendingAction, pendingWorkbench, prepQueue]);
 
   useEffect(() => {
     if (!immediateReminder) return;
@@ -534,6 +772,21 @@ export default function JarvisHudDashboard() {
     }
     lastAutoPrepReminderRef.current = prepKey;
   }, [operatorProfile.autoPrepareMeetings, operatorProfile.prepLeadMinutes, prepQueue, streamState.activeToolCalls.length, streamState.isStreaming]);
+
+  useEffect(() => {
+    const nextInbox = inboxFocusQueue[0];
+    if (!nextInbox) return;
+    if (!operatorProfile.autoTriageInbox) return;
+    const inboxKey = `${nextInbox.timestamp}-${nextInbox.title}-${nextInbox.author}`;
+    if (lastAutoInboxRef.current === inboxKey) return;
+    if (!streamState.isStreaming && streamState.activeToolCalls.length === 0) {
+      prepareReplyDraft(nextInbox);
+      setAgentNotice(`Priority inbox draft prepared for ${nextInbox.author}.`);
+    } else {
+      setAgentNotice(`Priority inbox item queued: ${nextInbox.title}.`);
+    }
+    lastAutoInboxRef.current = inboxKey;
+  }, [inboxFocusQueue, operatorProfile.autoTriageInbox, streamState.activeToolCalls.length, streamState.isStreaming]);
 
   const status: Status = useMemo(() => {
     if (streamState.isStreaming && streamState.content.trim()) return 'Responding';
@@ -668,6 +921,75 @@ export default function JarvisHudDashboard() {
     return `${prepStyle}\nMeeting: ${item.title}\nWhen: ${item.when}\nDetail: ${item.detail || 'No extra detail.'}${memoryNotes}`;
   }
 
+  function buildDailyOpsPrompt() {
+    const inboxLines = inboxFocusQueue
+      .slice(0, 3)
+      .map(
+        (item, index) =>
+          `${index + 1}. ${item.title} from ${item.author} — ${item.snippet || 'No preview available.'}`,
+      )
+      .join('\n');
+    const meetingLines = prepQueue
+      .slice(0, 2)
+      .map(
+        (item, index) =>
+          `${index + 1}. ${item.title} at ${item.when} — ${item.detail || 'No extra detail.'}`,
+      )
+      .join('\n');
+    const taskLines = taskSummary
+      .slice(0, 3)
+      .map(
+        (item, index) =>
+          `${index + 1}. ${item.title}${item.due ? ` (due ${item.due})` : ''} — ${item.notes || 'No notes.'}`,
+      )
+      .join('\n');
+
+    return (
+      'Act as my executive operations copilot. Build a concise operations brief with priorities, risks, reply recommendations, and next actions.\n' +
+      `Top inbox items:\n${inboxLines || 'None'}\n\n` +
+      `Upcoming meetings:\n${meetingLines || 'None'}\n\n` +
+      `Open tasks:\n${taskLines || 'None'}`
+    );
+  }
+
+  function dismissAutomationAlert(item: AutomationLogEntry) {
+    const key = `${item.task_id}:${item.started_at}`;
+    setDismissedAutomationAlerts((current) => (current.includes(key) ? current : [...current, key]));
+  }
+
+  function clearAutomationAlerts() {
+    setDismissedAutomationAlerts(
+      automationLogs.slice(0, 8).map((item) => `${item.task_id}:${item.started_at}`),
+    );
+  }
+
+  function handleAutomationFollowup(item: AutomationLogEntry) {
+    if (item.routine_id === 'daily_ops') {
+      runDailyOpsSweep();
+      dismissAutomationAlert(item);
+      return;
+    }
+
+    if (item.routine_id === 'inbox_sweep') {
+      if (inboxFocusQueue[0]) {
+        prepareReplyDraft(inboxFocusQueue[0]);
+        setAgentNotice(`Priority inbox draft prepared for ${inboxFocusQueue[0].author}.`);
+      } else {
+        injectCommand(buildDailyOpsPrompt());
+      }
+      dismissAutomationAlert(item);
+      return;
+    }
+
+    if (prepQueue[0]) {
+      prepareMeetingFromReminder(prepQueue[0]);
+      setAgentNotice(`Meeting prep loaded for ${prepQueue[0].title}.`);
+    } else {
+      injectCommand('Prepare the next important meeting with context, risks, and talking points.');
+    }
+    dismissAutomationAlert(item);
+  }
+
   function submitInjectedCommand(text: string) {
     if (streamState.isStreaming) {
       window.dispatchEvent(new Event('jarvis:interrupt-stream'));
@@ -675,6 +997,40 @@ export default function JarvisHudDashboard() {
     audioElementRef.current?.pause();
     injectCommand(text);
     window.dispatchEvent(new Event('jarvis:submit-input'));
+  }
+
+  function runDailyOpsSweep() {
+    const prompt = buildDailyOpsPrompt();
+    if (!streamState.isStreaming && streamState.activeToolCalls.length === 0) {
+      submitInjectedCommand(prompt);
+      setAgentNotice('Daily ops sweep launched.');
+    } else {
+      injectCommand(prompt);
+      setAgentNotice('Daily ops sweep queued in the command deck.');
+    }
+  }
+
+  async function toggleServerRoutine(
+    routineId: 'daily_ops' | 'inbox_sweep' | 'meeting_prep',
+    enabled: boolean,
+    cron?: string,
+  ) {
+    try {
+      const next = await updateAutomationRoutine({
+        routine_id: routineId,
+        enabled,
+        cron,
+        agent: 'orchestrator',
+      });
+      setAutomationStatus(next);
+      setAgentNotice(
+        enabled
+          ? `Server routine enabled: ${routineId.replace('_', ' ')}.`
+          : `Server routine disabled: ${routineId.replace('_', ' ')}.`,
+      );
+    } catch (error) {
+      setAgentNotice(error instanceof Error ? error.message : 'Unable to update server routine.');
+    }
   }
 
   function playAttentionTone() {
@@ -1303,6 +1659,7 @@ export default function JarvisHudDashboard() {
               ['Model', selectedModel || serverInfo?.model || 'Unassigned'],
               ['Voice', voiceLoop?.active ? voicePhaseLabel : settings.speechEnabled ? 'Ready' : 'Disabled'],
               ['Agents', `${runningAgentCount} running`],
+              ['Alerts', activeAutomationAlerts.length ? `${activeAutomationAlerts.length} active` : 'Clear'],
             ].map(([label, value]) => (
               <div
                 key={label}
@@ -1319,6 +1676,12 @@ export default function JarvisHudDashboard() {
                 <div className="mt-1 text-[10px] uppercase tracking-[0.22em] text-amber-100/70">
                   {formatReminderMoment(immediateReminder.when)}
                 </div>
+              </div>
+            ) : null}
+            {automationNotice ? (
+              <div className="rounded-[1.2rem] border border-emerald-300/20 bg-emerald-300/[0.08] px-4 py-3">
+                <div className="text-[10px] uppercase tracking-[0.35em] text-emerald-200/70">Operations Alert</div>
+                <div className="mt-1 text-sm text-emerald-50/92">{automationNotice}</div>
               </div>
             ) : null}
             <button
@@ -1721,17 +2084,52 @@ export default function JarvisHudDashboard() {
             <Panel title="Operator Output" kicker="Recent result">
               <div className="rounded-[1.15rem] border border-cyan-400/10 bg-black/30 p-4 font-mono text-xs leading-6 text-slate-200/78">
                 <div className="mb-3 text-[10px] uppercase tracking-[0.32em] text-cyan-300/55">
-                  {latestActionResult
+                  {latestAutomationLog
+                    ? `${latestAutomationLog.success ? 'ok' : 'error'} · routine ${latestAutomationLog.routine_id}`
+                    : latestActionResult
                     ? `${latestActionResult.status} · ${latestActionResult.title}`
                     : latestWorkbenchResult
                     ? `${latestWorkbenchResult.status} · ${latestWorkbenchResult.command}`
                     : 'No operator output yet'}
                 </div>
                 <pre className="max-h-72 overflow-auto whitespace-pre-wrap break-words">
-                  {latestActionResult?.result ||
+                  {latestAutomationLog?.result ||
+                    latestAutomationLog?.error ||
+                    latestActionResult?.result ||
                     latestWorkbenchResult?.output ||
                     'Stage an action or a safe terminal command and approve it from the gate to see output here.'}
                 </pre>
+              </div>
+            </Panel>
+
+            <Panel title="Commander Queue" kicker="Next best actions">
+              <div className="space-y-3">
+                {commanderQueue.length ? (
+                  commanderQueue.map((item) => (
+                    <div
+                      key={item.id}
+                      className="rounded-[1.15rem] border border-cyan-400/10 bg-slate-950/50 px-4 py-3"
+                    >
+                      <div className="flex items-start justify-between gap-3">
+                        <div>
+                          <div className="text-[10px] uppercase tracking-[0.28em] text-cyan-300/55">{item.label}</div>
+                          <div className="mt-1 text-sm uppercase tracking-[0.14em] text-cyan-50/92">{item.title}</div>
+                        </div>
+                        <button
+                          onClick={item.action}
+                          className="rounded-[0.85rem] border border-cyan-300/20 bg-cyan-400/[0.08] px-3 py-2 text-[10px] uppercase tracking-[0.22em] text-cyan-100 transition hover:bg-cyan-400/[0.14]"
+                        >
+                          {item.actionLabel}
+                        </button>
+                      </div>
+                      <div className="mt-2 text-sm leading-6 text-slate-200/72">{item.detail}</div>
+                    </div>
+                  ))
+                ) : (
+                  <div className="rounded-[1.15rem] border border-cyan-400/10 bg-slate-950/50 px-4 py-3 text-sm text-slate-200/72">
+                    No urgent work in queue. JARVIS is clear to listen, monitor, and prepare the next routine.
+                  </div>
+                )}
               </div>
             </Panel>
           </div>
@@ -1802,6 +2200,213 @@ export default function JarvisHudDashboard() {
               </div>
             </Panel>
 
+            <Panel title="Automation Matrix" kicker="Operator routines">
+              <div className="space-y-3">
+                <div className="rounded-[1.15rem] border border-cyan-400/10 bg-slate-950/50 px-4 py-3">
+                  <div className="text-[10px] uppercase tracking-[0.28em] text-cyan-300/55">
+                    Morning Brief
+                  </div>
+                  <div className="mt-1 text-sm text-slate-200/76">
+                    {digestSchedule?.enabled ? `Scheduled · ${digestSchedule.cron}` : 'Manual only'}
+                  </div>
+                </div>
+                <div className="rounded-[1.15rem] border border-cyan-400/10 bg-slate-950/50 px-4 py-3">
+                  <div className="text-[10px] uppercase tracking-[0.28em] text-cyan-300/55">
+                    Meeting Prep
+                  </div>
+                  <div className="mt-1 text-sm text-slate-200/76">
+                    {operatorProfile.autoPrepareMeetings
+                      ? `Auto at ${operatorProfile.prepLeadMinutes} min lead`
+                      : 'Manual queue only'}
+                  </div>
+                </div>
+                <div className="rounded-[1.15rem] border border-cyan-400/10 bg-slate-950/50 px-4 py-3">
+                  <div className="text-[10px] uppercase tracking-[0.28em] text-cyan-300/55">
+                    Inbox Sweep
+                  </div>
+                  <div className="mt-1 text-sm text-slate-200/76">
+                    {operatorProfile.autoTriageInbox
+                      ? `Auto queue of ${operatorProfile.inboxFocusCount}`
+                      : 'Manual queue only'}
+                  </div>
+                </div>
+                <div className="rounded-[1.15rem] border border-cyan-400/10 bg-slate-950/50 px-4 py-3">
+                  <div className="text-[10px] uppercase tracking-[0.28em] text-cyan-300/55">
+                    Server Routines
+                  </div>
+                  <div className="mt-1 text-sm text-slate-200/76">
+                    {automationStatus?.available
+                      ? `${automationStatus.items.length} persistent routines configured`
+                      : 'Scheduler not active in server config'}
+                  </div>
+                  {automationStatus?.available ? (
+                    <div className="mt-3 space-y-2">
+                      {([
+                        ['daily_ops', 'Daily Ops', '0 8 * * *'],
+                        ['inbox_sweep', 'Inbox Sweep', '0 9 * * *'],
+                        ['meeting_prep', 'Meeting Prep', '0 * * * *'],
+                      ] as const).map(([routineId, label, cron]) => {
+                        const routine = automationStatus.items.find((item) => item.routine_id === routineId);
+                        const active = routine?.status === 'active';
+                        return (
+                          <div
+                            key={routineId}
+                            className="flex items-center justify-between gap-3 rounded-[0.9rem] border border-cyan-400/10 bg-black/20 px-3 py-2"
+                          >
+                            <div>
+                              <div className="text-xs uppercase tracking-[0.16em] text-cyan-50/90">{label}</div>
+                              <div className="mt-1 text-[10px] uppercase tracking-[0.2em] text-cyan-300/55">
+                                {active ? `${routine?.cron || cron} · next ${routine?.next_run || 'pending'}` : 'disabled'}
+                              </div>
+                            </div>
+                            <button
+                              onClick={() => toggleServerRoutine(routineId, !active, cron)}
+                              className={`rounded-[0.85rem] border px-3 py-2 text-[10px] uppercase tracking-[0.22em] transition ${
+                                active
+                                  ? 'border-cyan-300/20 bg-cyan-400/[0.08] text-cyan-100 hover:bg-cyan-400/[0.14]'
+                                  : 'border-cyan-400/10 bg-slate-950/70 text-slate-300 hover:bg-cyan-400/[0.08]'
+                              }`}
+                            >
+                              {active ? 'Disable' : 'Enable'}
+                            </button>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  ) : null}
+                </div>
+                <div className="grid gap-2 sm:grid-cols-2">
+                  <button
+                    onClick={runDailyOpsSweep}
+                    className="rounded-[0.95rem] border border-cyan-400/12 bg-cyan-400/[0.08] px-3 py-2 text-xs uppercase tracking-[0.22em] text-cyan-100 transition hover:bg-cyan-400/[0.14]"
+                  >
+                    Run Daily Ops
+                  </button>
+                  <button
+                    onClick={() => prepQueue[0] && prepareMeetingFromReminder(prepQueue[0])}
+                    disabled={!prepQueue.length}
+                    className="rounded-[0.95rem] border border-cyan-400/12 bg-slate-950/70 px-3 py-2 text-xs uppercase tracking-[0.22em] text-cyan-100 transition hover:bg-cyan-400/[0.08] disabled:cursor-not-allowed disabled:opacity-40"
+                  >
+                    Prime Next Meeting
+                  </button>
+                </div>
+              </div>
+            </Panel>
+
+            <Panel title="Alert Center" kicker="Actionable updates">
+              <div className="space-y-3">
+                {activeAutomationAlerts.length ? (
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div className="flex flex-wrap gap-2">
+                      {([
+                        ['all', `All ${alertCounts.all}`],
+                        ['errors', `Errors ${alertCounts.errors}`],
+                        ['ready', `Ready ${alertCounts.ready}`],
+                      ] as const).map(([value, label]) => (
+                        <button
+                          key={value}
+                          onClick={() => setAlertFilter(value)}
+                          className={`rounded-[0.85rem] border px-3 py-2 text-[10px] uppercase tracking-[0.22em] transition ${
+                            alertFilter === value
+                              ? 'border-cyan-300/20 bg-cyan-400/[0.08] text-cyan-100'
+                              : 'border-cyan-400/10 bg-slate-950/70 text-slate-300 hover:bg-cyan-400/[0.08]'
+                          }`}
+                        >
+                          {label}
+                        </button>
+                      ))}
+                    </div>
+                    <button
+                      onClick={clearAutomationAlerts}
+                      className="rounded-[0.85rem] border border-cyan-400/10 bg-slate-950/70 px-3 py-2 text-[10px] uppercase tracking-[0.22em] text-slate-300 transition hover:bg-cyan-400/[0.08]"
+                    >
+                      Clear All
+                    </button>
+                  </div>
+                ) : null}
+                {filteredAutomationAlerts.length ? (
+                  filteredAutomationAlerts.map((item) => (
+                    <div
+                      key={`${item.task_id}:${item.started_at}`}
+                      className="rounded-[1.15rem] border border-cyan-400/10 bg-slate-950/50 px-4 py-3"
+                    >
+                      <div className="flex items-start justify-between gap-3">
+                        <div>
+                          <div className="text-sm uppercase tracking-[0.16em] text-cyan-50/92">
+                            {formatRoutineLabel(item.routine_id)}
+                          </div>
+                          <div className="mt-1 text-[10px] uppercase tracking-[0.28em] text-cyan-300/55">
+                            {item.success ? 'ready for review' : 'needs attention'} · {formatReminderMoment(item.started_at)}
+                          </div>
+                        </div>
+                        <div className={`rounded-full px-2 py-1 text-[10px] uppercase tracking-[0.2em] ${
+                          item.success ? 'bg-emerald-300/10 text-emerald-200' : 'bg-amber-300/10 text-amber-200'
+                        }`}>
+                          {item.success ? 'Ready' : 'Error'}
+                        </div>
+                      </div>
+                      <div className="mt-2 text-sm leading-6 text-slate-200/72">
+                        {item.result || item.error || 'No output captured.'}
+                      </div>
+                      <div className="mt-3 flex gap-2">
+                        <button
+                          onClick={() => handleAutomationFollowup(item)}
+                          className="rounded-[0.85rem] border border-cyan-300/20 bg-cyan-400/[0.08] px-3 py-2 text-[10px] uppercase tracking-[0.22em] text-cyan-100 transition hover:bg-cyan-400/[0.14]"
+                        >
+                          {item.routine_id === 'daily_ops'
+                            ? 'Run Again'
+                            : item.routine_id === 'inbox_sweep'
+                            ? 'Open Inbox Draft'
+                            : 'Open Meeting Prep'}
+                        </button>
+                        <button
+                          onClick={() => dismissAutomationAlert(item)}
+                          className="rounded-[0.85rem] border border-cyan-400/10 bg-slate-950/70 px-3 py-2 text-[10px] uppercase tracking-[0.22em] text-slate-300 transition hover:bg-cyan-400/[0.08]"
+                        >
+                          Dismiss
+                        </button>
+                      </div>
+                    </div>
+                  ))
+                ) : activeAutomationAlerts.length ? (
+                  <div className="rounded-[1.15rem] border border-cyan-400/10 bg-slate-950/50 px-4 py-3 text-sm text-slate-200/72">
+                    No alerts match the current filter.
+                  </div>
+                ) : (
+                  <div className="rounded-[1.15rem] border border-cyan-400/10 bg-slate-950/50 px-4 py-3 text-sm text-slate-200/72">
+                    No active alerts right now. Background routines will surface here when they finish.
+                  </div>
+                )}
+              </div>
+            </Panel>
+
+            <Panel title="Operations Log" kicker="Background runs">
+              <div className="space-y-3">
+                {automationLogs.length ? (
+                  automationLogs.slice(0, 6).map((item) => (
+                    <div
+                      key={`${item.task_id}-${item.started_at}`}
+                      className="rounded-[1.15rem] border border-cyan-400/10 bg-slate-950/50 px-4 py-3"
+                    >
+                      <div className="text-sm uppercase tracking-[0.16em] text-cyan-50/92">
+                        {item.routine_id.replace('_', ' ')}
+                      </div>
+                      <div className="mt-1 text-[10px] uppercase tracking-[0.28em] text-cyan-300/55">
+                        {item.success ? 'success' : 'error'} · {formatReminderMoment(item.started_at)}
+                      </div>
+                      <div className="mt-2 text-sm leading-6 text-slate-200/72">
+                        {item.result || item.error || 'No output captured.'}
+                      </div>
+                    </div>
+                  ))
+                ) : (
+                  <div className="rounded-[1.15rem] border border-cyan-400/10 bg-slate-950/50 px-4 py-3 text-sm text-slate-200/72">
+                    No background routine runs recorded yet. Enable a server routine and let it execute to populate this log.
+                  </div>
+                )}
+              </div>
+            </Panel>
+
             <Panel title="Operator Profile" kicker="Personalization">
               <div className="rounded-[1.15rem] border border-cyan-400/10 bg-slate-950/50 px-4 py-3">
                 <div className="grid gap-3">
@@ -1864,6 +2469,35 @@ export default function JarvisHudDashboard() {
                       }`}
                     >
                       {operatorProfile.autoPrepareMeetings ? 'Auto Prep On' : 'Auto Prep Off'}
+                    </button>
+                  </div>
+                  <div className="grid gap-3 sm:grid-cols-[1fr_auto]">
+                    <input
+                      type="number"
+                      min={1}
+                      max={5}
+                      value={operatorProfile.inboxFocusCount}
+                      onChange={(event) =>
+                        updateOperatorProfile({
+                          inboxFocusCount: Math.max(1, Math.min(5, Number(event.target.value) || 3)),
+                        })
+                      }
+                      placeholder="Inbox focus count"
+                      className="rounded-[0.9rem] border border-cyan-400/10 bg-slate-950/70 px-4 py-3 text-sm text-slate-100 outline-none placeholder:text-slate-500"
+                    />
+                    <button
+                      onClick={() =>
+                        updateOperatorProfile({
+                          autoTriageInbox: !operatorProfile.autoTriageInbox,
+                        })
+                      }
+                      className={`rounded-[0.9rem] border px-4 py-3 text-xs uppercase tracking-[0.22em] transition ${
+                        operatorProfile.autoTriageInbox
+                          ? 'border-cyan-300/20 bg-cyan-400/[0.08] text-cyan-100 hover:bg-cyan-400/[0.14]'
+                          : 'border-cyan-400/10 bg-slate-950/70 text-slate-300 hover:bg-cyan-400/[0.08]'
+                      }`}
+                    >
+                      {operatorProfile.autoTriageInbox ? 'Auto Inbox On' : 'Auto Inbox Off'}
                     </button>
                   </div>
                 </div>
@@ -2150,6 +2784,51 @@ export default function JarvisHudDashboard() {
                 ) : (
                   <div className="rounded-[1.15rem] border border-cyan-400/10 bg-slate-950/50 px-4 py-3 text-sm text-slate-200/72">
                     No high-priority meeting prep queued yet. Upcoming events within the next day will appear here.
+                  </div>
+                )}
+              </div>
+            </Panel>
+
+            <Panel title="Inbox Queue" kicker="Priority focus">
+              <div className="space-y-3">
+                {inboxFocusQueue.length ? (
+                  inboxFocusQueue.map((item) => (
+                    <div
+                      key={`${item.timestamp}-${item.title}-${item.author}`}
+                      className="rounded-[1.15rem] border border-cyan-400/10 bg-slate-950/50 px-4 py-3"
+                    >
+                      <div className="text-sm uppercase tracking-[0.16em] text-cyan-50/92">
+                        {item.title}
+                      </div>
+                      <div className="mt-1 text-[10px] uppercase tracking-[0.28em] text-cyan-300/55">
+                        {item.author} · {item.source || 'email'}
+                      </div>
+                      <div className="mt-2 text-sm leading-6 text-slate-200/72">
+                        {item.snippet || 'No preview available.'}
+                      </div>
+                      <div className="mt-2 text-[10px] uppercase tracking-[0.22em] text-cyan-300/45">
+                        Auto queue size: {operatorProfile.inboxFocusCount}
+                      </div>
+                      <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                        <button
+                          onClick={() => prepareReplyDraft(item)}
+                          disabled={!item.author_email}
+                          className="rounded-[0.95rem] border border-cyan-400/12 bg-cyan-400/[0.08] px-3 py-2 text-xs uppercase tracking-[0.22em] text-cyan-100 transition hover:bg-cyan-400/[0.14] disabled:cursor-not-allowed disabled:opacity-40"
+                        >
+                          Draft Reply
+                        </button>
+                        <button
+                          onClick={() => triageInboxItem(item)}
+                          className="rounded-[0.95rem] border border-cyan-400/12 bg-slate-950/70 px-3 py-2 text-xs uppercase tracking-[0.22em] text-cyan-100 transition hover:bg-cyan-400/[0.08]"
+                        >
+                          Triage
+                        </button>
+                      </div>
+                    </div>
+                  ))
+                ) : (
+                  <div className="rounded-[1.15rem] border border-cyan-400/10 bg-slate-950/50 px-4 py-3 text-sm text-slate-200/72">
+                    No priority inbox items yet. Connect mail and sync to build an operator queue.
                   </div>
                 )}
               </div>
