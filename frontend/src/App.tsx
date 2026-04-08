@@ -1,13 +1,6 @@
-import { useEffect, useState, useCallback } from 'react';
+import { Suspense, lazy, useEffect, useState, useCallback } from 'react';
 import { Routes, Route } from 'react-router';
 import { Layout } from './components/Layout';
-import { ChatPage } from './pages/ChatPage';
-import { DashboardPage } from './pages/DashboardPage';
-import { SettingsPage } from './pages/SettingsPage';
-import { GetStartedPage } from './pages/GetStartedPage';
-import { AgentsPage } from './pages/AgentsPage';
-import { DataSourcesPage } from './pages/DataSourcesPage';
-import { LogsPage } from './pages/LogsPage';
 import { CommandPalette } from './components/CommandPalette';
 import { SetupScreen } from './components/SetupScreen';
 import { Toaster } from './components/ui/sonner';
@@ -21,6 +14,26 @@ import {
   isTauri,
 } from './lib/api';
 import { OptInModal } from './components/OptInModal';
+
+const ChatPage = lazy(() => import('./pages/ChatPage').then((module) => ({ default: module.ChatPage })));
+const DashboardPage = lazy(() => import('./pages/DashboardPage').then((module) => ({ default: module.DashboardPage })));
+const SettingsPage = lazy(() => import('./pages/SettingsPage').then((module) => ({ default: module.SettingsPage })));
+const GetStartedPage = lazy(() => import('./pages/GetStartedPage').then((module) => ({ default: module.GetStartedPage })));
+const AgentsPage = lazy(() => import('./pages/AgentsPage').then((module) => ({ default: module.AgentsPage })));
+const DataSourcesPage = lazy(() => import('./pages/DataSourcesPage').then((module) => ({ default: module.DataSourcesPage })));
+const LogsPage = lazy(() => import('./pages/LogsPage').then((module) => ({ default: module.LogsPage })));
+
+function RouteFallback() {
+  return (
+    <div className="min-h-screen bg-[#0a0f14] text-cyan-100">
+      <div className="mx-auto flex min-h-screen max-w-5xl items-center justify-center px-6">
+        <div className="rounded-[1.5rem] border border-cyan-400/10 bg-slate-950/55 px-6 py-5 text-sm uppercase tracking-[0.28em] text-cyan-300/70">
+          Loading JARVIS view...
+        </div>
+      </div>
+    </div>
+  );
+}
 
 export default function App() {
   const [setupDone, setSetupDone] = useState(!isTauri());
@@ -144,18 +157,20 @@ export default function App() {
 
   return (
     <>
-      <Routes>
-        <Route index element={<DashboardPage />} />
-        <Route path="dashboard" element={<DashboardPage />} />
-        <Route element={<Layout />}>
-          <Route path="chat" element={<ChatPage />} />
-          <Route path="settings" element={<SettingsPage />} />
-          <Route path="get-started" element={<GetStartedPage />} />
-          <Route path="data-sources" element={<DataSourcesPage />} />
-          <Route path="agents" element={<AgentsPage />} />
-          <Route path="logs" element={<LogsPage />} />
-        </Route>
-      </Routes>
+      <Suspense fallback={<RouteFallback />}>
+        <Routes>
+          <Route index element={<DashboardPage />} />
+          <Route path="dashboard" element={<DashboardPage />} />
+          <Route element={<Layout />}>
+            <Route path="chat" element={<ChatPage />} />
+            <Route path="settings" element={<SettingsPage />} />
+            <Route path="get-started" element={<GetStartedPage />} />
+            <Route path="data-sources" element={<DataSourcesPage />} />
+            <Route path="agents" element={<AgentsPage />} />
+            <Route path="logs" element={<LogsPage />} />
+          </Route>
+        </Routes>
+      </Suspense>
       <Toaster position="bottom-right" />
       {commandPaletteOpen && <CommandPalette />}
       {optInModalOpen && (

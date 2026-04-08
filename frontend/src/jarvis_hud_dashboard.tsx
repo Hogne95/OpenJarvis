@@ -160,6 +160,12 @@ const IntentConsoleFeedback = lazy(() =>
 const MissionMatrix = lazy(() =>
   import('./components/Dashboard/MissionMatrix').then((module) => ({ default: module.MissionMatrix })),
 );
+const RepoDockPanel = lazy(() =>
+  import('./components/Dashboard/RepoDockPanel').then((module) => ({ default: module.RepoDockPanel })),
+);
+const TerminalWorkbenchPanel = lazy(() =>
+  import('./components/Dashboard/TerminalWorkbenchPanel').then((module) => ({ default: module.TerminalWorkbenchPanel })),
+);
 const VisualIntelPanel = lazy(() =>
   import('./components/Dashboard/VisualIntelPanel').then((module) => ({ default: module.VisualIntelPanel })),
 );
@@ -5311,107 +5317,35 @@ ${item.details}`,
                   />
                 </Suspense>
 
-                <div className="mt-4 rounded-[1.15rem] border border-cyan-400/10 bg-slate-950/55 p-4">
-                  <div className="mb-2 text-[10px] uppercase tracking-[0.35em] text-cyan-300/55">
-                    Terminal Workbench
-                  </div>
-                  <div className="grid gap-3">
-                    <input
-                      value={workbenchCommand}
-                      onChange={(event) => setWorkbenchCommand(event.target.value)}
-                      placeholder="pwd, git status, ls, python -V ..."
-                      className="rounded-[0.9rem] border border-cyan-400/10 bg-slate-950/70 px-4 py-3 text-sm text-slate-100 outline-none placeholder:text-slate-500"
-                    />
-                    <div className="grid gap-3 md:grid-cols-[1fr_120px_160px]">
-                      <input
-                        value={workbenchDirectory}
-                        onChange={(event) => setWorkbenchDirectory(event.target.value)}
-                        placeholder="Working directory"
-                        className="rounded-[0.9rem] border border-cyan-400/10 bg-slate-950/70 px-4 py-3 text-sm text-slate-100 outline-none placeholder:text-slate-500"
-                      />
-                      <input
-                        type="number"
-                        min={1}
-                        max={300}
-                        value={workbenchTimeout}
-                        onChange={(event) => setWorkbenchTimeout(Number(event.target.value) || 30)}
-                        className="rounded-[0.9rem] border border-cyan-400/10 bg-slate-950/70 px-4 py-3 text-sm text-slate-100 outline-none"
-                      />
-                      <button
-                        onClick={handleStageWorkbenchCommand}
-                        disabled={workbenchBusy !== null}
-                        className="rounded-[0.9rem] border border-cyan-300/20 bg-cyan-400/[0.08] px-4 py-3 text-xs uppercase tracking-[0.28em] text-cyan-100 transition hover:bg-cyan-400/[0.14] disabled:cursor-not-allowed disabled:opacity-50"
-                      >
-                        {workbenchBusy === 'stage' ? 'Staging' : 'Stage Command'}
-                      </button>
-                    </div>
-                  </div>
-                </div>
+                <Suspense fallback={<DashboardSectionFallback label="Loading terminal workbench..." />}>
+                  <TerminalWorkbenchPanel
+                    workbenchCommand={workbenchCommand}
+                    onWorkbenchCommandChange={setWorkbenchCommand}
+                    workbenchDirectory={workbenchDirectory}
+                    onWorkbenchDirectoryChange={setWorkbenchDirectory}
+                    workbenchTimeout={workbenchTimeout}
+                    onWorkbenchTimeoutChange={setWorkbenchTimeout}
+                    onStageWorkbenchCommand={handleStageWorkbenchCommand}
+                    workbenchBusy={workbenchBusy}
+                  />
+                </Suspense>
 
-                <div className="mt-4 rounded-[1.15rem] border border-cyan-400/10 bg-slate-950/55 p-4">
-                  <div className="mb-2 text-[10px] uppercase tracking-[0.35em] text-cyan-300/55">
-                    Repo Dock
-                  </div>
-                  <div className="grid gap-3">
-                    <div className="rounded-[0.95rem] border border-cyan-400/10 bg-black/20 px-3 py-3">
-                      <div className="text-[10px] uppercase tracking-[0.22em] text-cyan-300/55">Active Repo</div>
-                      <div className="mt-1 text-sm text-cyan-50/92">
-                        {activeWorkspaceRepo?.name || workspaceSummary?.root?.split(/[\\\\/]/).slice(-1)[0] || 'Workspace'}
-                      </div>
-                      <div className="mt-1 text-xs text-slate-300/70">
-                        {activeWorkspaceRepo?.remote_url || workspaceSummary?.remote_url || workspaceSummary?.root || 'No repo registered yet.'}
-                      </div>
-                    </div>
-                    <div className="grid gap-3 md:grid-cols-[1fr_160px]">
-                      <input
-                        value={repoPathInput}
-                        onChange={(event) => setRepoPathInput(event.target.value)}
-                        placeholder="C:\\dev\\my-repo or /mnt/c/dev/my-repo"
-                        className="rounded-[0.9rem] border border-cyan-400/10 bg-slate-950/70 px-4 py-3 text-sm text-slate-100 outline-none placeholder:text-slate-500"
-                      />
-                      <button
-                        onClick={handleRegisterRepo}
-                        disabled={repoBusy !== null}
-                        className="rounded-[0.9rem] border border-cyan-300/20 bg-cyan-400/[0.08] px-4 py-3 text-xs uppercase tracking-[0.28em] text-cyan-100 transition hover:bg-cyan-400/[0.14] disabled:cursor-not-allowed disabled:opacity-50"
-                      >
-                        {repoBusy === 'register' ? 'Connecting' : 'Connect Repo'}
-                      </button>
-                    </div>
-                    <div className="grid gap-3 md:grid-cols-[1fr_160px]">
-                      <input
-                        value={repoCloneUrl}
-                        onChange={(event) => setRepoCloneUrl(event.target.value)}
-                        placeholder="https://github.com/org/repo.git"
-                        className="rounded-[0.9rem] border border-cyan-400/10 bg-slate-950/70 px-4 py-3 text-sm text-slate-100 outline-none placeholder:text-slate-500"
-                      />
-                      <button
-                        onClick={loadCloneRepoCommand}
-                        className="rounded-[0.9rem] border border-cyan-400/12 bg-slate-950/70 px-4 py-3 text-xs uppercase tracking-[0.28em] text-cyan-100 transition hover:bg-cyan-400/[0.08]"
-                      >
-                        Load Clone Cmd
-                      </button>
-                    </div>
-                    {workspaceRepos?.repos?.length ? (
-                      <div className="grid gap-2 sm:grid-cols-2">
-                        {workspaceRepos.repos.slice(0, 6).map((repo) => (
-                          <button
-                            key={repo.root}
-                            onClick={() => handleSelectRepo(repo.root)}
-                            disabled={repoBusy !== null || repo.root === workspaceRepos.active_root}
-                            className="rounded-[0.95rem] border border-cyan-400/10 bg-black/20 px-3 py-3 text-left transition hover:bg-cyan-400/[0.08] disabled:cursor-not-allowed disabled:opacity-60"
-                          >
-                            <div className="text-xs uppercase tracking-[0.22em] text-cyan-300/55">
-                              {repo.root === workspaceRepos.active_root ? 'Active' : 'Tracked'}
-                            </div>
-                            <div className="mt-1 text-sm text-cyan-50/92">{repo.name}</div>
-                            <div className="mt-1 text-xs text-slate-300/70">{repo.branch}</div>
-                          </button>
-                        ))}
-                      </div>
-                    ) : null}
-                    {repoNotice ? <div className="text-sm text-cyan-100/80">{repoNotice}</div> : null}
-                  </div>
-                </div>
+                <Suspense fallback={<DashboardSectionFallback label="Loading repo dock..." />}>
+                  <RepoDockPanel
+                    activeWorkspaceRepo={activeWorkspaceRepo}
+                    workspaceSummary={workspaceSummary}
+                    repoPathInput={repoPathInput}
+                    onRepoPathInputChange={setRepoPathInput}
+                    onRegisterRepo={handleRegisterRepo}
+                    repoBusy={repoBusy}
+                    repoCloneUrl={repoCloneUrl}
+                    onRepoCloneUrlChange={setRepoCloneUrl}
+                    onLoadCloneRepoCommand={loadCloneRepoCommand}
+                    workspaceRepos={workspaceRepos}
+                    onSelectRepo={handleSelectRepo}
+                    repoNotice={repoNotice}
+                  />
+                </Suspense>
 
                 <div className="mt-4 rounded-[1.15rem] border border-cyan-400/10 bg-slate-950/55 p-4">
                   <div className="mb-2 text-[10px] uppercase tracking-[0.35em] text-cyan-300/55">

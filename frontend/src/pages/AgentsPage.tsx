@@ -1,5 +1,4 @@
-import { useEffect, useState, useCallback, useRef } from 'react';
-import ReactMarkdown from 'react-markdown';
+import { Suspense, lazy, useEffect, useState, useCallback, useRef } from 'react';
 import { toast } from 'sonner';
 import { useAppStore } from '../lib/store';
 import {
@@ -62,6 +61,10 @@ import {
 import { SOURCE_CATALOG } from '../types/connectors';
 import type { ConnectRequest } from '../types/connectors';
 import { listConnectors, connectSource } from '../lib/connectors-api';
+
+const AgentMarkdown = lazy(() =>
+  import('../components/AgentMarkdown').then((module) => ({ default: module.AgentMarkdown })),
+);
 
 // ---------------------------------------------------------------------------
 // Status helpers
@@ -1474,7 +1477,9 @@ function InteractTab({ agentId, agentStatus }: { agentId: string; agentStatus: s
               }}
             >
               {msg.direction === 'agent_to_user' ? (
-                <div className="prose prose-sm prose-invert max-w-none"><ReactMarkdown>{msg.content}</ReactMarkdown></div>
+                <Suspense fallback={<div className="whitespace-pre-wrap break-words">{msg.content}</div>}>
+                  <AgentMarkdown content={msg.content} />
+                </Suspense>
               ) : (
                 <p>{msg.content}</p>
               )}

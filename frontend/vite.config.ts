@@ -40,11 +40,42 @@ export default defineConfig({
     minify: 'esbuild',
     rollupOptions: {
       output: {
-        manualChunks: {
-          react: ['react', 'react-dom'],
-          markdown: ['react-markdown', 'rehype-highlight', 'remark-gfm'],
-          charts: ['recharts'],
-          router: ['react-router'],
+        manualChunks(id) {
+          if (!id.includes('node_modules')) {
+            return undefined;
+          }
+          if (id.includes('react-markdown') || id.includes('remark-gfm')) {
+            return 'markdown-core';
+          }
+          if (id.includes('rehype-') || id.includes('remark-math') || id.includes('/katex/')) {
+            return 'markdown-rich';
+          }
+          if (id.includes('recharts')) {
+            return 'charts';
+          }
+          if (id.includes('react-router')) {
+            return 'router';
+          }
+          if (id.includes('lucide-react')) {
+            return 'icons';
+          }
+          if (id.includes('@tauri-apps')) {
+            return 'tauri';
+          }
+          if (
+            id.includes('@base-ui') ||
+            id.includes('zustand') ||
+            id.includes('clsx') ||
+            id.includes('class-variance-authority') ||
+            id.includes('tailwind-merge') ||
+            id.includes('sonner')
+          ) {
+            return 'ui-vendor';
+          }
+          if (id.includes('/react/') || id.includes('/react-dom/')) {
+            return 'react';
+          }
+          return undefined;
         },
       },
     },
