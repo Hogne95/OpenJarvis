@@ -38,6 +38,7 @@ import {
   fetchSpeechHealth,
   fetchSpeechProfile,
   fetchTaskSummary,
+  fetchWorkspaceSummary,
   fetchVoiceLoopStatus,
   fetchWorkbenchStatus,
   generateDailyDigest,
@@ -57,6 +58,7 @@ import {
   updateAutomationRoutine,
   updateDigestSchedule,
   updateOperatorMeeting,
+  updateOperatorProject,
   updateOperatorRelationship,
   updateVoiceLoopState,
   type ActionCenterStatus,
@@ -70,6 +72,7 @@ import {
   type SpeechProfile,
   type TaskSummaryItem,
   type VoiceLoopStatus,
+  type WorkspaceSummary,
   type WorkbenchStatus,
 } from './lib/api';
 import { listConnectors } from './lib/connectors-api';
@@ -182,6 +185,7 @@ function normalizeMeetingKey(value: string) {
 }
 
 const DISMISSED_AUTOMATION_ALERTS_KEY = 'jarvis-dismissed-automation-alerts';
+const REVIEW_QUEUE_STATE_KEY = 'jarvis-review-queue-state';
 
 function loadDismissedAutomationAlerts() {
   if (typeof window === 'undefined') return [];
@@ -192,6 +196,23 @@ function loadDismissedAutomationAlerts() {
     return Array.isArray(parsed) ? parsed.filter((item): item is string => typeof item === 'string') : [];
   } catch {
     return [];
+  }
+}
+
+function loadReviewQueueState() {
+  if (typeof window === 'undefined') return {} as Record<string, 'pending' | 'in_progress' | 'done'>;
+  try {
+    const raw = window.localStorage.getItem(REVIEW_QUEUE_STATE_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== 'object') return {};
+    return Object.fromEntries(
+      Object.entries(parsed).filter((entry): entry is [string, 'pending' | 'in_progress' | 'done'] =>
+        ['pending', 'in_progress', 'done'].includes(String(entry[1])),
+      ),
+    );
+  } catch {
+    return {};
   }
 }
 
@@ -238,6 +259,7 @@ export default function JarvisHudDashboard() {
     docsReady: false,
     messagingReady: false,
   });
+  const [connectedConnectorIds, setConnectedConnectorIds] = useState<string[]>([]);
   const [agentNotice, setAgentNotice] = useState('');
   const [agentActionBusy, setAgentActionBusy] = useState<string | null>(null);
   const [voiceNotice, setVoiceNotice] = useState('');
@@ -253,6 +275,10 @@ export default function JarvisHudDashboard() {
     loadDismissedAutomationAlerts(),
   );
   const [alertFilter, setAlertFilter] = useState<'all' | 'errors' | 'ready'>('all');
+  const [reviewQueueState, setReviewQueueState] = useState<Record<string, 'pending' | 'in_progress' | 'done'>>(
+    () => loadReviewQueueState(),
+  );
+  const [workspaceSummary, setWorkspaceSummary] = useState<WorkspaceSummary | null>(null);
   const [workbenchCommand, setWorkbenchCommand] = useState('');
   const [workbenchDirectory, setWorkbenchDirectory] = useState('');
   const [workbenchTimeout, setWorkbenchTimeout] = useState(30);
@@ -280,6 +306,8 @@ export default function JarvisHudDashboard() {
   const [digestBusy, setDigestBusy] = useState(false);
   const [digestScheduleBusy, setDigestScheduleBusy] = useState(false);
   const [relationshipNotice, setRelationshipNotice] = useState('');
+  const [projectMemoryNotice, setProjectMemoryNotice] = useState('');
+  const [voiceSensitivity, setVoiceSensitivity] = useState<'sensitive' | 'balanced' | 'strict'>('balanced');
   const lastSyncedPhaseRef = useRef('');
   const hasAutoRequestedDigestRef = useRef(false);
   const lastSpokenDigestRef = useRef('');
@@ -295,6 +323,7 @@ export default function JarvisHudDashboard() {
     state: hudSpeechState,
     error: hudSpeechError,
     available: hudSpeechAvailable,
+    telemetry: hudSpeechTelemetry,
     startContinuousListening,
     stopContinuousListening,
   } = useSpeech();
@@ -303,7 +332,7 @@ export default function JarvisHudDashboard() {
     let cancelled = false;
 
     const refreshLiveStatus = async () => {
-      const [action, automation, automationLogResult, digest, digestSched, operatorMemory, inbox, tasks, reminderItems, health, speech, agents, connectors, loop, profile, wb] = await Promise.allSettled([
+      const [action, automation, automationLogResult, digest, digestSched, operatorMemory, inbox, tasks, reminderItems, health, speech, agents, connectors, loop, profile, wb, workspace] = await Promise.allSettled([
         fetchActionCenterStatus(),
         fetchAutomationStatus(),
         fetchAutomationLogs(),
@@ -320,6 +349,7 @@ export default function JarvisHudDashboard() {
         fetchVoiceLoopStatus(),
         fetchSpeechProfile(),
         fetchWorkbenchStatus(),
+        fetchWorkspaceSummary(),
       ]);
 
       if (cancelled) return;
@@ -333,6 +363,7 @@ export default function JarvisHudDashboard() {
       if (inbox.status === 'fulfilled') setInboxSummary(inbox.value);
       if (tasks.status === 'fulfilled') setTaskSummary(tasks.value);
       if (reminderItems.status === 'fulfilled') setReminders(reminderItems.value);
+      if (workspace.status === 'fulfilled') setWorkspaceSummary(workspace.value);
       setApiReachable(health.status === 'fulfilled' ? health.value : false);
       setSpeechAvailable(speech.status === 'fulfilled' ? speech.value.available : false);
       setRunningAgentCount(
@@ -344,6 +375,7 @@ export default function JarvisHudDashboard() {
       if (connectors.status === 'fulfilled') {
         const connected = connectors.value.filter((connector) => connector.connected);
         const ids = new Set(connected.map((connector) => connector.connector_id));
+        setConnectedConnectorIds(Array.from(ids));
         setConnectorSummary({
           totalConnected: connected.length,
           emailReady: ids.has('gmail_imap') || ids.has('outlook'),
@@ -419,6 +451,11 @@ export default function JarvisHudDashboard() {
       JSON.stringify(dismissedAutomationAlerts),
     );
   }, [dismissedAutomationAlerts]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    window.localStorage.setItem(REVIEW_QUEUE_STATE_KEY, JSON.stringify(reviewQueueState));
+  }, [reviewQueueState]);
 
   useEffect(() => {
     if (hasAutoRequestedDigestRef.current) return;
@@ -650,6 +687,17 @@ export default function JarvisHudDashboard() {
       })
       .slice(0, 3);
   }, [durableOperatorMemory?.meetings, reminders]);
+  const structuredReviewQueue = useMemo(() => {
+    const files = workspaceSummary?.changed_files || [];
+    return files.slice(0, 8).map((filePath, index) => ({
+      filePath,
+      status: reviewQueueState[filePath] || (index === 0 ? 'in_progress' : 'pending'),
+    }));
+  }, [reviewQueueState, workspaceSummary?.changed_files]);
+  const nextReviewQueueItem = useMemo(
+    () => structuredReviewQueue.find((item) => item.status !== 'done') || structuredReviewQueue[0] || null,
+    [structuredReviewQueue],
+  );
   const commanderQueue = useMemo(() => {
     const items: Array<{
       id: string;
@@ -724,6 +772,21 @@ export default function JarvisHudDashboard() {
       });
     }
 
+    if (nextReviewQueueItem) {
+      items.push({
+        id: `review-${nextReviewQueueItem.filePath}`,
+        priority: nextReviewQueueItem.status === 'in_progress' ? 58 : 55,
+        label: 'Code Review',
+        title: nextReviewQueueItem.filePath,
+        detail:
+          nextReviewQueueItem.status === 'in_progress'
+            ? 'File review is already in motion. Continue the current repo pass.'
+            : 'Changed file is waiting in the review queue.',
+        actionLabel: nextReviewQueueItem.status === 'in_progress' ? 'Continue Review' : 'Start Review',
+        action: () => loadFileCodingPrompt(nextReviewQueueItem.filePath, 'review'),
+      });
+    }
+
     if (activeAutomationAlerts.find((item) => item.success && item.routine_id === 'daily_ops')) {
       items.push({
         id: 'daily-ops-ready',
@@ -736,8 +799,75 @@ export default function JarvisHudDashboard() {
       });
     }
 
-    return items.sort((left, right) => right.priority - left.priority).slice(0, 5);
-  }, [activeAutomationAlerts, inboxFocusQueue, pendingAction, pendingWorkbench, prepQueue]);
+    return items.sort((left, right) => right.priority - left.priority).slice(0, 6);
+  }, [activeAutomationAlerts, inboxFocusQueue, nextReviewQueueItem, pendingAction, pendingWorkbench, prepQueue]);
+  const connectorCapabilities = useMemo(() => {
+    const ids = new Set(connectedConnectorIds);
+    const gmailConnected = ids.has('gmail') || ids.has('gmail_imap');
+    const googleCalendarConnected = ids.has('gcalendar');
+    const googleTasksConnected = ids.has('google_tasks');
+    const outlookConnected = ids.has('outlook');
+    return [
+      {
+        label: 'Email Drafts',
+        value: connectorSummary.emailReady ? 'Ready' : 'Not connected',
+      },
+      {
+        label: 'Inbox Mutations',
+        value: gmailConnected ? 'Gmail path ready' : 'Limited',
+      },
+      {
+        label: 'Calendar Create',
+        value: googleCalendarConnected ? 'Google path ready' : outlookConnected ? 'Outlook context only' : 'Limited',
+      },
+      {
+        label: 'Task Create',
+        value: googleTasksConnected ? 'Google Tasks ready' : 'Limited',
+      },
+    ];
+  }, [connectedConnectorIds, connectorSummary.emailReady]);
+  const actionCenterExecutionHint = useMemo(() => {
+    const ids = new Set(connectedConnectorIds);
+    const gmailConnected = ids.has('gmail') || ids.has('gmail_imap');
+    const googleCalendarConnected = ids.has('gcalendar');
+    const outlookConnected = ids.has('outlook');
+    if (actionMode === 'email') {
+      if (!connectorSummary.emailReady) {
+        return {
+          ready: false,
+          label: 'Connect Gmail or Outlook to stage email drafts.',
+          button: 'Email Source Needed',
+        };
+      }
+      return {
+        ready: true,
+        label: gmailConnected
+          ? 'Email actions can proceed through the Gmail path when scopes allow.'
+          : 'Email draft staging is available. Direct send may depend on provider support.',
+        button: 'Stage for Approval',
+      };
+    }
+
+    if (googleCalendarConnected) {
+      return {
+        ready: true,
+        label: 'Calendar actions can attempt direct Google Calendar creation.',
+        button: 'Stage for Approval',
+      };
+    }
+    if (outlookConnected) {
+      return {
+        ready: true,
+        label: 'Calendar planning is available. Outlook may still require manual create after approval.',
+        button: 'Stage for Approval',
+      };
+    }
+    return {
+      ready: false,
+      label: 'Connect Google Calendar or Outlook to stage calendar actions.',
+      button: 'Calendar Source Needed',
+    };
+  }, [actionMode, connectedConnectorIds, connectorSummary.emailReady]);
 
   useEffect(() => {
     if (!immediateReminder) return;
@@ -846,6 +976,23 @@ export default function JarvisHudDashboard() {
         };
     }
   }, [latestAssistantMessage, latestUserMessage, status, streamState.content, streamState.phase, toolSummary, voiceLoop?.active, voiceLoop?.last_transcript]);
+  const voiceEnvironmentLabel = useMemo(() => {
+    if (!voiceLoop?.active) return 'Idle';
+    if (hudSpeechTelemetry.noiseFloor >= 0.014) return 'Noisy room';
+    if (hudSpeechTelemetry.noiseFloor >= 0.008) return 'Moderate room';
+    return 'Clean room';
+  }, [hudSpeechTelemetry.noiseFloor, voiceLoop?.active]);
+  const voiceReadinessLabel = useMemo(() => {
+    if (!voiceLoop?.active) return 'Standby';
+    if (hudSpeechTelemetry.speechLikely) return 'Speech detected';
+    if (hudSpeechTelemetry.activeRatio >= 0.08) return 'Monitoring';
+    return 'Ready';
+  }, [hudSpeechTelemetry.activeRatio, hudSpeechTelemetry.speechLikely, voiceLoop?.active]);
+  const currentProjectKey = useMemo(
+    () => normalizeMeetingKey(workspaceSummary?.root || workspaceSummary?.branch || 'workspace'),
+    [workspaceSummary?.branch, workspaceSummary?.root],
+  );
+  const currentProjectMemory = durableOperatorMemory?.projects?.[currentProjectKey] || null;
 
   const reactorMetrics = useMemo(
     () => [
@@ -874,8 +1021,16 @@ export default function JarvisHudDashboard() {
         label: 'Latency',
         value: formatElapsed(latestAssistantMessage?.telemetry?.total_ms ?? streamState.elapsedMs),
       },
+      {
+        label: 'Mic',
+        value: voiceReadinessLabel,
+      },
+      {
+        label: 'Room',
+        value: voiceEnvironmentLabel,
+      },
     ],
-    [apiReachable, latestAssistantMessage?.telemetry?.total_ms, speechAvailable, speechProfile?.live_vad_enabled, speechProfile?.vad_backend, streamState.elapsedMs, voiceLoop],
+    [apiReachable, latestAssistantMessage?.telemetry?.total_ms, speechAvailable, speechProfile?.live_vad_enabled, speechProfile?.vad_backend, streamState.elapsedMs, voiceEnvironmentLabel, voiceLoop, voiceReadinessLabel],
   );
 
   const coreMatrix = [
@@ -911,6 +1066,12 @@ export default function JarvisHudDashboard() {
     setVoiceNotice('Command loaded into the deck.');
   }
 
+  function interruptAssistantOutput(reason?: string) {
+    audioElementRef.current?.pause();
+    window.dispatchEvent(new Event('jarvis:interrupt-stream'));
+    if (reason) setVoiceNotice(reason);
+  }
+
   function buildMeetingPrepPrompt(
     item: Pick<ReminderItem, 'title' | 'when' | 'detail'>,
     memory?: { prep_style: string; notes: string } | null,
@@ -919,6 +1080,114 @@ export default function JarvisHudDashboard() {
       memory?.prep_style || 'Prepare a concise executive brief with context, likely agenda, risks, and talking points.';
     const memoryNotes = memory?.notes ? `\nKnown meeting context: ${memory.notes}` : '';
     return `${prepStyle}\nMeeting: ${item.title}\nWhen: ${item.when}\nDetail: ${item.detail || 'No extra detail.'}${memoryNotes}`;
+  }
+
+  function loadCodingPrompt(
+    mode: 'inspect' | 'debug' | 'review' | 'refactor',
+  ) {
+    const projectContext = currentProjectMemory
+      ? `\nKnown project focus: ${currentProjectMemory.focus || 'none'}\nProject status: ${currentProjectMemory.status || 'unknown'}\nNext step: ${currentProjectMemory.next_step || 'not recorded'}\nProject notes: ${currentProjectMemory.notes || 'none'}`
+      : '';
+    const prompts = {
+      inspect:
+        `Act as my repository copilot. Inspect the current project state, identify the most important active area, summarize risks, and propose the next concrete step.${projectContext}`,
+      debug:
+        `Act as my debugging copilot. Inspect the current repo state, identify the most likely failure points, propose a short diagnostic plan, and only then suggest the first safe fix.${projectContext}`,
+      review:
+        `Act as my code reviewer. Focus on bugs, regressions, missing tests, and risky behavior. Start with the highest-severity findings and keep summaries brief.${projectContext}`,
+      refactor:
+        `Act as my refactoring copilot. Identify one safe, high-value cleanup that improves maintainability without changing intended behavior, then propose the smallest implementation plan.${projectContext}`,
+    } as const;
+    injectCommand(prompts[mode]);
+    setWorkbenchNotice(
+      mode === 'inspect'
+        ? 'Repository inspection prompt loaded.'
+        : mode === 'debug'
+        ? 'Debug prompt loaded.'
+        : mode === 'review'
+        ? 'Review prompt loaded.'
+        : 'Refactor prompt loaded.',
+    );
+  }
+
+  function loadWorkbenchPreset(
+    preset: 'status' | 'changed-files' | 'test-scan' | 'python-version',
+  ) {
+    const command =
+      preset === 'status'
+        ? 'git status --short'
+        : preset === 'changed-files'
+        ? 'git diff --name-only'
+        : preset === 'test-scan'
+        ? 'rg -n "pytest|unittest|vitest|jest|playwright" .'
+        : 'python --version';
+    setWorkbenchCommand(command);
+    setWorkbenchNotice('Workbench preset loaded. Stage it when ready.');
+  }
+
+  function loadFileCodingPrompt(
+    filePath: string,
+    mode: 'inspect' | 'debug' | 'review',
+  ) {
+    const projectContext = currentProjectMemory
+      ? `\nKnown project focus: ${currentProjectMemory.focus || 'none'}\nProject status: ${currentProjectMemory.status || 'unknown'}\nNext step: ${currentProjectMemory.next_step || 'not recorded'}`
+      : '';
+    const prompt =
+      mode === 'inspect'
+        ? `Inspect this file in the context of the current repository and explain what it does, what looks risky, and the next safe action.\nFile: ${filePath}${projectContext}`
+        : mode === 'debug'
+        ? `Debug this file in the context of the current repository. Identify the most likely failure points, likely regressions, and the first safe diagnostic step.\nFile: ${filePath}${projectContext}`
+        : `Review this file in the context of the current repository. Focus on bugs, regressions, missing tests, and risky behavior.\nFile: ${filePath}${projectContext}`;
+    injectCommand(prompt);
+    setReviewQueueState((current) => ({ ...current, [filePath]: 'in_progress' }));
+    setWorkbenchNotice(`${mode === 'inspect' ? 'Inspect' : mode === 'debug' ? 'Debug' : 'Review'} prompt loaded for ${filePath}.`);
+  }
+
+  function loadFileWorkbenchPreset(filePath: string) {
+    setWorkbenchCommand(`git diff -- ${filePath}`);
+    setReviewQueueState((current) => ({ ...current, [filePath]: 'in_progress' }));
+    setWorkbenchNotice(`Diff preset loaded for ${filePath}. Stage it when ready.`);
+  }
+
+  function markReviewQueueStatus(filePath: string, status: 'pending' | 'in_progress' | 'done') {
+    setReviewQueueState((current) => ({ ...current, [filePath]: status }));
+    setWorkbenchNotice(
+      status === 'done'
+        ? `${filePath} marked done in review queue.`
+        : status === 'in_progress'
+        ? `${filePath} marked in progress.`
+        : `${filePath} moved back to pending.`,
+    );
+  }
+
+  async function saveCurrentProjectMemory() {
+    try {
+      const next = await updateOperatorProject({
+        key: currentProjectKey,
+        title: workspaceSummary?.root?.split(/[\\/]/).slice(-1)[0] || workspaceSummary?.branch || 'Workspace',
+        focus:
+          currentProjectMemory?.focus ||
+          (workspaceSummary?.changed_files?.[0]
+            ? `Review and stabilize ${workspaceSummary.changed_files[0]}`
+            : 'Maintain repository stability'),
+        status:
+          workspaceSummary?.dirty
+            ? `${workspaceSummary.changed_count} changed files in progress`
+            : currentProjectMemory?.status || 'clean working tree',
+        next_step:
+          currentProjectMemory?.next_step ||
+          (workspaceSummary?.changed_files?.[0]
+            ? `Review ${workspaceSummary.changed_files[0]}`
+            : 'Inspect repository state and choose next task'),
+        notes:
+          currentProjectMemory?.notes ||
+          `Branch: ${workspaceSummary?.branch || 'unknown'}; top level: ${(workspaceSummary?.top_level || []).join(', ')}`,
+      });
+      setDurableOperatorMemory(next);
+      setProjectMemoryNotice('Project memory saved.');
+    } catch (error) {
+      setProjectMemoryNotice(error instanceof Error ? error.message : 'Unable to save project memory.');
+    }
   }
 
   function buildDailyOpsPrompt() {
@@ -1375,15 +1644,22 @@ export default function JarvisHudDashboard() {
       await startContinuousListening({
         chunkMs: speechProfile?.audio_chunk_ms || 2200,
         languageHints,
+        sensitivity: voiceSensitivity,
         onChunkProcessed: (result) => {
           setVoiceLoop(result);
+          if (result.interrupted) {
+            interruptAssistantOutput('Voice interruption detected. Standing by for your next command.');
+          }
           if (result.accepted && result.command.trim()) {
+            interruptAssistantOutput(
+              (speechProfile?.auto_submit_voice_commands ?? true)
+                ? 'Wake phrase confirmed. Interrupting current output and sending command.'
+                : 'Wake phrase confirmed. Interrupting current output and loading command.',
+            );
             if (speechProfile?.auto_submit_voice_commands ?? true) {
               submitInjectedCommand(result.command);
-              setVoiceNotice('Wake phrase confirmed. Command sent.');
             } else {
               injectCommand(result.command);
-              setVoiceNotice('Wake phrase confirmed. Command loaded into the deck.');
             }
             return;
           }
@@ -1845,6 +2121,25 @@ export default function JarvisHudDashboard() {
                         Disarm
                       </button>
                     </div>
+                    <div className="mt-4 grid gap-2 sm:grid-cols-3">
+                      {([
+                        ['sensitive', 'Sensitive'],
+                        ['balanced', 'Balanced'],
+                        ['strict', 'Strict'],
+                      ] as const).map(([value, label]) => (
+                        <button
+                          key={value}
+                          onClick={() => setVoiceSensitivity(value)}
+                          className={`rounded-[0.9rem] border px-3 py-2 text-[10px] uppercase tracking-[0.22em] transition ${
+                            voiceSensitivity === value
+                              ? 'border-cyan-300/20 bg-cyan-400/[0.08] text-cyan-100'
+                              : 'border-cyan-400/10 bg-slate-950/70 text-slate-300 hover:bg-cyan-400/[0.08]'
+                          }`}
+                        >
+                          {label}
+                        </button>
+                      ))}
+                    </div>
                   </div>
 
                   <div className="rounded-[1.4rem] border border-cyan-400/12 bg-slate-950/55 p-4">
@@ -2022,11 +2317,25 @@ export default function JarvisHudDashboard() {
                   )}
                   <button
                     onClick={handleStageAction}
-                    disabled={actionBusy !== null}
+                    disabled={actionBusy !== null || !actionCenterExecutionHint.ready}
                     className="mt-3 w-full rounded-[0.9rem] border border-cyan-300/20 bg-cyan-400/[0.08] px-4 py-3 text-xs uppercase tracking-[0.28em] text-cyan-100 transition hover:bg-cyan-400/[0.14] disabled:cursor-not-allowed disabled:opacity-50"
                   >
-                    {actionBusy === 'stage' ? 'Staging' : 'Stage for Approval'}
+                    {actionBusy === 'stage' ? 'Staging' : actionCenterExecutionHint.button}
                   </button>
+                  <div className="mt-3 rounded-[0.9rem] border border-cyan-400/10 bg-black/20 px-3 py-3 text-sm text-slate-200/76">
+                    {actionCenterExecutionHint.label}
+                  </div>
+                  <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                    {connectorCapabilities.map((item) => (
+                      <div
+                        key={item.label}
+                        className="rounded-[0.9rem] border border-cyan-400/10 bg-black/20 px-3 py-3"
+                      >
+                        <div className="text-[10px] uppercase tracking-[0.2em] text-cyan-300/55">{item.label}</div>
+                        <div className="mt-1 text-sm text-slate-200/76">{item.value}</div>
+                      </div>
+                    ))}
+                  </div>
                 </div>
 
                 <div className="mt-4 rounded-[1.15rem] border border-cyan-400/10 bg-slate-950/55 p-4">
@@ -2064,6 +2373,205 @@ export default function JarvisHudDashboard() {
                       </button>
                     </div>
                   </div>
+                </div>
+
+                <div className="mt-4 rounded-[1.15rem] border border-cyan-400/10 bg-slate-950/55 p-4">
+                  <div className="mb-2 text-[10px] uppercase tracking-[0.35em] text-cyan-300/55">
+                    Coding Presets
+                  </div>
+                  <div className="text-sm leading-7 text-slate-200/78">
+                    Fast repo-aware actions for inspection, debugging, review, and safe shell staging.
+                  </div>
+                  <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                    {([
+                      ['Inspect Repo', () => loadCodingPrompt('inspect')],
+                      ['Debug Mode', () => loadCodingPrompt('debug')],
+                      ['Review Mode', () => loadCodingPrompt('review')],
+                      ['Refactor Mode', () => loadCodingPrompt('refactor')],
+                    ] as const).map(([label, action]) => (
+                      <button
+                        key={label}
+                        onClick={action}
+                        className="rounded-[0.95rem] border border-cyan-400/12 bg-slate-950/70 px-3 py-3 text-xs uppercase tracking-[0.22em] text-cyan-100 transition hover:bg-cyan-400/[0.08]"
+                      >
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+                  <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                    {([
+                      ['Git Status', () => loadWorkbenchPreset('status')],
+                      ['Changed Files', () => loadWorkbenchPreset('changed-files')],
+                      ['Test Scan', () => loadWorkbenchPreset('test-scan')],
+                      ['Python Version', () => loadWorkbenchPreset('python-version')],
+                    ] as const).map(([label, action]) => (
+                      <button
+                        key={label}
+                        onClick={action}
+                        className="rounded-[0.95rem] border border-cyan-400/12 bg-cyan-400/[0.08] px-3 py-3 text-xs uppercase tracking-[0.22em] text-cyan-100 transition hover:bg-cyan-400/[0.14]"
+                      >
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="mt-4 rounded-[1.15rem] border border-cyan-400/10 bg-slate-950/55 p-4">
+                  <div className="mb-2 text-[10px] uppercase tracking-[0.35em] text-cyan-300/55">
+                    Repo State
+                  </div>
+                  <div className="grid gap-3 sm:grid-cols-3">
+                    <div className="rounded-[0.95rem] border border-cyan-400/10 bg-black/20 px-3 py-3">
+                      <div className="text-[10px] uppercase tracking-[0.22em] text-cyan-300/55">Branch</div>
+                      <div className="mt-1 text-sm text-cyan-50/92">{workspaceSummary?.branch || 'Unknown'}</div>
+                    </div>
+                    <div className="rounded-[0.95rem] border border-cyan-400/10 bg-black/20 px-3 py-3">
+                      <div className="text-[10px] uppercase tracking-[0.22em] text-cyan-300/55">Worktree</div>
+                      <div className="mt-1 text-sm text-cyan-50/92">
+                        {workspaceSummary ? (workspaceSummary.dirty ? `${workspaceSummary.changed_count} changed` : 'Clean') : 'Checking'}
+                      </div>
+                    </div>
+                    <div className="rounded-[0.95rem] border border-cyan-400/10 bg-black/20 px-3 py-3">
+                      <div className="text-[10px] uppercase tracking-[0.22em] text-cyan-300/55">Root</div>
+                      <div className="mt-1 text-sm text-cyan-50/92">{workspaceSummary?.root?.split(/[\\\\/]/).slice(-1)[0] || 'Workspace'}</div>
+                    </div>
+                  </div>
+                  <div className="mt-3 rounded-[0.95rem] border border-cyan-400/10 bg-black/20 px-3 py-3">
+                    <div className="text-[10px] uppercase tracking-[0.22em] text-cyan-300/55">Changed Files</div>
+                    {workspaceSummary?.changed_files?.length ? (
+                      <div className="mt-2 space-y-2">
+                        {workspaceSummary.changed_files.slice(0, 5).map((filePath) => (
+                          <div
+                            key={filePath}
+                            className="rounded-[0.9rem] border border-cyan-400/10 bg-slate-950/60 px-3 py-3"
+                          >
+                            <div className="text-sm text-cyan-50/92">{filePath}</div>
+                            <div className="mt-2 grid gap-2 sm:grid-cols-4">
+                              <button
+                                onClick={() => loadFileCodingPrompt(filePath, 'review')}
+                                className="rounded-[0.8rem] border border-cyan-400/12 bg-cyan-400/[0.08] px-2 py-2 text-[10px] uppercase tracking-[0.18em] text-cyan-100 transition hover:bg-cyan-400/[0.14]"
+                              >
+                                Review
+                              </button>
+                              <button
+                                onClick={() => loadFileCodingPrompt(filePath, 'debug')}
+                                className="rounded-[0.8rem] border border-cyan-400/12 bg-slate-950/70 px-2 py-2 text-[10px] uppercase tracking-[0.18em] text-cyan-100 transition hover:bg-cyan-400/[0.08]"
+                              >
+                                Debug
+                              </button>
+                              <button
+                                onClick={() => loadFileCodingPrompt(filePath, 'inspect')}
+                                className="rounded-[0.8rem] border border-cyan-400/12 bg-slate-950/70 px-2 py-2 text-[10px] uppercase tracking-[0.18em] text-cyan-100 transition hover:bg-cyan-400/[0.08]"
+                              >
+                                Inspect
+                              </button>
+                              <button
+                                onClick={() => loadFileWorkbenchPreset(filePath)}
+                                className="rounded-[0.8rem] border border-cyan-400/12 bg-cyan-400/[0.08] px-2 py-2 text-[10px] uppercase tracking-[0.18em] text-cyan-100 transition hover:bg-cyan-400/[0.14]"
+                              >
+                                Diff
+                              </button>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <div className="mt-2 text-sm leading-6 text-slate-200/76">
+                        No tracked changes reported.
+                      </div>
+                    )}
+                  </div>
+                  <div className="mt-3 rounded-[0.95rem] border border-cyan-400/10 bg-black/20 px-3 py-3">
+                    <div className="text-[10px] uppercase tracking-[0.22em] text-cyan-300/55">Top Level</div>
+                    <div className="mt-2 text-sm leading-6 text-slate-200/76">
+                      {workspaceSummary?.top_level?.length ? workspaceSummary.top_level.join(' · ') : 'Loading workspace layout...'}
+                    </div>
+                  </div>
+                </div>
+
+                <div className="mt-4 rounded-[1.15rem] border border-cyan-400/10 bg-slate-950/55 p-4">
+                  <div className="mb-2 text-[10px] uppercase tracking-[0.35em] text-cyan-300/55">
+                    Review Queue
+                  </div>
+                  {structuredReviewQueue.length ? (
+                    <div className="space-y-2">
+                      {structuredReviewQueue.map((item) => (
+                        <div
+                          key={item.filePath}
+                          className="rounded-[0.95rem] border border-cyan-400/10 bg-black/20 px-3 py-3"
+                        >
+                          <div className="flex items-start justify-between gap-3">
+                            <div>
+                              <div className="text-sm text-cyan-50/92">{item.filePath}</div>
+                              <div className="mt-1 text-[10px] uppercase tracking-[0.22em] text-cyan-300/55">
+                                {item.status === 'done'
+                                  ? 'done'
+                                  : item.status === 'in_progress'
+                                  ? 'in progress'
+                                  : 'pending'}
+                              </div>
+                            </div>
+                            <div className="flex gap-2">
+                              <button
+                                onClick={() => loadFileCodingPrompt(item.filePath, 'review')}
+                                className="rounded-[0.8rem] border border-cyan-400/12 bg-cyan-400/[0.08] px-2 py-2 text-[10px] uppercase tracking-[0.18em] text-cyan-100 transition hover:bg-cyan-400/[0.14]"
+                              >
+                                Open
+                              </button>
+                              <button
+                                onClick={() => markReviewQueueStatus(item.filePath, item.status === 'done' ? 'pending' : 'done')}
+                                className="rounded-[0.8rem] border border-cyan-400/12 bg-slate-950/70 px-2 py-2 text-[10px] uppercase tracking-[0.18em] text-cyan-100 transition hover:bg-cyan-400/[0.08]"
+                              >
+                                {item.status === 'done' ? 'Reopen' : 'Done'}
+                              </button>
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="text-sm leading-6 text-slate-200/76">
+                      No changed files in queue right now.
+                    </div>
+                  )}
+                </div>
+
+                <div className="mt-4 rounded-[1.15rem] border border-cyan-400/10 bg-slate-950/55 p-4">
+                  <div className="mb-2 text-[10px] uppercase tracking-[0.35em] text-cyan-300/55">
+                    Project Memory
+                  </div>
+                  <div className="rounded-[0.95rem] border border-cyan-400/10 bg-black/20 px-3 py-3">
+                    <div className="text-[10px] uppercase tracking-[0.22em] text-cyan-300/55">Focus</div>
+                    <div className="mt-1 text-sm text-slate-200/76">
+                      {currentProjectMemory?.focus || 'No saved project focus yet.'}
+                    </div>
+                  </div>
+                  <div className="mt-3 rounded-[0.95rem] border border-cyan-400/10 bg-black/20 px-3 py-3">
+                    <div className="text-[10px] uppercase tracking-[0.22em] text-cyan-300/55">Status / Next Step</div>
+                    <div className="mt-1 text-sm text-slate-200/76">
+                      {currentProjectMemory?.status || 'No saved status.'}
+                    </div>
+                    <div className="mt-2 text-sm text-cyan-50/92">
+                      {currentProjectMemory?.next_step || 'No saved next step.'}
+                    </div>
+                  </div>
+                  <div className="mt-3 flex gap-2">
+                    <button
+                      onClick={saveCurrentProjectMemory}
+                      className="rounded-[0.95rem] border border-cyan-400/12 bg-cyan-400/[0.08] px-3 py-3 text-xs uppercase tracking-[0.22em] text-cyan-100 transition hover:bg-cyan-400/[0.14]"
+                    >
+                      Save Project State
+                    </button>
+                    <button
+                      onClick={() => loadCodingPrompt('inspect')}
+                      className="rounded-[0.95rem] border border-cyan-400/12 bg-slate-950/70 px-3 py-3 text-xs uppercase tracking-[0.22em] text-cyan-100 transition hover:bg-cyan-400/[0.08]"
+                    >
+                      Use In Prompt
+                    </button>
+                  </div>
+                  {projectMemoryNotice ? (
+                    <div className="mt-3 text-sm text-cyan-100/80">{projectMemoryNotice}</div>
+                  ) : null}
                 </div>
 
                 <div className="mt-4 grid gap-3 sm:grid-cols-2">

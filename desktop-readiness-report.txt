@@ -1,0 +1,171 @@
+﻿OpenJarvis Desktop Report
+Generated: 2026-04-08 14:01:48 +02:00
+Machine: HOGNE
+User: hogne
+
+=== Desktop Readiness ===
+
+== OpenJarvis Desktop Readiness ==
+Repo: C:\Users\hogne\OpenJarvis
+
+== Required Commands ==
+
+Name  Found Version                             Path                               
+----  ----- -------                             ----                               
+node  False                                                                        
+npm   False                                                                        
+cargo  True cargo 1.94.1 (29ea6fb6a 2026-03-24) C:\Users\hogne\.cargo\bin\cargo.exe
+rustc  True rustc 1.94.1 (e408947bf 2026-03-25) C:\Users\hogne\.cargo\bin\rustc.exe
+
+
+
+== Node Tooling Fallback ==
+
+
+NodeFound : True
+NodePath  : C:\Program Files\nodejs\node.exe
+NpmFound  : True
+NpmPath   : C:\Program Files\nodejs\npm.cmd
+
+
+
+
+== Project Paths ==
+
+
+RepoRoot    : C:\Users\hogne\OpenJarvis
+Frontend    : True
+TauriRoot   : True
+PackageJson : True
+TauriConfig : True
+
+
+
+
+== Frontend Dependencies ==
+
+
+FrontendNodeModules : True
+TauriCli            : True
+TauriCliPath        : C:\Users\hogne\OpenJarvis\frontend\node_modules\.bin\tauri
+TypeScript          : True
+TypeScriptPath      : C:\Users\hogne\OpenJarvis\frontend\node_modules\.bin\tsc
+
+
+
+
+== WebView2 ==
+
+
+Installed : True
+Name      : Microsoft Edge WebView2 Runtime
+Version   : 146.0.3856.109
+
+
+
+
+== Rust Build Policy Hint ==
+
+
+TargetExists : True
+Summary      : Rust build helper artifacts exist. If Tauri still fails with os error 4551, Windows policy is likely blo
+               cking execution.
+
+
+
+Example build helper artifacts:
+  C:\Users\hogne\OpenJarvis\frontend\src-tauri\target\debug\.fingerprint\anyhow-ef3f532a3e874254\build-script-build-script-build
+  C:\Users\hogne\OpenJarvis\frontend\src-tauri\target\debug\.fingerprint\anyhow-ef3f532a3e874254\build-script-build-script-build.json
+  C:\Users\hogne\OpenJarvis\frontend\src-tauri\target\debug\.fingerprint\camino-19870f041f30b086\build-script-build-script-build
+  C:\Users\hogne\OpenJarvis\frontend\src-tauri\target\debug\.fingerprint\camino-19870f041f30b086\build-script-build-script-build.json
+  C:\Users\hogne\OpenJarvis\frontend\src-tauri\target\debug\.fingerprint\erased-serde-ec7a18e96f7f7987\build-script-build-script-build
+  C:\Users\hogne\OpenJarvis\frontend\src-tauri\target\debug\.fingerprint\erased-serde-ec7a18e96f7f7987\build-script-build-script-build.json
+  C:\Users\hogne\OpenJarvis\frontend\src-tauri\target\debug\.fingerprint\getrandom-4fdbe14e5190e0e3\build-script-build-script-build
+  C:\Users\hogne\OpenJarvis\frontend\src-tauri\target\debug\.fingerprint\getrandom-4fdbe14e5190e0e3\build-script-build-script-build.json
+  C:\Users\hogne\OpenJarvis\frontend\src-tauri\target\debug\.fingerprint\getrandom-9768303197773d60\build-script-build-script-build
+  C:\Users\hogne\OpenJarvis\frontend\src-tauri\target\debug\.fingerprint\getrandom-9768303197773d60\build-script-build-script-build.json
+
+== Recommended Next Step ==
+Environment looks mostly ready. If Tauri still fails with os error 4551, Windows App Control is the remaining blocker.
+Run: "C:\Users\hogne\OpenJarvis\check_openjarvis_desktop_policy.bat"
+
+
+=== Desktop Policy Diagnostics ===
+
+== OpenJarvis Desktop Policy Diagnostics ==
+
+== Smart App Control ==
+
+
+State    : Evaluation
+RawValue : 1
+
+
+
+
+== Relevant Services ==
+
+Name          Present  Status StartType
+----          -------  ------ ---------
+AppIDSvc         True Running Manual   
+AppLockerFltr    True Running          
+WdNisSvc         True Running Manual   
+WinDefend        True Running Auto     
+
+
+
+== WDAC Policy Files ==
+
+
+PolicyFileCount : 8
+
+
+
+Example policy files:
+  C:\Windows\System32\CodeIntegrity\CiPolicies\Active\{0283AC0F-FFF1-49AE-ADA1-8A933130CAD6}.cip
+  C:\Windows\System32\CodeIntegrity\CiPolicies\Active\{0939ED82-BFD5-4D32-B58E-D31D3C49715A}.cip
+  C:\Windows\System32\CodeIntegrity\CiPolicies\Active\{1283AC0F-FFF1-49AE-ADA1-8A933130CAD6}.cip
+  C:\Windows\System32\CodeIntegrity\CiPolicies\Active\{1678656C-05EF-481F-BC5B-EBD8C991502D}.cip
+  C:\Windows\System32\CodeIntegrity\CiPolicies\Active\{1939ED82-BFD5-4D32-B58E-D31D3C49715A}.cip
+  C:\Windows\System32\CodeIntegrity\CiPolicies\Active\{2678656C-05EF-481F-BC5B-EBD8C991502D}.cip
+  C:\Windows\System32\CodeIntegrity\CiPolicies\Active\{60FD87F8-4593-44A0-91B0-2E0DA022F248}.cip
+  C:\Windows\System32\CodeIntegrity\CiPolicies\Active\{784C4414-79F4-4C32-A6A5-F0FB42A51D0D}.cip
+
+== Code Integrity Events ==
+
+
+LogName    : Microsoft-Windows-CodeIntegrity/Operational
+EventCount : 5
+
+
+
+
+TimeCreated           Id Message                                                                                       
+-----------           -- -------                                                                                       
+07.04.2026 22:19:58 3089 Signature information for another event. Match using the Correlation Id.                      
+07.04.2026 22:19:58 3077 Code Integrity determined that a process (\Device\HarddiskVolume3\Users\hogne\.rustup\toolchai
+                         ns\stable-x86_64-pc-windows-msvc\bin\cargo.exe) attempted to load \Device\HarddiskVolume3\User
+                         s\hogne\OpenJarvis\frontend\src-tauri\target\debug\build\thiserror-36c492990601819d\build-scri
+                         pt-build.exe that did not meet the Enterprise signing level requirements or violated code inte
+                         grity policy (Policy ID:{0283ac0f-fff1-49ae-ada1-8a933130cad6}).                              
+07.04.2026 22:19:58 3089 Signature information for another event. Match using the Correlation Id.                      
+07.04.2026 22:19:58 3033 Code Integrity determined that a process (\Device\HarddiskVolume3\Users\hogne\.rustup\toolchai
+                         ns\stable-x86_64-pc-windows-msvc\bin\cargo.exe) attempted to load \Device\HarddiskVolume3\User
+                         s\hogne\OpenJarvis\frontend\src-tauri\target\debug\build\thiserror-36c492990601819d\build-scri
+                         pt-build.exe that did not meet the Enterprise signing level requirements.                     
+07.04.2026 22:19:30 3089 Signature information for another event. Match using the Correlation Id.                      
+
+
+
+== AppLocker Events ==
+
+
+LogName    : Microsoft-Windows-AppLocker/EXE and DLL
+EventCount : 0
+
+
+
+
+== Suggested Interpretation ==
+WDAC policy files are present. Device policy may be enforcing code execution restrictions.
+

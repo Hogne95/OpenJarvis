@@ -6,14 +6,36 @@ export type SpeechState = 'idle' | 'listening' | 'recording' | 'transcribing';
 interface ContinuousListenOptions {
   chunkMs?: number;
   languageHints?: string[];
+  sensitivity?: 'sensitive' | 'balanced' | 'strict';
   onChunkProcessed?: (result: Awaited<ReturnType<typeof processVoiceLoopAudio>>) => void;
   onError?: (error: Error) => void;
 }
+
+export interface SpeechTelemetry {
+  noiseFloor: number;
+  activeRatio: number;
+  peakRms: number;
+  speechLikely: boolean;
+}
+
+const RMS_SPEECH_THRESHOLD = 0.012;
+const PEAK_SPEECH_THRESHOLD = 0.035;
+const MIN_ACTIVE_FRAME_RATIO = 0.18;
+const NOISE_FLOOR_MIN = 0.0025;
+const NOISE_FLOOR_MAX = 0.02;
+const NOISE_FLOOR_LEARN_RATE = 0.08;
+const ACTIVE_NOISE_HOLD = 0.92;
 
 export function useSpeech() {
   const [state, setState] = useState<SpeechState>('idle');
   const [error, setError] = useState<string | null>(null);
   const [available, setAvailable] = useState(false);
+  const [telemetry, setTelemetry] = useState<SpeechTelemetry>({
+    noiseFloor: NOISE_FLOOR_MIN,
+    activeRatio: 0,
+    peakRms: 0,
+    speechLikely: false,
+  });
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<Blob[]>([]);
   const streamRef = useRef<MediaStream | null>(null);
@@ -26,6 +48,8 @@ export function useSpeech() {
   const pcmChunksRef = useRef<Float32Array[]>([]);
   const captureRateRef = useRef(16000);
   const flushIntervalRef = useRef<number | null>(null);
+  const speechEnergyRef = useRef({ frames: 0, activeFrames: 0, peakRms: 0 });
+  const noiseFloorRef = useRef(NOISE_FLOOR_MIN);
 
   // Check if speech backend is available on mount
   useEffect(() => {
@@ -59,6 +83,14 @@ export function useSpeech() {
     processorNodeRef.current = null;
     sourceNodeRef.current = null;
     pcmChunksRef.current = [];
+    speechEnergyRef.current = { frames: 0, activeFrames: 0, peakRms: 0 };
+    noiseFloorRef.current = NOISE_FLOOR_MIN;
+    setTelemetry({
+      noiseFloor: NOISE_FLOOR_MIN,
+      activeRatio: 0,
+      peakRms: 0,
+      speechLikely: false,
+    });
     const ctx = audioContextRef.current;
     audioContextRef.current = null;
     if (ctx) void ctx.close().catch(() => {});
@@ -104,9 +136,27 @@ export function useSpeech() {
   const flushContinuousAudio = useCallback(async () => {
     if (!continuousRef.current || pcmChunksRef.current.length === 0) return;
     const buffers = pcmChunksRef.current;
+    const energy = speechEnergyRef.current;
     pcmChunksRef.current = [];
+    speechEnergyRef.current = { frames: 0, activeFrames: 0, peakRms: 0 };
     const totalLength = buffers.reduce((sum, chunk) => sum + chunk.length, 0);
     if (!totalLength) return;
+    const activeRatio = energy.frames ? energy.activeFrames / energy.frames : 0;
+    const sensitivity = continuousOptionsRef.current?.sensitivity || 'balanced';
+    const sensitivityMultiplier =
+      sensitivity === 'sensitive' ? 0.82 : sensitivity === 'strict' ? 1.22 : 1;
+    const adaptivePeakThreshold = Math.max(
+      PEAK_SPEECH_THRESHOLD * sensitivityMultiplier,
+      noiseFloorRef.current * (3.2 * sensitivityMultiplier),
+    );
+    const hasEnoughSpeech = energy.peakRms >= adaptivePeakThreshold || activeRatio >= MIN_ACTIVE_FRAME_RATIO;
+    setTelemetry({
+      noiseFloor: noiseFloorRef.current,
+      activeRatio,
+      peakRms: energy.peakRms,
+      speechLikely: hasEnoughSpeech,
+    });
+    if (!hasEnoughSpeech) return;
 
     const merged = new Float32Array(totalLength);
     let offset = 0;
@@ -234,6 +284,34 @@ export function useSpeech() {
         processor.onaudioprocess = (event) => {
           if (!continuousRef.current) return;
           const channelData = event.inputBuffer.getChannelData(0);
+          let sumSquares = 0;
+          for (let index = 0; index < channelData.length; index += 1) {
+            const sample = channelData[index];
+            sumSquares += sample * sample;
+          }
+          const rms = Math.sqrt(sumSquares / channelData.length);
+          const currentNoiseFloor = noiseFloorRef.current;
+          const learningTarget =
+            rms < currentNoiseFloor * 2.4
+              ? rms
+              : currentNoiseFloor * ACTIVE_NOISE_HOLD;
+          const nextNoiseFloor =
+            currentNoiseFloor * (1 - NOISE_FLOOR_LEARN_RATE) + learningTarget * NOISE_FLOOR_LEARN_RATE;
+          noiseFloorRef.current = Math.max(NOISE_FLOOR_MIN, Math.min(NOISE_FLOOR_MAX, nextNoiseFloor));
+          const sensitivity = continuousOptionsRef.current?.sensitivity || 'balanced';
+          const sensitivityMultiplier =
+            sensitivity === 'sensitive' ? 0.82 : sensitivity === 'strict' ? 1.22 : 1;
+          const adaptiveSpeechThreshold = Math.max(
+            RMS_SPEECH_THRESHOLD * sensitivityMultiplier,
+            noiseFloorRef.current * (2.15 * sensitivityMultiplier),
+          );
+          speechEnergyRef.current.frames += 1;
+          if (rms >= adaptiveSpeechThreshold) {
+            speechEnergyRef.current.activeFrames += 1;
+          }
+          if (rms > speechEnergyRef.current.peakRms) {
+            speechEnergyRef.current.peakRms = rms;
+          }
           pcmChunksRef.current.push(new Float32Array(channelData));
         };
 
@@ -242,6 +320,12 @@ export function useSpeech() {
         flushIntervalRef.current = window.setInterval(() => {
           void flushContinuousAudio();
         }, options.chunkMs ?? 2200);
+        setTelemetry({
+          noiseFloor: noiseFloorRef.current,
+          activeRatio: 0,
+          peakRms: 0,
+          speechLikely: false,
+        });
         setState('listening');
       } catch (err) {
         continuousRef.current = false;
@@ -287,6 +371,7 @@ export function useSpeech() {
     state,
     error,
     available,
+    telemetry,
     startRecording,
     stopRecording,
     startContinuousListening,

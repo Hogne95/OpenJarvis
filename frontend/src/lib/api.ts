@@ -409,6 +409,15 @@ export interface AutomationLogEntry {
   error: string;
 }
 
+export interface WorkspaceSummary {
+  root: string;
+  branch: string;
+  dirty: boolean;
+  changed_count: number;
+  changed_files: string[];
+  top_level: string[];
+}
+
 export interface DurableOperatorProfile {
   honorific: string;
   reply_tone: string;
@@ -445,6 +454,17 @@ export interface DurableOperatorMemory {
       title: string;
       importance: string;
       prep_style: string;
+      notes: string;
+    }
+  >;
+  projects: Record<
+    string,
+    {
+      key: string;
+      title: string;
+      focus: string;
+      status: string;
+      next_step: string;
       notes: string;
     }
   >;
@@ -900,6 +920,15 @@ export async function fetchAutomationLogs(limit: number = 12): Promise<{
   return res.json();
 }
 
+export async function fetchWorkspaceSummary(): Promise<WorkspaceSummary> {
+  const res = await fetch(`${getBase()}/v1/workspace/summary`);
+  if (!res.ok) {
+    const detail = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(detail.detail || `Workspace summary fetch failed: ${res.status}`);
+  }
+  return res.json();
+}
+
 export async function fetchOperatorMemory(): Promise<DurableOperatorMemory> {
   const res = await fetch(`${getBase()}/v1/operator-memory`);
   if (!res.ok) {
@@ -972,6 +1001,26 @@ export async function updateOperatorMeeting(body: {
   if (!res.ok) {
     const detail = await res.json().catch(() => ({ detail: res.statusText }));
     throw new Error(detail.detail || `Operator meeting update failed: ${res.status}`);
+  }
+  return res.json();
+}
+
+export async function updateOperatorProject(body: {
+  key: string;
+  title?: string;
+  focus?: string;
+  status?: string;
+  next_step?: string;
+  notes?: string;
+}): Promise<DurableOperatorMemory> {
+  const res = await fetch(`${getBase()}/v1/operator-memory/project`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const detail = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(detail.detail || `Operator project update failed: ${res.status}`);
   }
   return res.json();
 }

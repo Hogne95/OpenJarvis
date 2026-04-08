@@ -5,9 +5,11 @@ from __future__ import annotations
 import inspect
 import json
 import logging
+import subprocess
 from typing import Any, Dict, List, Literal, Optional
 from email.utils import parseaddr
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 from fastapi.concurrency import run_in_threadpool
 from fastapi import APIRouter, HTTPException, Request, Response, WebSocket, WebSocketDisconnect
@@ -159,6 +161,15 @@ class OperatorMeetingUpdateRequest(BaseModel):
     title: Optional[str] = None
     importance: Optional[str] = None
     prep_style: Optional[str] = None
+    notes: Optional[str] = None
+
+
+class OperatorProjectUpdateRequest(BaseModel):
+    key: str
+    title: Optional[str] = None
+    focus: Optional[str] = None
+    status: Optional[str] = None
+    next_step: Optional[str] = None
     notes: Optional[str] = None
 
 
@@ -782,6 +793,7 @@ workbench_router = APIRouter(prefix="/v1/workbench", tags=["workbench"])
 action_center_router = APIRouter(prefix="/v1/action-center", tags=["action-center"])
 operator_memory_router = APIRouter(prefix="/v1/operator-memory", tags=["operator-memory"])
 automation_router = APIRouter(prefix="/v1/automation", tags=["automation"])
+workspace_router = APIRouter(prefix="/v1/workspace", tags=["workspace"])
 
 
 @speech_router.post("/transcribe")
@@ -1342,6 +1354,20 @@ async def operator_memory_update_meeting(
         raise HTTPException(status_code=400, detail=str(exc))
 
 
+@operator_memory_router.post("/project")
+async def operator_memory_update_project(
+    req: OperatorProjectUpdateRequest,
+    request: Request,
+):
+    manager = getattr(request.app.state, "operator_memory", None)
+    if manager is None:
+        raise HTTPException(status_code=503, detail="Operator memory not configured")
+    try:
+        return manager.update_project(req.key, req.model_dump(exclude_none=True))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
 def _routine_defaults(routine_id: str, operator_memory: Any | None = None) -> dict[str, str]:
     snapshot = operator_memory.snapshot() if operator_memory is not None else {}
     profile = snapshot.get("profile", {}) if isinstance(snapshot, dict) else {}
@@ -1493,6 +1519,39 @@ async def automation_schedule_routine(req: RoutineScheduleRequest, request: Requ
     return await automation_status(request)
 
 
+@workspace_router.get("/summary")
+async def workspace_summary():
+    root = Path(__file__).resolve().parents[3]
+
+    def run_git(*args: str) -> str:
+        result = subprocess.run(
+            ["git", *args],
+            cwd=root,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if result.returncode != 0:
+            return ""
+        return result.stdout.strip()
+
+    branch = run_git("rev-parse", "--abbrev-ref", "HEAD") or "unknown"
+    changed_files = [line.strip() for line in run_git("status", "--short").splitlines() if line.strip()]
+    top_level = sorted(
+        item.name
+        for item in root.iterdir()
+        if item.is_dir() and not item.name.startswith(".")
+    )[:12]
+    return {
+        "root": str(root),
+        "branch": branch,
+        "dirty": bool(changed_files),
+        "changed_count": len(changed_files),
+        "changed_files": changed_files[:8],
+        "top_level": top_level,
+    }
+
+
 # ---- Feedback routes ----
 
 feedback_router = APIRouter(prefix="/v1/feedback", tags=["feedback"])
@@ -1609,6 +1668,7 @@ def include_all_routes(app) -> None:
     app.include_router(action_center_router)
     app.include_router(operator_memory_router)
     app.include_router(automation_router)
+    app.include_router(workspace_router)
     app.include_router(feedback_router)
     app.include_router(optimize_router)
 
@@ -1663,6 +1723,7 @@ __all__ = [
     "action_center_router",
     "operator_memory_router",
     "automation_router",
+    "workspace_router",
     "feedback_router",
     "optimize_router",
 ]

@@ -46,6 +46,16 @@ class MeetingMemory:
     notes: str = ""
 
 
+@dataclass(slots=True)
+class ProjectMemory:
+    key: str
+    title: str = ""
+    focus: str = ""
+    status: str = ""
+    next_step: str = ""
+    notes: str = ""
+
+
 class OperatorMemory:
     """Simple JSON-backed operator memory for cross-session HUD personalization."""
 
@@ -56,6 +66,7 @@ class OperatorMemory:
         self._signals = OperatorSignals()
         self._relationships: dict[str, ContactMemory] = {}
         self._meetings: dict[str, MeetingMemory] = {}
+        self._projects: dict[str, ProjectMemory] = {}
         self._load()
 
     def _load(self) -> None:
@@ -103,6 +114,18 @@ class OperatorMemory:
             )
             for key, value in meetings.items()
         }
+        projects = data.get("projects", {})
+        self._projects = {
+            key: ProjectMemory(
+                key=key,
+                title=str(value.get("title", "")),
+                focus=str(value.get("focus", "")),
+                status=str(value.get("status", "")),
+                next_step=str(value.get("next_step", "")),
+                notes=str(value.get("notes", "")),
+            )
+            for key, value in projects.items()
+        }
 
     def _save(self) -> None:
         payload = {
@@ -110,6 +133,7 @@ class OperatorMemory:
             "signals": asdict(self._signals),
             "relationships": {key: asdict(value) for key, value in self._relationships.items()},
             "meetings": {key: asdict(value) for key, value in self._meetings.items()},
+            "projects": {key: asdict(value) for key, value in self._projects.items()},
         }
         self._path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
 
@@ -119,6 +143,7 @@ class OperatorMemory:
             "signals": asdict(self._signals),
             "relationships": {key: asdict(value) for key, value in self._relationships.items()},
             "meetings": {key: asdict(value) for key, value in self._meetings.items()},
+            "projects": {key: asdict(value) for key, value in self._projects.items()},
         }
 
     def update_profile(self, partial: dict[str, Any]) -> dict[str, Any]:
@@ -171,6 +196,25 @@ class OperatorMemory:
         if "notes" in partial:
             current.notes = str(partial["notes"]).strip()
         self._meetings[cleaned_key] = current
+        self._save()
+        return self.snapshot()
+
+    def update_project(self, key: str, partial: dict[str, Any]) -> dict[str, Any]:
+        cleaned_key = key.strip().lower()
+        if not cleaned_key:
+            raise ValueError("Project key is required")
+        current = self._projects.get(cleaned_key, ProjectMemory(key=cleaned_key))
+        if "title" in partial:
+            current.title = str(partial["title"]).strip()
+        if "focus" in partial:
+            current.focus = str(partial["focus"]).strip()
+        if "status" in partial:
+            current.status = str(partial["status"]).strip()
+        if "next_step" in partial:
+            current.next_step = str(partial["next_step"]).strip()
+        if "notes" in partial:
+            current.notes = str(partial["notes"]).strip()
+        self._projects[cleaned_key] = current
         self._save()
         return self.snapshot()
 
