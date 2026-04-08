@@ -77,6 +77,24 @@ class VisualObservation:
     image_path: str = ""
 
 
+@dataclass(slots=True)
+class VisualInsight:
+    id: str
+    label: str
+    question: str = ""
+    answer: str = ""
+    created_at: str = ""
+
+
+@dataclass(slots=True)
+class VisualBrief:
+    id: str
+    label: str
+    summary: str = ""
+    details: str = ""
+    created_at: str = ""
+
+
 class OperatorMemory:
     """Simple JSON-backed operator memory for cross-session HUD personalization."""
 
@@ -90,6 +108,8 @@ class OperatorMemory:
         self._projects: dict[str, ProjectMemory] = {}
         self._explicit_memories: list[ExplicitMemory] = []
         self._visual_observations: list[VisualObservation] = []
+        self._visual_insights: list[VisualInsight] = []
+        self._visual_briefs: list[VisualBrief] = []
         self._load()
 
     def _load(self) -> None:
@@ -175,6 +195,30 @@ class OperatorMemory:
             for value in visual_observations
             if str(value.get("label", "")).strip()
         ]
+        visual_insights = data.get("visual_insights", [])
+        self._visual_insights = [
+            VisualInsight(
+                id=str(value.get("id", "")),
+                label=str(value.get("label", "")),
+                question=str(value.get("question", "")),
+                answer=str(value.get("answer", "")),
+                created_at=str(value.get("created_at", "")),
+            )
+            for value in visual_insights
+            if str(value.get("question", "")).strip() or str(value.get("answer", "")).strip()
+        ]
+        visual_briefs = data.get("visual_briefs", [])
+        self._visual_briefs = [
+            VisualBrief(
+                id=str(value.get("id", "")),
+                label=str(value.get("label", "")),
+                summary=str(value.get("summary", "")),
+                details=str(value.get("details", "")),
+                created_at=str(value.get("created_at", "")),
+            )
+            for value in visual_briefs
+            if str(value.get("summary", "")).strip() or str(value.get("details", "")).strip()
+        ]
 
     def _save(self) -> None:
         payload = {
@@ -185,6 +229,8 @@ class OperatorMemory:
             "projects": {key: asdict(value) for key, value in self._projects.items()},
             "explicit_memories": [asdict(value) for value in self._explicit_memories],
             "visual_observations": [asdict(value) for value in self._visual_observations],
+            "visual_insights": [asdict(value) for value in self._visual_insights],
+            "visual_briefs": [asdict(value) for value in self._visual_briefs],
         }
         self._path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
 
@@ -197,6 +243,8 @@ class OperatorMemory:
             "projects": {key: asdict(value) for key, value in self._projects.items()},
             "explicit_memories": [asdict(value) for value in self._explicit_memories],
             "visual_observations": [asdict(value) for value in self._visual_observations],
+            "visual_insights": [asdict(value) for value in self._visual_insights],
+            "visual_briefs": [asdict(value) for value in self._visual_briefs],
         }
 
     def update_profile(self, partial: dict[str, Any]) -> dict[str, Any]:
@@ -403,6 +451,68 @@ class OperatorMemory:
             ),
         )
         self._visual_observations = self._visual_observations[:24]
+        self._save()
+        return self.snapshot()
+
+    def add_visual_insight(
+        self,
+        *,
+        label: str,
+        question: str,
+        answer: str,
+        created_at: str = "",
+    ) -> dict[str, Any]:
+        cleaned_label = label.strip() or "Visual Context"
+        cleaned_question = question.strip()
+        cleaned_answer = answer.strip()
+        if not cleaned_question:
+            raise ValueError("Visual question is required")
+        if not cleaned_answer:
+            raise ValueError("Visual answer is required")
+        stamp = (created_at or cleaned_question).strip().lower().replace(" ", "-")
+        insight_id = f"visual-insight-{stamp}"
+        self._visual_insights = [item for item in self._visual_insights if item.id != insight_id]
+        self._visual_insights.insert(
+            0,
+            VisualInsight(
+                id=insight_id,
+                label=cleaned_label,
+                question=cleaned_question,
+                answer=cleaned_answer,
+                created_at=created_at,
+            ),
+        )
+        self._visual_insights = self._visual_insights[:36]
+        self._save()
+        return self.snapshot()
+
+    def add_visual_brief(
+        self,
+        *,
+        label: str,
+        summary: str,
+        details: str,
+        created_at: str = "",
+    ) -> dict[str, Any]:
+        cleaned_label = label.strip() or "Visual Brief"
+        cleaned_summary = summary.strip()
+        cleaned_details = details.strip()
+        if not cleaned_summary and not cleaned_details:
+            raise ValueError("Visual brief content is required")
+        stamp = (created_at or cleaned_label).strip().lower().replace(" ", "-")
+        brief_id = f"visual-brief-{stamp}"
+        self._visual_briefs = [item for item in self._visual_briefs if item.id != brief_id]
+        self._visual_briefs.insert(
+            0,
+            VisualBrief(
+                id=brief_id,
+                label=cleaned_label,
+                summary=cleaned_summary,
+                details=cleaned_details,
+                created_at=created_at,
+            ),
+        )
+        self._visual_briefs = self._visual_briefs[:24]
         self._save()
         return self.snapshot()
 

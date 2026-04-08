@@ -206,6 +206,20 @@ class OperatorVisualObservationRequest(BaseModel):
     created_at: Optional[str] = None
 
 
+class OperatorVisualInsightRequest(BaseModel):
+    label: str
+    question: str
+    answer: str
+    created_at: Optional[str] = None
+
+
+class OperatorVisualBriefRequest(BaseModel):
+    label: str
+    summary: str
+    details: Optional[str] = None
+    created_at: Optional[str] = None
+
+
 class RoutineScheduleRequest(BaseModel):
     routine_id: Literal["daily_ops", "inbox_sweep", "meeting_prep"]
     enabled: bool
@@ -266,6 +280,14 @@ class VisionUiVerifyRequest(BaseModel):
     desktop_intent: Optional[str] = None
     note: Optional[str] = None
     label: Optional[str] = None
+
+
+class VisionQueryRequest(BaseModel):
+    images: list[dict[str, str]]
+    question: str
+    note: Optional[str] = None
+    label: Optional[str] = None
+    history: list[dict[str, str]] = []
 
 
 # ---- Agent routes ----
@@ -1478,6 +1500,44 @@ async def operator_memory_add_visual_observation(
         raise HTTPException(status_code=400, detail=str(exc))
 
 
+@operator_memory_router.post("/visual-insight")
+async def operator_memory_add_visual_insight(
+    req: OperatorVisualInsightRequest,
+    request: Request,
+):
+    manager = getattr(request.app.state, "operator_memory", None)
+    if manager is None:
+        raise HTTPException(status_code=503, detail="Operator memory not configured")
+    try:
+        return manager.add_visual_insight(
+            label=req.label,
+            question=req.question,
+            answer=req.answer,
+            created_at=req.created_at or "",
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@operator_memory_router.post("/visual-brief")
+async def operator_memory_add_visual_brief(
+    req: OperatorVisualBriefRequest,
+    request: Request,
+):
+    manager = getattr(request.app.state, "operator_memory", None)
+    if manager is None:
+        raise HTTPException(status_code=503, detail="Operator memory not configured")
+    try:
+        return manager.add_visual_brief(
+            label=req.label,
+            summary=req.summary,
+            details=req.details or "",
+            created_at=req.created_at or "",
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
 @operator_memory_router.get("/visual/{observation_id}/asset")
 async def operator_memory_visual_asset(
     observation_id: str,
@@ -2115,6 +2175,77 @@ async def vision_verify_ui_target(req: VisionUiVerifyRequest):
         "label": req.label or "",
         "target_label": req.target_label.strip(),
         "screen_count": len(req.images),
+    }
+
+
+@vision_router.post("/query")
+async def vision_query(req: VisionQueryRequest):
+    api_key = os.environ.get("OPENAI_API_KEY", "").strip()
+    if not api_key:
+        raise HTTPException(status_code=503, detail="Visual question answering requires OPENAI_API_KEY")
+    if not req.images:
+        raise HTTPException(status_code=400, detail="At least one image is required for visual question answering")
+    question = req.question.strip()
+    if not question:
+        raise HTTPException(status_code=400, detail="question is required for visual question answering")
+    try:
+        from openai import OpenAI
+    except ImportError as exc:
+        raise HTTPException(status_code=503, detail=f"openai package unavailable: {exc}") from exc
+
+    prompt = (
+        "You are JARVIS visual question answering. Reply in English only. "
+        "Answer the user's question about the provided image or screen set. "
+        "Be concise but useful. If the answer is uncertain, say what is visible and what still needs confirmation. "
+        "End with one short 'Next step' line when there is an obvious operator follow-up."
+    )
+    if req.note:
+        prompt += f"\n\nUser context note: {req.note.strip()}"
+    if req.label:
+        prompt += f"\nSession label: {req.label.strip()}"
+    history_lines: list[str] = []
+    for item in req.history[:6]:
+        previous_question = (item.get("question") or "").strip()
+        previous_answer = (item.get("answer") or "").strip()
+        if not previous_question or not previous_answer:
+            continue
+        history_lines.append(f"Q: {previous_question}\nA: {previous_answer}")
+    if history_lines:
+        prompt += "\n\nRecent visual conversation context:\n" + "\n\n".join(history_lines)
+
+    user_content: list[dict[str, Any]] = [
+        {"type": "text", "text": f"Question: {question}"},
+    ]
+    for index, image in enumerate(req.images, start=1):
+        label = (image.get("label") or f"Screen {index}").strip()
+        user_content.append({"type": "text", "text": f"{label}"})
+        user_content.append({"type": "image_url", "image_url": {"url": image.get("image_data_url", "")}})
+
+    try:
+        client = OpenAI(api_key=api_key)
+        response = client.chat.completions.create(
+            model=os.environ.get("OPENJARVIS_VISION_MODEL", "gpt-4o-mini"),
+            messages=[
+                {"role": "system", "content": prompt},
+                {"role": "user", "content": user_content},
+            ],
+            temperature=0.2,
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"Visual question answering failed: {exc}") from exc
+
+    content = ""
+    choice = response.choices[0] if response.choices else None
+    if choice and choice.message:
+        content = (choice.message.content or "").strip()
+
+    return {
+        "answer": content,
+        "question": question,
+        "model": os.environ.get("OPENJARVIS_VISION_MODEL", "gpt-4o-mini"),
+        "label": req.label or "",
+        "screen_count": len(req.images),
+        "history_used": len(history_lines),
     }
 
 

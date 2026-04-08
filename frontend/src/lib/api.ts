@@ -515,6 +515,20 @@ export interface DurableOperatorMemory {
     created_at: string;
     image_path: string;
   }>;
+  visual_insights?: Array<{
+    id: string;
+    label: string;
+    question: string;
+    answer: string;
+    created_at: string;
+  }>;
+  visual_briefs?: Array<{
+    id: string;
+    label: string;
+    summary: string;
+    details: string;
+    created_at: string;
+  }>;
   relationships: Record<
     string,
     {
@@ -656,6 +670,15 @@ export interface VisionUiVerifyResult {
   label: string;
   target_label: string;
   screen_count?: number;
+}
+
+export interface VisionQueryResult {
+  answer: string;
+  question: string;
+  model: string;
+  label: string;
+  screen_count?: number;
+  history_used?: number;
 }
 
 export interface DesktopState {
@@ -1363,6 +1386,42 @@ export async function updateOperatorVisualObservation(body: {
   return res.json();
 }
 
+export async function updateOperatorVisualInsight(body: {
+  label: string;
+  question: string;
+  answer: string;
+  created_at?: string;
+}): Promise<DurableOperatorMemory> {
+  const res = await fetch(`${getBase()}/v1/operator-memory/visual-insight`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const detail = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(detail.detail || `Operator visual insight update failed: ${res.status}`);
+  }
+  return res.json();
+}
+
+export async function updateOperatorVisualBrief(body: {
+  label: string;
+  summary: string;
+  details?: string;
+  created_at?: string;
+}): Promise<DurableOperatorMemory> {
+  const res = await fetch(`${getBase()}/v1/operator-memory/visual-brief`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const detail = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(detail.detail || `Visual brief update failed: ${res.status}`);
+  }
+  return res.json();
+}
+
 export async function fetchReminders(limit: number = 8): Promise<ReminderItem[]> {
   const res = await fetch(`${getBase()}/v1/action-center/reminders?limit=${limit}`);
   if (!res.ok) {
@@ -1577,6 +1636,31 @@ export async function verifyVisionUiTarget(body: {
   if (!res.ok) {
     const detail = await res.json().catch(() => ({ detail: res.statusText }));
     throw new Error(detail.detail || `Vision UI verification failed: ${res.status}`);
+  }
+  return res.json();
+}
+
+export async function queryVision(body: {
+  images: Array<{
+    image_data_url: string;
+    label: string;
+  }>;
+  question: string;
+  note?: string;
+  label?: string;
+  history?: Array<{
+    question: string;
+    answer: string;
+  }>;
+}): Promise<VisionQueryResult> {
+  const res = await fetch(`${getBase()}/v1/vision/query`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const detail = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(detail.detail || `Visual question answering failed: ${res.status}`);
   }
   return res.json();
 }

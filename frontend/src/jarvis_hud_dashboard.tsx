@@ -57,6 +57,7 @@ import {
   fetchWorkspaceRepos,
   fetchTaskSummary,
   planVisionUiAction,
+  queryVision,
   verifyVisionUiTarget,
   fetchWorkspaceSummary,
   fetchVoiceLoopStatus,
@@ -87,6 +88,8 @@ import {
   updateOperatorMeeting,
   updateOperatorProject,
   updateOperatorRelationship,
+  updateOperatorVisualBrief,
+  updateOperatorVisualInsight,
   updateOperatorVisualObservation,
   updateVoiceLoopState,
   type ActionCenterStatus,
@@ -107,6 +110,7 @@ import {
   type VisionUiActionPlanResult,
   type VisionUiTargetsResult,
   type VisionUiVerifyResult,
+  type VisionQueryResult,
   type ReminderItem,
   type SpeechProfile,
   type TaskSummaryItem,
@@ -448,6 +452,8 @@ export default function JarvisHudDashboard() {
   const [visionUiTargets, setVisionUiTargets] = useState<VisionUiTargetsResult | null>(null);
   const [visionUiPlan, setVisionUiPlan] = useState<VisionUiActionPlanResult | null>(null);
   const [visionUiVerify, setVisionUiVerify] = useState<VisionUiVerifyResult | null>(null);
+  const [visionQuery, setVisionQuery] = useState<VisionQueryResult | null>(null);
+  const [visionQuestion, setVisionQuestion] = useState('');
   const [visionBusy, setVisionBusy] = useState(false);
   const [screenSnapshot, setScreenSnapshot] = useState<{
     dataUrl: string;
@@ -1039,6 +1045,77 @@ export default function JarvisHudDashboard() {
     pendingWorkbench,
     workspaceSummary?.changed_files,
   ]);
+  const visualBrief = useMemo(() => {
+    const visualLabel =
+      screenSnapshot?.label || (screenDeck.length > 1 ? 'Multi-Screen Session' : screenDeck[0]?.label) || 'Visual session';
+    const sections: string[] = [];
+    const summaryParts: string[] = [];
+
+    if (visionSignals) {
+      const topSignal =
+        visionSignals.blockers[0] || visionSignals.deadlines[0] || visionSignals.attention_items[0] || visionSignals.summary;
+      if (topSignal) summaryParts.push(topSignal);
+      sections.push(`Signals summary: ${visionSignals.summary || 'No major signals extracted.'}`);
+      sections.push(`Blockers: ${visionSignals.blockers.join(' | ') || 'None'}`);
+      sections.push(`Deadlines: ${visionSignals.deadlines.join(' | ') || 'None'}`);
+      sections.push(`Attention items: ${visionSignals.attention_items.join(' | ') || 'None'}`);
+    }
+
+    if (visionAnalysis?.content.trim()) {
+      const firstLine = visionAnalysis.content.split('\n').find((line) => line.trim()) || '';
+      if (firstLine && !summaryParts.includes(firstLine)) summaryParts.push(firstLine);
+      sections.push(`Visual analysis: ${visionAnalysis.content}`);
+    }
+
+    if (visionQuery?.answer.trim()) {
+      const firstLine = visionQuery.answer.split('\n').find((line) => line.trim()) || '';
+      if (firstLine && !summaryParts.includes(firstLine)) summaryParts.push(firstLine);
+      sections.push(`Visual Q&A\nQuestion: ${visionQuery.question}\nAnswer: ${visionQuery.answer}`);
+    }
+
+    if (visionSuggestedActions?.actions?.length) {
+      const topActions = [...visionSuggestedActions.actions]
+        .sort((left, right) => right.priority - left.priority)
+        .slice(0, 2)
+        .map((item, index) => `${index + 1}. ${item.title} - ${item.detail}`);
+      if (topActions.length) {
+        if (!summaryParts.length) summaryParts.push(topActions[0]);
+        sections.push(`Suggested next actions:\n${topActions.join('\n')}`);
+      }
+    }
+
+    if (visionTextExtraction?.content.trim()) {
+      const topLines = visionTextExtraction.content
+        .split('\n')
+        .map((line) => line.trim())
+        .filter(Boolean)
+        .slice(0, 3);
+      if (topLines.length) sections.push(`Visible text highlights:\n${topLines.join('\n')}`);
+    }
+
+    if (!sections.length) return null;
+
+    return {
+      title: visualLabel,
+      summary: summaryParts[0] || `Visual intel ready from ${visualLabel}.`,
+      details: sections.join('\n\n'),
+      prompt:
+        `I have a visual briefing for "${visualLabel}".\n${sections.join('\n\n')}\n\n` +
+        'Turn this into the next best action, note any risks, and tell me what deserves attention first.',
+      dailyOpsPrompt:
+        `Visual briefing from "${visualLabel}":\n${sections.join('\n\n')}\n\n` +
+        'Blend this visual context into my operations brief and highlight anything urgent or blocking.',
+    };
+  }, [
+    screenDeck,
+    screenSnapshot?.label,
+    visionAnalysis?.content,
+    visionQuery?.answer,
+    visionQuery?.question,
+    visionSignals,
+    visionSuggestedActions?.actions,
+    visionTextExtraction?.content,
+  ]);
   const commanderQueue = useMemo(() => {
     const items: Array<{
       id: string;
@@ -1171,6 +1248,18 @@ export default function JarvisHudDashboard() {
       });
     }
 
+    if (visualBrief) {
+      items.push({
+        id: `visual-brief-${visualBrief.title}`,
+        priority: 59,
+        label: 'Visual Brief',
+        title: visualBrief.title,
+        detail: visualBrief.summary,
+        actionLabel: 'Load Brief',
+        action: () => injectCommand(visualBrief.prompt),
+      });
+    }
+
     if (visionAnalysis?.content.trim()) {
       const firstLine = visionAnalysis.content.split('\n').find((line) => line.trim()) || 'Visual analysis ready.';
       items.push({
@@ -1286,6 +1375,21 @@ export default function JarvisHudDashboard() {
       });
     }
 
+    if (visionQuery?.answer.trim()) {
+      items.push({
+        id: `vision-query-${screenSnapshot?.capturedAt || 'current'}`,
+        priority: 54,
+        label: 'Visual Q&A',
+        title: visionQuery.question,
+        detail: visionQuery.answer.split('\n').find((line) => line.trim()) || 'Visual answer ready.',
+        actionLabel: 'Load Answer',
+        action: () =>
+          injectCommand(
+            `I asked JARVIS a visual question.\nQuestion: ${visionQuery.question}\nAnswer:\n${visionQuery.answer}\nTurn this into the best next step.`,
+          ),
+      });
+    }
+
     if (nextCodingTask) {
       items.push({
         id: `coding-task-${nextCodingTask.id}`,
@@ -1311,7 +1415,7 @@ export default function JarvisHudDashboard() {
     }
 
     return items.sort((left, right) => right.priority - left.priority).slice(0, 6);
-  }, [activeAutomationAlerts, editorFilePath, gitCommitMessage, inboxFocusQueue, latestCodeResult?.file_path, latestValidationFailure, latestValidationSuccess, nextCodingTask, nextReviewQueueItem, pendingAction, pendingCodeEdit, pendingWorkbench, prepQueue, screenSnapshot?.capturedAt, screenSnapshot?.label, visionAnalysis?.content, visionSignals, visionSuggestedActions?.actions, visionTextExtraction?.content, visionUiPlan?.summary, visionUiPlan?.target_label, visionUiTargets?.targets, visionUiVerify?.summary, visionUiVerify?.risk_level, visionUiVerify?.target_label]);
+  }, [activeAutomationAlerts, editorFilePath, gitCommitMessage, inboxFocusQueue, latestCodeResult?.file_path, latestValidationFailure, latestValidationSuccess, nextCodingTask, nextReviewQueueItem, pendingAction, pendingCodeEdit, pendingWorkbench, prepQueue, screenSnapshot?.capturedAt, screenSnapshot?.label, visionAnalysis?.content, visionQuery?.answer, visionQuery?.question, visionSignals, visionSuggestedActions?.actions, visionTextExtraction?.content, visionUiPlan?.summary, visionUiPlan?.target_label, visionUiTargets?.targets, visionUiVerify?.summary, visionUiVerify?.risk_level, visionUiVerify?.target_label, visualBrief]);
   const connectorCapabilities = useMemo(() => {
     const ids = new Set(connectedConnectorIds);
     const gmailConnected = ids.has('gmail') || ids.has('gmail_imap');
@@ -1655,6 +1759,8 @@ export default function JarvisHudDashboard() {
       setVisionUiTargets(null);
       setVisionUiPlan(null);
       setVisionUiVerify(null);
+      setVisionQuery(null);
+      setVisionQuestion('');
       setScreenContextNote('');
       setWorkbenchNotice('Screen snapshot captured. Review it in the HUD and load a screen-help prompt when needed.');
       return dataUrl;
@@ -1710,6 +1816,8 @@ export default function JarvisHudDashboard() {
       setVisionUiTargets(null);
       setVisionUiPlan(null);
       setVisionUiVerify(null);
+      setVisionQuery(null);
+      setVisionQuestion('');
       setScreenContextNote('');
       setWorkbenchNotice('Image uploaded into the visual console. Add context or load an analysis prompt.');
       return dataUrl;
@@ -1907,6 +2015,7 @@ export default function JarvisHudDashboard() {
       setVisionUiTargets(null);
       setVisionUiPlan(null);
       setVisionUiVerify(null);
+      setVisionQuery(null);
       setScreenContextNote(observation.note || '');
       setWorkbenchNotice('Visual memory restored into the HUD.');
     } catch (error) {
@@ -1933,6 +2042,7 @@ export default function JarvisHudDashboard() {
       setVisionUiTargets(null);
       setVisionUiPlan(null);
       setVisionUiVerify(null);
+      setVisionQuery(null);
       setWorkbenchNotice('Vision analysis complete.');
     } catch (error) {
       setWorkbenchNotice(error instanceof Error ? error.message : 'Vision analysis failed.');
@@ -1970,6 +2080,7 @@ export default function JarvisHudDashboard() {
       setVisionUiTargets(null);
       setVisionUiPlan(null);
       setVisionUiVerify(null);
+      setVisionQuery(null);
       setWorkbenchNotice(
         screenDeck.length === 1 ? 'Vision analysis complete.' : `Multi-screen analysis complete for ${screenDeck.length} screens.`,
       );
@@ -1999,6 +2110,7 @@ export default function JarvisHudDashboard() {
       setVisionUiTargets(null);
       setVisionUiPlan(null);
       setVisionUiVerify(null);
+      setVisionQuery(null);
       setWorkbenchNotice('Visual text extraction complete.');
     } catch (error) {
       setWorkbenchNotice(error instanceof Error ? error.message : 'Vision text extraction failed.');
@@ -2036,6 +2148,7 @@ export default function JarvisHudDashboard() {
       setVisionUiTargets(null);
       setVisionUiPlan(null);
       setVisionUiVerify(null);
+      setVisionQuery(null);
       setWorkbenchNotice(
         screenDeck.length === 1
           ? 'Visual text extraction complete.'
@@ -2091,6 +2204,25 @@ export default function JarvisHudDashboard() {
     }
   }
 
+  async function saveVisualBrief() {
+    if (!visualBrief) {
+      setWorkbenchNotice('Build a visual brief first.');
+      return;
+    }
+    try {
+      const memory = await updateOperatorVisualBrief({
+        label: visualBrief.title,
+        summary: visualBrief.summary,
+        details: visualBrief.details,
+        created_at: new Date().toISOString(),
+      });
+      setDurableOperatorMemory(memory);
+      setWorkbenchNotice('Visual brief saved to durable memory.');
+    } catch (error) {
+      setWorkbenchNotice(error instanceof Error ? error.message : 'Unable to save visual brief.');
+    }
+  }
+
   async function suggestVisualActions() {
     if (!screenDeck.length) {
       setWorkbenchNotice('Capture at least one screen first.');
@@ -2111,6 +2243,7 @@ export default function JarvisHudDashboard() {
       setVisionUiTargets(null);
       setVisionUiPlan(null);
       setVisionUiVerify(null);
+      setVisionQuery(null);
       setWorkbenchNotice(`Visual action suggestions ready${result.actions.length ? ` (${result.actions.length})` : ''}.`);
     } catch (error) {
       setWorkbenchNotice(error instanceof Error ? error.message : 'Vision action suggestions failed.');
@@ -2141,6 +2274,7 @@ export default function JarvisHudDashboard() {
       setVisionUiTargets(null);
       setVisionUiPlan(null);
       setVisionUiVerify(null);
+      setVisionQuery(null);
       setWorkbenchNotice('Visual signals extracted.');
     } catch (error) {
       setWorkbenchNotice(error instanceof Error ? error.message : 'Vision signal extraction failed.');
@@ -2171,6 +2305,7 @@ export default function JarvisHudDashboard() {
       setVisionSuggestedActions(null);
       setVisionUiPlan(null);
       setVisionUiVerify(null);
+      setVisionQuery(null);
       setWorkbenchNotice(`UI targets extracted${result.targets.length ? ` (${result.targets.length})` : ''}.`);
     } catch (error) {
       setWorkbenchNotice(error instanceof Error ? error.message : 'Vision UI target extraction failed.');
@@ -2229,6 +2364,57 @@ export default function JarvisHudDashboard() {
       setWorkbenchNotice(`Verification ready for ${target.label}.`);
     } catch (error) {
       setWorkbenchNotice(error instanceof Error ? error.message : 'Vision UI verification failed.');
+    } finally {
+      setVisionBusy(false);
+    }
+  }
+
+  async function askVisualQuestion() {
+    const question = visionQuestion.trim();
+    const activeVisualLabel = screenDeck.length > 1 ? 'Multi-Screen Session' : screenDeck[0]?.label || 'Screen';
+    const recentVisualHistory =
+      durableOperatorMemory?.visual_insights
+        ?.filter((item) => item.label === activeVisualLabel)
+        .slice(0, 3)
+        .map((item) => ({
+          question: item.question,
+          answer: item.answer,
+        })) || [];
+    if (!screenDeck.length) {
+      setWorkbenchNotice('Capture at least one screen first.');
+      return;
+    }
+    if (!question) {
+      setWorkbenchNotice('Ask a visual question first.');
+      return;
+    }
+    setVisionBusy(true);
+    try {
+      const result = await queryVision({
+        images: screenDeck.map((item) => ({
+          image_data_url: item.dataUrl,
+          label: item.label,
+        })),
+        question,
+        note: screenContextNote.trim() || undefined,
+        label: activeVisualLabel,
+        history: recentVisualHistory,
+      });
+      setVisionQuery(result);
+      const memory = await updateOperatorVisualInsight({
+        label: activeVisualLabel,
+        question,
+        answer: result.answer,
+        created_at: new Date().toISOString(),
+      }).catch(() => null);
+      if (memory) setDurableOperatorMemory(memory);
+      setWorkbenchNotice(
+        result.history_used
+          ? `Visual answer ready with ${result.history_used} recent context item${result.history_used === 1 ? '' : 's'}.`
+          : 'Visual answer ready.',
+      );
+    } catch (error) {
+      setWorkbenchNotice(error instanceof Error ? error.message : 'Visual question answering failed.');
     } finally {
       setVisionBusy(false);
     }
@@ -2579,7 +2765,8 @@ export default function JarvisHudDashboard() {
       'Act as my executive operations copilot. Build a concise operations brief with priorities, risks, reply recommendations, and next actions.\n' +
       `Top inbox items:\n${inboxLines || 'None'}\n\n` +
       `Upcoming meetings:\n${meetingLines || 'None'}\n\n` +
-      `Open tasks:\n${taskLines || 'None'}`
+      `Open tasks:\n${taskLines || 'None'}` +
+      `${visualBrief ? `\n\nVisual intelligence:\n${visualBrief.details}` : ''}`
     );
   }
 
@@ -4141,12 +4328,58 @@ export default function JarvisHudDashboard() {
                             setVisionUiTargets(null);
                             setVisionUiPlan(null);
                             setVisionUiVerify(null);
+                            setVisionQuery(null);
+                            setVisionQuestion('');
                           }}
                           className="rounded-[0.85rem] border border-cyan-400/12 bg-slate-950/70 px-3 py-2 text-[10px] uppercase tracking-[0.22em] text-cyan-100 transition hover:bg-cyan-400/[0.08]"
                         >
                           Clear Visual
                         </button>
                       </div>
+                      <div className="mt-3 grid gap-3 md:grid-cols-[1fr_160px]">
+                        <input
+                          value={visionQuestion}
+                          onChange={(event) => setVisionQuestion(event.target.value)}
+                          placeholder="What matters most on these screens?"
+                          className="rounded-[0.9rem] border border-cyan-400/10 bg-slate-950/70 px-4 py-3 text-sm text-slate-100 outline-none placeholder:text-slate-500"
+                        />
+                        <button
+                          onClick={askVisualQuestion}
+                          disabled={visionBusy || !screenDeck.length || !visionQuestion.trim()}
+                          className="rounded-[0.9rem] border border-cyan-300/20 bg-cyan-400/[0.08] px-4 py-3 text-xs uppercase tracking-[0.24em] text-cyan-100 transition hover:bg-cyan-400/[0.14] disabled:cursor-not-allowed disabled:opacity-50"
+                        >
+                          {visionBusy ? 'Querying' : 'Ask Vision'}
+                        </button>
+                      </div>
+                      {visualBrief ? (
+                        <div className="mt-3 rounded-[0.9rem] border border-cyan-400/10 bg-slate-950/55 px-3 py-3">
+                          <div className="flex items-center justify-between gap-3">
+                            <div className="text-[10px] uppercase tracking-[0.22em] text-cyan-300/55">Visual Brief</div>
+                            <div className="text-[10px] uppercase tracking-[0.22em] text-cyan-300/45">{visualBrief.title}</div>
+                          </div>
+                          <div className="mt-2 text-sm text-slate-200/76">{visualBrief.summary}</div>
+                          <div className="mt-3 flex gap-2">
+                            <button
+                              onClick={() => injectCommand(visualBrief.prompt)}
+                              className="rounded-[0.85rem] border border-cyan-400/12 bg-cyan-400/[0.08] px-3 py-2 text-[10px] uppercase tracking-[0.22em] text-cyan-100 transition hover:bg-cyan-400/[0.14]"
+                            >
+                              Load Brief
+                            </button>
+                            <button
+                              onClick={() => injectCommand(buildDailyOpsPrompt())}
+                              className="rounded-[0.85rem] border border-cyan-400/12 bg-slate-950/70 px-3 py-2 text-[10px] uppercase tracking-[0.22em] text-cyan-100 transition hover:bg-cyan-400/[0.08]"
+                            >
+                              Blend Into Daily Ops
+                            </button>
+                            <button
+                              onClick={saveVisualBrief}
+                              className="rounded-[0.85rem] border border-cyan-400/12 bg-slate-950/70 px-3 py-2 text-[10px] uppercase tracking-[0.22em] text-cyan-100 transition hover:bg-cyan-400/[0.08]"
+                            >
+                              Save Brief
+                            </button>
+                          </div>
+                        </div>
+                      ) : null}
                       {visionAnalysis?.content ? (
                         <div className="mt-3 rounded-[0.9rem] border border-cyan-400/10 bg-slate-950/55 px-3 py-3">
                           <div className="flex items-center justify-between gap-3">
@@ -4223,6 +4456,28 @@ export default function JarvisHudDashboard() {
                               </div>
                             </div>
                           ) : null}
+                        </div>
+                      ) : null}
+                      {visionQuery?.answer ? (
+                        <div className="mt-3 rounded-[0.9rem] border border-cyan-400/10 bg-slate-950/55 px-3 py-3">
+                          <div className="flex items-center justify-between gap-3">
+                            <div className="text-[10px] uppercase tracking-[0.22em] text-cyan-300/55">Visual Q&amp;A</div>
+                            <div className="text-[10px] uppercase tracking-[0.22em] text-cyan-300/45">
+                              {visionQuery.model}
+                              {visionQuery.screen_count ? ` - ${visionQuery.screen_count} screens` : ''}
+                            </div>
+                          </div>
+                          <div className="mt-2 text-xs uppercase tracking-[0.2em] text-cyan-100/85">
+                            {visionQuery.question}
+                          </div>
+                          {visionQuery.history_used ? (
+                            <div className="mt-2 text-[10px] uppercase tracking-[0.2em] text-cyan-300/50">
+                              Using {visionQuery.history_used} recent visual memory item{visionQuery.history_used === 1 ? '' : 's'}
+                            </div>
+                          ) : null}
+                          <pre className="mt-2 whitespace-pre-wrap break-words text-sm text-slate-200/76">
+                            {visionQuery.answer}
+                          </pre>
                         </div>
                       ) : null}
                       {visionUiTargets?.targets?.length ? (
@@ -4508,6 +4763,97 @@ export default function JarvisHudDashboard() {
                                 className="rounded-[0.85rem] border border-cyan-400/12 bg-slate-950/70 px-3 py-2 text-[10px] uppercase tracking-[0.22em] text-cyan-100 transition hover:bg-cyan-400/[0.08]"
                               >
                                 Load Prompt
+                              </button>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  ) : null}
+                  {durableOperatorMemory?.visual_insights?.length ? (
+                    <div className="mt-3 rounded-[0.95rem] border border-cyan-400/10 bg-black/20 px-3 py-3">
+                      <div className="text-[10px] uppercase tracking-[0.22em] text-cyan-300/55">Recent Visual Answers</div>
+                      <div className="mt-3 grid gap-2">
+                        {durableOperatorMemory.visual_insights.slice(0, 4).map((item) => (
+                          <div
+                            key={item.id}
+                            className="rounded-[0.9rem] border border-cyan-400/10 bg-slate-950/55 px-3 py-3"
+                          >
+                            <div className="text-[10px] uppercase tracking-[0.2em] text-cyan-300/55">
+                              {item.label} - {item.created_at ? new Date(item.created_at).toLocaleString() : 'saved'}
+                            </div>
+                            <div className="mt-2 text-xs uppercase tracking-[0.18em] text-cyan-100/85">
+                              {item.question}
+                            </div>
+                            <div className="mt-2 text-sm text-slate-200/76">{item.answer}</div>
+                            <div className="mt-3 flex gap-2">
+                              <button
+                                onClick={() => {
+                                  setVisionQuestion(item.question);
+                                  setVisionQuery({
+                                    question: item.question,
+                                    answer: item.answer,
+                                    model: 'memory',
+                                    label: item.label,
+                                  });
+                                  setWorkbenchNotice('Visual answer restored from memory.');
+                                }}
+                                className="rounded-[0.85rem] border border-cyan-400/12 bg-cyan-400/[0.08] px-3 py-2 text-[10px] uppercase tracking-[0.22em] text-cyan-100 transition hover:bg-cyan-400/[0.14]"
+                              >
+                                Reload Answer
+                              </button>
+                              <button
+                                onClick={() =>
+                                  injectCommand(
+                                    `I previously asked a visual question.\nLabel: ${item.label}\nQuestion: ${item.question}\nAnswer:\n${item.answer}\nContinue from this visual context and suggest the next best action.`,
+                                  )
+                                }
+                                className="rounded-[0.85rem] border border-cyan-400/12 bg-slate-950/70 px-3 py-2 text-[10px] uppercase tracking-[0.22em] text-cyan-100 transition hover:bg-cyan-400/[0.08]"
+                              >
+                                Load Into Core
+                              </button>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  ) : null}
+                  {durableOperatorMemory?.visual_briefs?.length ? (
+                    <div className="mt-3 rounded-[0.95rem] border border-cyan-400/10 bg-black/20 px-3 py-3">
+                      <div className="text-[10px] uppercase tracking-[0.22em] text-cyan-300/55">Recent Visual Briefs</div>
+                      <div className="mt-3 grid gap-2">
+                        {durableOperatorMemory.visual_briefs.slice(0, 4).map((item) => (
+                          <div
+                            key={item.id}
+                            className="rounded-[0.9rem] border border-cyan-400/10 bg-slate-950/55 px-3 py-3"
+                          >
+                            <div className="text-[10px] uppercase tracking-[0.2em] text-cyan-300/55">
+                              {item.label} - {item.created_at ? new Date(item.created_at).toLocaleString() : 'saved'}
+                            </div>
+                            <div className="mt-2 text-xs uppercase tracking-[0.18em] text-cyan-100/85">
+                              {item.summary}
+                            </div>
+                            <div className="mt-2 whitespace-pre-wrap break-words text-sm text-slate-200/76">{item.details}</div>
+                            <div className="mt-3 flex gap-2">
+                              <button
+                                onClick={() =>
+                                  injectCommand(
+                                    `I saved a visual brief.\nLabel: ${item.label}\nSummary: ${item.summary}\nDetails:\n${item.details}\nContinue from this visual context and suggest the next best action.`,
+                                  )
+                                }
+                                className="rounded-[0.85rem] border border-cyan-400/12 bg-cyan-400/[0.08] px-3 py-2 text-[10px] uppercase tracking-[0.22em] text-cyan-100 transition hover:bg-cyan-400/[0.14]"
+                              >
+                                Load Brief
+                              </button>
+                              <button
+                                onClick={() =>
+                                  injectCommand(
+                                    `Act as my executive operations copilot.\nBlend this saved visual brief into my current daily operations view.\nLabel: ${item.label}\nSummary: ${item.summary}\nDetails:\n${item.details}`,
+                                  )
+                                }
+                                className="rounded-[0.85rem] border border-cyan-400/12 bg-slate-950/70 px-3 py-2 text-[10px] uppercase tracking-[0.22em] text-cyan-100 transition hover:bg-cyan-400/[0.08]"
+                              >
+                                Load Into Ops
                               </button>
                             </div>
                           </div>
@@ -5248,6 +5594,35 @@ export default function JarvisHudDashboard() {
                     Open Audio
                   </button>
                 </div>
+                {visualBrief ? (
+                  <div className="mt-3 rounded-[1rem] border border-cyan-400/10 bg-slate-950/55 px-3 py-3">
+                    <div className="flex items-center justify-between gap-3">
+                      <div className="text-[10px] uppercase tracking-[0.28em] text-cyan-300/55">Visual Intel</div>
+                      <div className="text-[10px] uppercase tracking-[0.22em] text-cyan-300/45">{visualBrief.title}</div>
+                    </div>
+                    <div className="mt-2 text-sm text-slate-200/76">{visualBrief.summary}</div>
+                    <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                      <button
+                        onClick={() => injectCommand(buildDailyOpsPrompt())}
+                        className="rounded-[0.95rem] border border-cyan-400/12 bg-cyan-400/[0.08] px-3 py-2 text-xs uppercase tracking-[0.22em] text-cyan-100 transition hover:bg-cyan-400/[0.14]"
+                      >
+                        Blend Visual Intel
+                      </button>
+                      <button
+                        onClick={() => injectCommand(visualBrief.prompt)}
+                        className="rounded-[0.95rem] border border-cyan-400/12 bg-slate-950/70 px-3 py-2 text-xs uppercase tracking-[0.22em] text-cyan-100 transition hover:bg-cyan-400/[0.08]"
+                      >
+                        Open Visual Brief
+                      </button>
+                      <button
+                        onClick={saveVisualBrief}
+                        className="rounded-[0.95rem] border border-cyan-400/12 bg-slate-950/70 px-3 py-2 text-xs uppercase tracking-[0.22em] text-cyan-100 transition hover:bg-cyan-400/[0.08]"
+                      >
+                        Save Brief
+                      </button>
+                    </div>
+                  </div>
+                ) : null}
                 <div className="mt-3 rounded-[1rem] border border-cyan-400/10 bg-slate-950/55 px-3 py-3">
                   <div className="text-[10px] uppercase tracking-[0.28em] text-cyan-300/55">
                     Schedule
