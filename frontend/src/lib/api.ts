@@ -292,6 +292,34 @@ export interface SpeechProfile {
   require_wake_phrase: boolean;
 }
 
+export interface WorkbenchEntry {
+  id: string;
+  command: string;
+  working_dir: string;
+  timeout: number;
+  created_at: number;
+  completed_at: number;
+  status: string;
+  output: string;
+  returncode: number | null;
+}
+
+export interface PendingWorkbenchCommand {
+  id: string;
+  command: string;
+  working_dir: string;
+  timeout: number;
+  created_at: number;
+  status: string;
+}
+
+export interface WorkbenchStatus {
+  pending: PendingWorkbenchCommand | null;
+  history: WorkbenchEntry[];
+  default_working_dir: string;
+  result?: WorkbenchEntry;
+}
+
 interface TranscribeAudioOptions {
   filename?: string;
   languageHints?: string[];
@@ -488,6 +516,47 @@ export async function processVoiceLoopAudio(
   if (!res.ok) {
     const detail = await res.json().catch(() => ({ detail: res.statusText }));
     throw new Error(detail.detail || `Voice audio processing failed: ${res.status}`);
+  }
+  return res.json();
+}
+
+export async function fetchWorkbenchStatus(): Promise<WorkbenchStatus> {
+  const res = await fetch(`${getBase()}/v1/workbench/status`);
+  if (!res.ok) throw new Error(`Workbench status failed: ${res.status}`);
+  return res.json();
+}
+
+export async function stageWorkbenchCommand(body: {
+  command: string;
+  working_dir?: string;
+  timeout?: number;
+}): Promise<WorkbenchStatus> {
+  const res = await fetch(`${getBase()}/v1/workbench/stage`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const detail = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(detail.detail || `Workbench staging failed: ${res.status}`);
+  }
+  return res.json();
+}
+
+export async function approveWorkbenchCommand(): Promise<WorkbenchStatus> {
+  const res = await fetch(`${getBase()}/v1/workbench/approve`, { method: 'POST' });
+  if (!res.ok) {
+    const detail = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(detail.detail || `Workbench approval failed: ${res.status}`);
+  }
+  return res.json();
+}
+
+export async function holdWorkbenchCommand(): Promise<WorkbenchStatus> {
+  const res = await fetch(`${getBase()}/v1/workbench/hold`, { method: 'POST' });
+  if (!res.ok) {
+    const detail = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(detail.detail || `Workbench hold failed: ${res.status}`);
   }
   return res.json();
 }

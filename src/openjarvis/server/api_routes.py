@@ -7,6 +7,7 @@ import json
 import logging
 from typing import Any, Dict, List, Literal, Optional
 
+from fastapi.concurrency import run_in_threadpool
 from fastapi import APIRouter, HTTPException, Request, Response, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel
 
@@ -92,6 +93,12 @@ class SpeechSynthesizeRequest(BaseModel):
     backend: Optional[str] = None
     speed: Optional[float] = None
     output_format: str = "wav"
+
+
+class WorkbenchStageRequest(BaseModel):
+    command: str
+    working_dir: Optional[str] = None
+    timeout: int = 30
 
 
 # ---- Agent routes ----
@@ -703,6 +710,7 @@ async def learning_policy(request: Request):
 
 speech_router = APIRouter(prefix="/v1/speech", tags=["speech"])
 voice_loop_router = APIRouter(prefix="/v1/voice-loop", tags=["voice-loop"])
+workbench_router = APIRouter(prefix="/v1/workbench", tags=["workbench"])
 
 
 @speech_router.post("/transcribe")
@@ -921,6 +929,48 @@ async def voice_loop_process_audio(request: Request):
         raise HTTPException(status_code=500, detail=str(exc))
 
 
+@workbench_router.get("/status")
+async def workbench_status(request: Request):
+    manager = getattr(request.app.state, "workbench", None)
+    if manager is None:
+        raise HTTPException(status_code=503, detail="Workbench manager not configured")
+    return manager.status()
+
+
+@workbench_router.post("/stage")
+async def workbench_stage(req: WorkbenchStageRequest, request: Request):
+    manager = getattr(request.app.state, "workbench", None)
+    if manager is None:
+        raise HTTPException(status_code=503, detail="Workbench manager not configured")
+    try:
+        return manager.stage(
+            command=req.command,
+            working_dir=req.working_dir,
+            timeout=req.timeout,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@workbench_router.post("/approve")
+async def workbench_approve(request: Request):
+    manager = getattr(request.app.state, "workbench", None)
+    if manager is None:
+        raise HTTPException(status_code=503, detail="Workbench manager not configured")
+    try:
+        return await run_in_threadpool(manager.approve)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@workbench_router.post("/hold")
+async def workbench_hold(request: Request):
+    manager = getattr(request.app.state, "workbench", None)
+    if manager is None:
+        raise HTTPException(status_code=503, detail="Workbench manager not configured")
+    return manager.hold()
+
+
 # ---- Feedback routes ----
 
 feedback_router = APIRouter(prefix="/v1/feedback", tags=["feedback"])
@@ -1033,6 +1083,7 @@ def include_all_routes(app) -> None:
     app.include_router(learning_router)
     app.include_router(speech_router)
     app.include_router(voice_loop_router)
+    app.include_router(workbench_router)
     app.include_router(feedback_router)
     app.include_router(optimize_router)
 
@@ -1083,6 +1134,7 @@ __all__ = [
     "learning_router",
     "speech_router",
     "voice_loop_router",
+    "workbench_router",
     "feedback_router",
     "optimize_router",
 ]

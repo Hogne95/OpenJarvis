@@ -18,6 +18,7 @@ from openjarvis.server.digest_routes import create_digest_router
 from openjarvis.server.routes import router
 from openjarvis.server.upload_router import router as upload_router
 from openjarvis.server.voice_loop import VoiceLoopManager
+from openjarvis.server.workbench import WorkbenchManager
 
 logger = logging.getLogger(__name__)
 
@@ -228,6 +229,7 @@ def create_app(
         wake_model_path=getattr(speech_cfg, "wake_model_path", ""),
         wake_threshold=getattr(speech_cfg, "wake_threshold", 0.5),
     )
+    app.state.workbench = WorkbenchManager(default_working_dir=str(pathlib.Path.cwd()))
     app.state.agent_manager = agent_manager
     app.state.agent_scheduler = agent_scheduler
     app.state.session_start = time.time()

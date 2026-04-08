@@ -20,18 +20,23 @@ import {
 import { useNavigate } from 'react-router';
 import {
   checkHealth,
+  approveWorkbenchCommand,
   createManagedAgent,
   fetchManagedAgents,
   fetchSpeechHealth,
   fetchSpeechProfile,
   fetchVoiceLoopStatus,
+  fetchWorkbenchStatus,
+  holdWorkbenchCommand,
   runManagedAgent,
   startVoiceLoop,
+  stageWorkbenchCommand,
   stopVoiceLoop,
   synthesizeSpeech,
   updateVoiceLoopState,
   type SpeechProfile,
   type VoiceLoopStatus,
+  type WorkbenchStatus,
 } from './lib/api';
 import { listConnectors } from './lib/connectors-api';
 import { useAppStore } from './lib/store';
@@ -153,6 +158,13 @@ export default function JarvisHudDashboard() {
   const [voiceNotice, setVoiceNotice] = useState('');
   const [voiceLoop, setVoiceLoop] = useState<VoiceLoopStatus | null>(null);
   const [speechProfile, setSpeechProfile] = useState<SpeechProfile | null>(null);
+  const [focusMode, setFocusMode] = useState(false);
+  const [workbench, setWorkbench] = useState<WorkbenchStatus | null>(null);
+  const [workbenchCommand, setWorkbenchCommand] = useState('');
+  const [workbenchDirectory, setWorkbenchDirectory] = useState('');
+  const [workbenchTimeout, setWorkbenchTimeout] = useState(30);
+  const [workbenchBusy, setWorkbenchBusy] = useState<'stage' | 'approve' | 'hold' | null>(null);
+  const [workbenchNotice, setWorkbenchNotice] = useState('');
   const lastSyncedPhaseRef = useRef('');
   const lastSpokenMessageRef = useRef<string>('');
   const audioUrlRef = useRef<string | null>(null);
@@ -170,13 +182,14 @@ export default function JarvisHudDashboard() {
     let cancelled = false;
 
     const refreshLiveStatus = async () => {
-      const [health, speech, agents, connectors, loop, profile] = await Promise.allSettled([
+      const [health, speech, agents, connectors, loop, profile, wb] = await Promise.allSettled([
         checkHealth(),
         fetchSpeechHealth(),
         fetchManagedAgents(),
         listConnectors(),
         fetchVoiceLoopStatus(),
         fetchSpeechProfile(),
+        fetchWorkbenchStatus(),
       ]);
 
       if (cancelled) return;
@@ -203,6 +216,10 @@ export default function JarvisHudDashboard() {
 
       if (loop.status === 'fulfilled') setVoiceLoop(loop.value);
       if (profile.status === 'fulfilled') setSpeechProfile(profile.value);
+      if (wb.status === 'fulfilled') {
+        setWorkbench(wb.value);
+        if (!workbenchDirectory) setWorkbenchDirectory(wb.value.default_working_dir);
+      }
     };
 
     refreshLiveStatus();
@@ -211,7 +228,7 @@ export default function JarvisHudDashboard() {
       cancelled = true;
       window.clearInterval(interval);
     };
-  }, [managedAgents]);
+  }, [managedAgents, workbenchDirectory]);
 
   useEffect(() => {
     return () => {
@@ -225,6 +242,12 @@ export default function JarvisHudDashboard() {
     const timeout = window.setTimeout(() => setVoiceNotice(''), 5000);
     return () => window.clearTimeout(timeout);
   }, [voiceNotice]);
+
+  useEffect(() => {
+    if (!workbenchNotice) return;
+    const timeout = window.setTimeout(() => setWorkbenchNotice(''), 5000);
+    return () => window.clearTimeout(timeout);
+  }, [workbenchNotice]);
 
   useEffect(() => {
     if (!voiceLoop?.active) {
@@ -260,6 +283,8 @@ export default function JarvisHudDashboard() {
       : null;
   const latestLogEntries = useMemo(() => [...logEntries].slice(-5).reverse(), [logEntries]);
   const toolSummary = summarizeToolCall(activeToolCall);
+  const pendingWorkbench = workbench?.pending ?? null;
+  const latestWorkbenchResult = workbench?.history?.[0] ?? null;
 
   const status: Status = useMemo(() => {
     if (streamState.isStreaming && streamState.content.trim()) return 'Responding';
@@ -382,7 +407,7 @@ export default function JarvisHudDashboard() {
     { icon: Radio, label: 'Chat', action: () => navigate('/chat') },
     { icon: Folder, label: 'Sources', action: () => navigate('/data-sources') },
     { icon: Brain, label: 'Agents', action: () => navigate('/agents') },
-    { icon: Terminal, label: 'Logs', action: () => navigate('/logs') },
+    { icon: Terminal, label: focusMode ? 'Full HUD' : 'Focus Mode', action: () => setFocusMode((value) => !value) },
   ];
 
   function injectCommand(text: string) {
@@ -556,8 +581,65 @@ export default function JarvisHudDashboard() {
     }
   }
 
+  async function handleStageWorkbenchCommand() {
+    if (!workbenchCommand.trim()) {
+      setWorkbenchNotice('Enter a command first.');
+      return;
+    }
+    setWorkbenchBusy('stage');
+    try {
+      const next = await stageWorkbenchCommand({
+        command: workbenchCommand,
+        working_dir: workbenchDirectory.trim() || undefined,
+        timeout: workbenchTimeout,
+      });
+      setWorkbench(next);
+      setWorkbenchNotice('Command staged for approval.');
+    } catch (error) {
+      setWorkbenchNotice(error instanceof Error ? error.message : 'Unable to stage command.');
+    } finally {
+      setWorkbenchBusy(null);
+    }
+  }
+
+  async function handleApproveWorkbench() {
+    setWorkbenchBusy('approve');
+    try {
+      const next = await approveWorkbenchCommand();
+      setWorkbench(next);
+      setWorkbenchNotice(next.result ? 'Command executed.' : 'No pending command.');
+      if (next.result) {
+        useAppStore.getState().addLogEntry({
+          timestamp: Date.now(),
+          level: next.result.status === 'success' ? 'info' : 'error',
+          category: 'tool',
+          message: `Workbench ${next.result.status}: ${next.result.command}`,
+        });
+      }
+    } catch (error) {
+      setWorkbenchNotice(error instanceof Error ? error.message : 'Unable to approve command.');
+    } finally {
+      setWorkbenchBusy(null);
+    }
+  }
+
+  async function handleHoldWorkbench() {
+    setWorkbenchBusy('hold');
+    try {
+      const next = await holdWorkbenchCommand();
+      setWorkbench(next);
+      setWorkbenchNotice('Pending command held.');
+    } catch (error) {
+      setWorkbenchNotice(error instanceof Error ? error.message : 'Unable to hold command.');
+    } finally {
+      setWorkbenchBusy(null);
+    }
+  }
+
   const approvalLabel = activeToolCall
     ? `Tool running: ${activeToolCall.tool}`
+    : pendingWorkbench
+    ? 'Workbench command is waiting for approval.'
     : streamState.isStreaming
     ? 'Inference active. No tool approval pending.'
     : 'No pending operator decision';
@@ -651,7 +733,7 @@ export default function JarvisHudDashboard() {
               </div>
           </div>
 
-          <div className="grid gap-3 sm:grid-cols-3">
+          <div className="flex flex-wrap items-center gap-3">
             {[
               ['Model', selectedModel || serverInfo?.model || 'Unassigned'],
               ['Voice', voiceLoop?.active ? voicePhaseLabel : settings.speechEnabled ? 'Ready' : 'Disabled'],
@@ -665,11 +747,17 @@ export default function JarvisHudDashboard() {
                 <div className="mt-1 text-sm text-cyan-50/90">{value}</div>
               </div>
             ))}
+            <button
+              onClick={() => setFocusMode((value) => !value)}
+              className="rounded-[1.2rem] border border-cyan-400/15 bg-cyan-400/[0.08] px-4 py-3 text-sm uppercase tracking-[0.22em] text-cyan-100 transition hover:bg-cyan-400/[0.14]"
+            >
+              {focusMode ? 'Full HUD' : 'Focus Mode'}
+            </button>
           </div>
         </header>
 
-        <div className="grid flex-1 gap-4 xl:grid-cols-[280px_minmax(700px,1fr)_340px]">
-          <div className="space-y-4">
+        <div className={`grid flex-1 gap-4 ${focusMode ? 'xl:grid-cols-[minmax(920px,1fr)]' : 'xl:grid-cols-[280px_minmax(700px,1fr)_340px]'}`}>
+          {!focusMode ? <div className="space-y-4">
             <Panel title="Core Matrix" kicker="Subsystems">
               <div className="space-y-3">
                 {coreMatrix.map(({ icon: Icon, label, value }) => (
@@ -720,7 +808,7 @@ export default function JarvisHudDashboard() {
                 {agentNotice || 'Launch inbox and meeting agents directly from the HUD.'}
               </div>
             </Panel>
-          </div>
+          </div> : null}
 
           <div className="space-y-4">
             <Panel title="Command Core" kicker="Reactor">
@@ -849,26 +937,41 @@ export default function JarvisHudDashboard() {
                   <div className="mb-2 text-[10px] uppercase tracking-[0.35em] text-cyan-300/55">
                     Proposed Action
                   </div>
-                  <div className="text-sm leading-7 text-slate-200/78">{toolSummary}</div>
+                  <div className="text-sm leading-7 text-slate-200/78">
+                    {pendingWorkbench
+                      ? `${pendingWorkbench.command} [${pendingWorkbench.working_dir}]`
+                      : toolSummary}
+                  </div>
                 </div>
 
                 <div className="mt-4 grid gap-3 sm:grid-cols-2">
-                  <div className="rounded-[1.1rem] border border-emerald-400/30 bg-emerald-400/12 px-4 py-3 text-sm uppercase tracking-[0.24em] text-emerald-200">
+                  <button
+                    onClick={handleApproveWorkbench}
+                    disabled={!pendingWorkbench || workbenchBusy !== null}
+                    className="rounded-[1.1rem] border border-emerald-400/30 bg-emerald-400/12 px-4 py-3 text-sm uppercase tracking-[0.24em] text-emerald-200 transition hover:bg-emerald-400/20 disabled:cursor-not-allowed disabled:opacity-45"
+                  >
                     <span className="flex items-center justify-center gap-2">
                       <CheckCircle2 className="h-4 w-4" />
-                      Ready
+                      {workbenchBusy === 'approve' ? 'Running' : 'Approve'}
                     </span>
-                  </div>
-                  <div className="rounded-[1.1rem] border border-rose-400/30 bg-rose-400/12 px-4 py-3 text-sm uppercase tracking-[0.24em] text-rose-200">
+                  </button>
+                  <button
+                    onClick={handleHoldWorkbench}
+                    disabled={!pendingWorkbench || workbenchBusy !== null}
+                    className="rounded-[1.1rem] border border-rose-400/30 bg-rose-400/12 px-4 py-3 text-sm uppercase tracking-[0.24em] text-rose-200 transition hover:bg-rose-400/20 disabled:cursor-not-allowed disabled:opacity-45"
+                  >
                     <span className="flex items-center justify-center gap-2">
                       <XCircle className="h-4 w-4" />
                       Hold
                     </span>
-                  </div>
+                  </button>
                 </div>
 
                 <div className="mt-4 rounded-[1.15rem] border border-cyan-400/12 bg-cyan-400/[0.05] px-4 py-3 text-sm text-slate-100/80">
                   {approvalLabel}
+                </div>
+                <div className="mt-3 rounded-[1.15rem] border border-cyan-400/10 bg-slate-950/45 px-4 py-3 text-sm text-slate-200/76">
+                  {workbenchNotice || (pendingWorkbench ? 'Approve to execute the staged terminal command.' : 'No staged workbench command right now.')}
                 </div>
               </Panel>
 
@@ -884,6 +987,43 @@ export default function JarvisHudDashboard() {
 
                 <div className="mt-4 rounded-[1.15rem] border border-cyan-400/10 bg-black/20 py-2">
                   <InputArea />
+                </div>
+
+                <div className="mt-4 rounded-[1.15rem] border border-cyan-400/10 bg-slate-950/55 p-4">
+                  <div className="mb-2 text-[10px] uppercase tracking-[0.35em] text-cyan-300/55">
+                    Terminal Workbench
+                  </div>
+                  <div className="grid gap-3">
+                    <input
+                      value={workbenchCommand}
+                      onChange={(event) => setWorkbenchCommand(event.target.value)}
+                      placeholder="pwd, git status, ls, python -V ..."
+                      className="rounded-[0.9rem] border border-cyan-400/10 bg-slate-950/70 px-4 py-3 text-sm text-slate-100 outline-none placeholder:text-slate-500"
+                    />
+                    <div className="grid gap-3 md:grid-cols-[1fr_120px_160px]">
+                      <input
+                        value={workbenchDirectory}
+                        onChange={(event) => setWorkbenchDirectory(event.target.value)}
+                        placeholder="Working directory"
+                        className="rounded-[0.9rem] border border-cyan-400/10 bg-slate-950/70 px-4 py-3 text-sm text-slate-100 outline-none placeholder:text-slate-500"
+                      />
+                      <input
+                        type="number"
+                        min={1}
+                        max={300}
+                        value={workbenchTimeout}
+                        onChange={(event) => setWorkbenchTimeout(Number(event.target.value) || 30)}
+                        className="rounded-[0.9rem] border border-cyan-400/10 bg-slate-950/70 px-4 py-3 text-sm text-slate-100 outline-none"
+                      />
+                      <button
+                        onClick={handleStageWorkbenchCommand}
+                        disabled={workbenchBusy !== null}
+                        className="rounded-[0.9rem] border border-cyan-300/20 bg-cyan-400/[0.08] px-4 py-3 text-xs uppercase tracking-[0.28em] text-cyan-100 transition hover:bg-cyan-400/[0.14] disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        {workbenchBusy === 'stage' ? 'Staging' : 'Stage Command'}
+                      </button>
+                    </div>
+                  </div>
                 </div>
 
                 <div className="mt-4 grid gap-3 sm:grid-cols-2">
@@ -913,9 +1053,22 @@ export default function JarvisHudDashboard() {
                 </div>
               </Panel>
             </div>
+
+            <Panel title="Workbench Output" kicker="Terminal mirror">
+              <div className="rounded-[1.15rem] border border-cyan-400/10 bg-black/30 p-4 font-mono text-xs leading-6 text-slate-200/78">
+                <div className="mb-3 text-[10px] uppercase tracking-[0.32em] text-cyan-300/55">
+                  {latestWorkbenchResult
+                    ? `${latestWorkbenchResult.status} · ${latestWorkbenchResult.command}`
+                    : 'No workbench output yet'}
+                </div>
+                <pre className="max-h-72 overflow-auto whitespace-pre-wrap break-words">
+                  {latestWorkbenchResult?.output || 'Stage a safe terminal command and approve it from the gate to see output here.'}
+                </pre>
+              </div>
+            </Panel>
           </div>
 
-          <div className="space-y-4">
+          {!focusMode ? <div className="space-y-4">
             <Panel title="Tactical Timeline" kicker="Event stream">
               <div className="space-y-3">
                 {timelineItems.map(({ icon: Icon, title, detail }) => (
@@ -964,7 +1117,7 @@ export default function JarvisHudDashboard() {
                 ))}
               </div>
             </Panel>
-          </div>
+          </div> : null}
         </div>
       </div>
     </section>
