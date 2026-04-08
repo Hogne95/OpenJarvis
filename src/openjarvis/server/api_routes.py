@@ -133,6 +133,35 @@ class ActionTaskCreateRequest(BaseModel):
     due_at: Optional[str] = None
 
 
+class OperatorProfileUpdateRequest(BaseModel):
+    honorific: Optional[str] = None
+    reply_tone: Optional[str] = None
+    priority_contacts: Optional[List[str] | str] = None
+    workday_start: Optional[str] = None
+    workday_end: Optional[str] = None
+
+
+class OperatorSignalRequest(BaseModel):
+    kind: Literal["reply", "meeting", "task", "urgent"]
+    contact: Optional[str] = None
+
+
+class OperatorRelationshipUpdateRequest(BaseModel):
+    contact: str
+    name: Optional[str] = None
+    importance: Optional[str] = None
+    relationship: Optional[str] = None
+    notes: Optional[str] = None
+
+
+class OperatorMeetingUpdateRequest(BaseModel):
+    key: str
+    title: Optional[str] = None
+    importance: Optional[str] = None
+    prep_style: Optional[str] = None
+    notes: Optional[str] = None
+
+
 # ---- Agent routes ----
 
 agents_router = APIRouter(prefix="/v1/agents", tags=["agents"])
@@ -744,6 +773,7 @@ speech_router = APIRouter(prefix="/v1/speech", tags=["speech"])
 voice_loop_router = APIRouter(prefix="/v1/voice-loop", tags=["voice-loop"])
 workbench_router = APIRouter(prefix="/v1/workbench", tags=["workbench"])
 action_center_router = APIRouter(prefix="/v1/action-center", tags=["action-center"])
+operator_memory_router = APIRouter(prefix="/v1/operator-memory", tags=["operator-memory"])
 
 
 @speech_router.post("/transcribe")
@@ -1249,6 +1279,61 @@ async def action_center_reminders(limit: int = 8):
     return {"items": items[: max(1, min(limit, 10))]}
 
 
+@operator_memory_router.get("")
+async def operator_memory_status(request: Request):
+    manager = getattr(request.app.state, "operator_memory", None)
+    if manager is None:
+        raise HTTPException(status_code=503, detail="Operator memory not configured")
+    return manager.snapshot()
+
+
+@operator_memory_router.post("/profile")
+async def operator_memory_update_profile(req: OperatorProfileUpdateRequest, request: Request):
+    manager = getattr(request.app.state, "operator_memory", None)
+    if manager is None:
+        raise HTTPException(status_code=503, detail="Operator memory not configured")
+    return manager.update_profile(req.model_dump(exclude_none=True))
+
+
+@operator_memory_router.post("/signal")
+async def operator_memory_record_signal(req: OperatorSignalRequest, request: Request):
+    manager = getattr(request.app.state, "operator_memory", None)
+    if manager is None:
+        raise HTTPException(status_code=503, detail="Operator memory not configured")
+    try:
+        return manager.record_signal(req.kind, req.contact or "")
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@operator_memory_router.post("/relationship")
+async def operator_memory_update_relationship(
+    req: OperatorRelationshipUpdateRequest,
+    request: Request,
+):
+    manager = getattr(request.app.state, "operator_memory", None)
+    if manager is None:
+        raise HTTPException(status_code=503, detail="Operator memory not configured")
+    try:
+        return manager.update_relationship(req.contact, req.model_dump(exclude_none=True))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@operator_memory_router.post("/meeting")
+async def operator_memory_update_meeting(
+    req: OperatorMeetingUpdateRequest,
+    request: Request,
+):
+    manager = getattr(request.app.state, "operator_memory", None)
+    if manager is None:
+        raise HTTPException(status_code=503, detail="Operator memory not configured")
+    try:
+        return manager.update_meeting(req.key, req.model_dump(exclude_none=True))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
 # ---- Feedback routes ----
 
 feedback_router = APIRouter(prefix="/v1/feedback", tags=["feedback"])
@@ -1363,6 +1448,7 @@ def include_all_routes(app) -> None:
     app.include_router(voice_loop_router)
     app.include_router(workbench_router)
     app.include_router(action_center_router)
+    app.include_router(operator_memory_router)
     app.include_router(feedback_router)
     app.include_router(optimize_router)
 
@@ -1415,6 +1501,7 @@ __all__ = [
     "voice_loop_router",
     "workbench_router",
     "action_center_router",
+    "operator_memory_router",
     "feedback_router",
     "optimize_router",
 ]

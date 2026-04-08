@@ -380,6 +380,52 @@ export interface DailyDigest {
   audio_available: boolean;
 }
 
+export interface DigestSchedule {
+  enabled: boolean;
+  cron: string;
+}
+
+export interface DurableOperatorProfile {
+  honorific: string;
+  reply_tone: string;
+  priority_contacts: string[];
+  workday_start: string;
+  workday_end: string;
+}
+
+export interface DurableOperatorSignals {
+  reply_drafts: number;
+  meetings_created: number;
+  tasks_created: number;
+  urgent_reviews: number;
+  top_contacts: string[];
+}
+
+export interface DurableOperatorMemory {
+  profile: DurableOperatorProfile;
+  signals: DurableOperatorSignals;
+  relationships: Record<
+    string,
+    {
+      contact: string;
+      name: string;
+      importance: string;
+      relationship: string;
+      notes: string;
+    }
+  >;
+  meetings: Record<
+    string,
+    {
+      key: string;
+      title: string;
+      importance: string;
+      prep_style: string;
+      notes: string;
+    }
+  >;
+}
+
 export interface ReminderItem {
   kind: 'event' | 'task';
   title: string;
@@ -767,6 +813,104 @@ export async function generateDailyDigest(): Promise<{ status: string; text: str
 
 export function getDailyDigestAudioUrl(): string {
   return `${getBase()}/api/digest/audio`;
+}
+
+export async function fetchDigestSchedule(): Promise<DigestSchedule> {
+  const res = await fetch(`${getBase()}/api/digest/schedule`);
+  if (!res.ok) {
+    const detail = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(detail.detail || `Digest schedule fetch failed: ${res.status}`);
+  }
+  return res.json();
+}
+
+export async function updateDigestSchedule(body: DigestSchedule): Promise<DigestSchedule> {
+  const res = await fetch(`${getBase()}/api/digest/schedule`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const detail = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(detail.detail || `Digest schedule update failed: ${res.status}`);
+  }
+  return res.json();
+}
+
+export async function fetchOperatorMemory(): Promise<DurableOperatorMemory> {
+  const res = await fetch(`${getBase()}/v1/operator-memory`);
+  if (!res.ok) {
+    const detail = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(detail.detail || `Operator memory fetch failed: ${res.status}`);
+  }
+  return res.json();
+}
+
+export async function updateOperatorMemoryProfile(body: Partial<DurableOperatorProfile>): Promise<DurableOperatorMemory> {
+  const res = await fetch(`${getBase()}/v1/operator-memory/profile`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const detail = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(detail.detail || `Operator profile update failed: ${res.status}`);
+  }
+  return res.json();
+}
+
+export async function recordOperatorMemorySignal(body: {
+  kind: 'reply' | 'meeting' | 'task' | 'urgent';
+  contact?: string;
+}): Promise<DurableOperatorMemory> {
+  const res = await fetch(`${getBase()}/v1/operator-memory/signal`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const detail = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(detail.detail || `Operator signal failed: ${res.status}`);
+  }
+  return res.json();
+}
+
+export async function updateOperatorRelationship(body: {
+  contact: string;
+  name?: string;
+  importance?: string;
+  relationship?: string;
+  notes?: string;
+}): Promise<DurableOperatorMemory> {
+  const res = await fetch(`${getBase()}/v1/operator-memory/relationship`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const detail = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(detail.detail || `Operator relationship update failed: ${res.status}`);
+  }
+  return res.json();
+}
+
+export async function updateOperatorMeeting(body: {
+  key: string;
+  title?: string;
+  importance?: string;
+  prep_style?: string;
+  notes?: string;
+}): Promise<DurableOperatorMemory> {
+  const res = await fetch(`${getBase()}/v1/operator-memory/meeting`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const detail = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(detail.detail || `Operator meeting update failed: ${res.status}`);
+  }
+  return res.json();
 }
 
 export async function fetchReminders(limit: number = 8): Promise<ReminderItem[]> {

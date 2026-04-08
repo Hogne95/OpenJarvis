@@ -23,6 +23,8 @@ export interface AgentEvent {
 
 const CONVERSATIONS_KEY = 'openjarvis-conversations';
 const SETTINGS_KEY = 'openjarvis-settings';
+const PROFILE_KEY = 'openjarvis-operator-profile';
+const OPERATOR_SIGNALS_KEY = 'openjarvis-operator-signals';
 const OPTIN_KEY = 'openjarvis-optin';
 const OPTIN_NAME_KEY = 'openjarvis-display-name';
 const OPTIN_EMAIL_KEY = 'openjarvis-email';
@@ -68,6 +70,24 @@ interface Settings {
   speechEnabled: boolean;
 }
 
+export interface OperatorProfile {
+  honorific: string;
+  replyTone: string;
+  priorityContacts: string;
+  workdayStart: string;
+  workdayEnd: string;
+  prepLeadMinutes: number;
+  autoPrepareMeetings: boolean;
+}
+
+export interface OperatorSignals {
+  replyDrafts: number;
+  meetingsCreated: number;
+  tasksCreated: number;
+  urgentReviews: number;
+  topContacts: string[];
+}
+
 function loadSettings(): Settings {
   const defaults: Settings = {
     theme: 'system',
@@ -90,6 +110,50 @@ function loadSettings(): Settings {
 
 function saveSettings(settings: Settings): void {
   localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
+}
+
+function loadOperatorProfile(): OperatorProfile {
+  const defaults: OperatorProfile = {
+    honorific: 'sir',
+    replyTone: 'clear and concise',
+    priorityContacts: '',
+    workdayStart: '08:00',
+    workdayEnd: '17:00',
+    prepLeadMinutes: 90,
+    autoPrepareMeetings: true,
+  };
+  try {
+    const raw = localStorage.getItem(PROFILE_KEY);
+    if (!raw) return defaults;
+    return { ...defaults, ...JSON.parse(raw) };
+  } catch {
+    return defaults;
+  }
+}
+
+function saveOperatorProfile(profile: OperatorProfile): void {
+  localStorage.setItem(PROFILE_KEY, JSON.stringify(profile));
+}
+
+function loadOperatorSignals(): OperatorSignals {
+  const defaults: OperatorSignals = {
+    replyDrafts: 0,
+    meetingsCreated: 0,
+    tasksCreated: 0,
+    urgentReviews: 0,
+    topContacts: [],
+  };
+  try {
+    const raw = localStorage.getItem(OPERATOR_SIGNALS_KEY);
+    if (!raw) return defaults;
+    return { ...defaults, ...JSON.parse(raw) };
+  } catch {
+    return defaults;
+  }
+}
+
+function saveOperatorSignals(signals: OperatorSignals): void {
+  localStorage.setItem(OPERATOR_SIGNALS_KEY, JSON.stringify(signals));
 }
 
 // ── Store ─────────────────────────────────────────────────────────────
@@ -118,6 +182,8 @@ interface AppState {
 
   // Settings
   settings: Settings;
+  operatorProfile: OperatorProfile;
+  operatorSignals: OperatorSignals;
 
   // Command palette
   commandPaletteOpen: boolean;
@@ -163,6 +229,11 @@ interface AppState {
 
   // Actions: settings
   updateSettings: (partial: Partial<Settings>) => void;
+  updateOperatorProfile: (partial: Partial<OperatorProfile>) => void;
+  recordOperatorSignal: (
+    kind: 'reply' | 'meeting' | 'task' | 'urgent',
+    contact?: string,
+  ) => void;
 
   // Actions: UI
   setCommandPaletteOpen: (open: boolean) => void;
@@ -223,6 +294,8 @@ export const useAppStore = create<AppState>((set, get) => {
     savings: null,
 
     settings: loadSettings(),
+    operatorProfile: loadOperatorProfile(),
+    operatorSignals: loadOperatorSignals(),
 
     commandPaletteOpen: false,
     sidebarOpen: true,
@@ -378,6 +451,34 @@ export const useAppStore = create<AppState>((set, get) => {
       const updated = { ...get().settings, ...partial };
       saveSettings(updated);
       set({ settings: updated });
+    },
+
+    updateOperatorProfile: (partial: Partial<OperatorProfile>) => {
+      const updated = { ...get().operatorProfile, ...partial };
+      saveOperatorProfile(updated);
+      set({ operatorProfile: updated });
+    },
+
+    recordOperatorSignal: (
+      kind: 'reply' | 'meeting' | 'task' | 'urgent',
+      contact?: string,
+    ) => {
+      const current = get().operatorSignals;
+      const next: OperatorSignals = {
+        ...current,
+        replyDrafts: current.replyDrafts + (kind === 'reply' ? 1 : 0),
+        meetingsCreated: current.meetingsCreated + (kind === 'meeting' ? 1 : 0),
+        tasksCreated: current.tasksCreated + (kind === 'task' ? 1 : 0),
+        urgentReviews: current.urgentReviews + (kind === 'urgent' ? 1 : 0),
+        topContacts: current.topContacts,
+      };
+      const cleanedContact = (contact || '').trim().toLowerCase();
+      if (cleanedContact) {
+        const merged = [cleanedContact, ...current.topContacts.filter((item) => item !== cleanedContact)];
+        next.topContacts = merged.slice(0, 8);
+      }
+      saveOperatorSignals(next);
+      set({ operatorSignals: next });
     },
 
     // ── UI ──────────────────────────────────────────────────────────

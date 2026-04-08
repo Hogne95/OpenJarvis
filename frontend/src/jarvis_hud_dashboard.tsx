@@ -28,8 +28,10 @@ import {
   createManagedAgent,
   fetchActionCenterStatus,
   fetchDailyDigest,
+  fetchDigestSchedule,
   fetchInboxSummary,
   fetchManagedAgents,
+  fetchOperatorMemory,
   fetchReminders,
   fetchSpeechHealth,
   fetchSpeechProfile,
@@ -40,6 +42,7 @@ import {
   getDailyDigestAudioUrl,
   holdActionCenterItem,
   holdWorkbenchCommand,
+  recordOperatorMemorySignal,
   runManagedAgent,
   startVoiceLoop,
   stageCalendarBrief,
@@ -49,9 +52,14 @@ import {
   stageWorkbenchCommand,
   stopVoiceLoop,
   synthesizeSpeech,
+  updateDigestSchedule,
+  updateOperatorMeeting,
+  updateOperatorRelationship,
   updateVoiceLoopState,
   type ActionCenterStatus,
   type DailyDigest,
+  type DigestSchedule,
+  type DurableOperatorMemory,
   type InboxSummaryItem,
   type ReminderItem,
   type SpeechProfile,
@@ -153,6 +161,21 @@ function detectLanguageHints() {
   return ['no', 'en'];
 }
 
+function formatReminderMoment(value: string) {
+  if (!value) return 'No time set';
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return value;
+  return parsed.toLocaleString();
+}
+
+function normalizeContactKey(value: string) {
+  return value.trim().toLowerCase();
+}
+
+function normalizeMeetingKey(value: string) {
+  return value.trim().toLowerCase();
+}
+
 export default function JarvisHudDashboard() {
   const navigate = useNavigate();
   const messages = useAppStore((s) => s.messages);
@@ -160,9 +183,13 @@ export default function JarvisHudDashboard() {
   const selectedModel = useAppStore((s) => s.selectedModel);
   const serverInfo = useAppStore((s) => s.serverInfo);
   const settings = useAppStore((s) => s.settings);
+  const operatorProfile = useAppStore((s) => s.operatorProfile);
+  const operatorSignals = useAppStore((s) => s.operatorSignals);
   const logEntries = useAppStore((s) => s.logEntries);
   const managedAgents = useAppStore((s) => s.managedAgents);
   const setSelectedAgentId = useAppStore((s) => s.setSelectedAgentId);
+  const updateOperatorProfile = useAppStore((s) => s.updateOperatorProfile);
+  const recordOperatorSignal = useAppStore((s) => s.recordOperatorSignal);
 
   const [apiReachable, setApiReachable] = useState<boolean | null>(null);
   const [speechAvailable, setSpeechAvailable] = useState<boolean | null>(null);
@@ -202,11 +229,18 @@ export default function JarvisHudDashboard() {
   const [inboxSummary, setInboxSummary] = useState<InboxSummaryItem[]>([]);
   const [taskSummary, setTaskSummary] = useState<TaskSummaryItem[]>([]);
   const [dailyDigest, setDailyDigest] = useState<DailyDigest | null>(null);
+  const [digestSchedule, setDigestSchedule] = useState<DigestSchedule | null>(null);
+  const [durableOperatorMemory, setDurableOperatorMemory] = useState<DurableOperatorMemory | null>(null);
   const [reminders, setReminders] = useState<ReminderItem[]>([]);
   const [digestNotice, setDigestNotice] = useState('');
   const [digestBusy, setDigestBusy] = useState(false);
+  const [digestScheduleBusy, setDigestScheduleBusy] = useState(false);
+  const [relationshipNotice, setRelationshipNotice] = useState('');
   const lastSyncedPhaseRef = useRef('');
   const hasAutoRequestedDigestRef = useRef(false);
+  const lastSpokenDigestRef = useRef('');
+  const lastChimedReminderRef = useRef('');
+  const lastAutoPrepReminderRef = useRef('');
   const lastSpokenMessageRef = useRef<string>('');
   const audioUrlRef = useRef<string | null>(null);
   const audioElementRef = useRef<HTMLAudioElement | null>(null);
@@ -223,9 +257,11 @@ export default function JarvisHudDashboard() {
     let cancelled = false;
 
     const refreshLiveStatus = async () => {
-      const [action, digest, inbox, tasks, reminderItems, health, speech, agents, connectors, loop, profile, wb] = await Promise.allSettled([
+      const [action, digest, digestSched, operatorMemory, inbox, tasks, reminderItems, health, speech, agents, connectors, loop, profile, wb] = await Promise.allSettled([
         fetchActionCenterStatus(),
         fetchDailyDigest(),
+        fetchDigestSchedule(),
+        fetchOperatorMemory(),
         fetchInboxSummary(),
         fetchTaskSummary(),
         fetchReminders(),
@@ -242,6 +278,8 @@ export default function JarvisHudDashboard() {
 
       if (action.status === 'fulfilled') setActionCenter(action.value);
       if (digest.status === 'fulfilled') setDailyDigest(digest.value);
+      if (digestSched.status === 'fulfilled') setDigestSchedule(digestSched.value);
+      if (operatorMemory.status === 'fulfilled') setDurableOperatorMemory(operatorMemory.value);
       if (inbox.status === 'fulfilled') setInboxSummary(inbox.value);
       if (tasks.status === 'fulfilled') setTaskSummary(tasks.value);
       if (reminderItems.status === 'fulfilled') setReminders(reminderItems.value);
@@ -313,12 +351,46 @@ export default function JarvisHudDashboard() {
   }, [digestNotice]);
 
   useEffect(() => {
+    if (!relationshipNotice) return;
+    const timeout = window.setTimeout(() => setRelationshipNotice(''), 5000);
+    return () => window.clearTimeout(timeout);
+  }, [relationshipNotice]);
+
+  useEffect(() => {
     if (hasAutoRequestedDigestRef.current) return;
     if (digestBusy) return;
     if (dailyDigest || apiReachable === false) return;
     hasAutoRequestedDigestRef.current = true;
     handleGenerateDigest().catch(() => {});
   }, [apiReachable, dailyDigest, digestBusy]);
+
+  useEffect(() => {
+    if (!dailyDigest?.text || !speechProfile?.auto_speak) return;
+    if (lastSpokenDigestRef.current === dailyDigest.generated_at) return;
+    let cancelled = false;
+    synthesizeSpeech({
+      text: dailyDigest.text,
+      backend: speechProfile.reply_backend,
+      voice_id: speechProfile.reply_voice_id,
+      speed: speechProfile.reply_speed,
+      output_format: 'wav',
+    })
+      .then((blob) => {
+        if (cancelled) return;
+        if (audioUrlRef.current) URL.revokeObjectURL(audioUrlRef.current);
+        const url = URL.createObjectURL(blob);
+        audioUrlRef.current = url;
+        const audio = new Audio(url);
+        audioElementRef.current = audio;
+        audio.play().catch(() => {});
+        lastSpokenDigestRef.current = dailyDigest.generated_at;
+      })
+      .catch(() => {});
+
+    return () => {
+      cancelled = true;
+    };
+  }, [dailyDigest?.generated_at, dailyDigest?.text, speechProfile]);
 
   useEffect(() => {
     if (!voiceLoop?.active) {
@@ -358,6 +430,110 @@ export default function JarvisHudDashboard() {
   const pendingWorkbench = workbench?.pending ?? null;
   const latestActionResult = actionCenter?.history?.[0] ?? null;
   const latestWorkbenchResult = workbench?.history?.[0] ?? null;
+  const prioritizedContacts = useMemo(
+    () =>
+      [
+        ...operatorProfile.priorityContacts
+          .split(',')
+          .map((item) => item.trim().toLowerCase())
+          .filter(Boolean),
+        ...(durableOperatorMemory?.profile.priority_contacts || []),
+        ...operatorSignals.topContacts,
+        ...(durableOperatorMemory?.signals.top_contacts || []),
+      ].filter((item, index, array) => array.indexOf(item) === index),
+    [
+      durableOperatorMemory?.profile.priority_contacts,
+      durableOperatorMemory?.signals.top_contacts,
+      operatorProfile.priorityContacts,
+      operatorSignals.topContacts,
+    ],
+  );
+  const sortedInboxSummary = useMemo(() => {
+    return [...inboxSummary].sort((left, right) => {
+      const leftContact = (left.author_email || left.author).toLowerCase();
+      const rightContact = (right.author_email || right.author).toLowerCase();
+      const leftPriority = prioritizedContacts.findIndex((item) => leftContact.includes(item));
+      const rightPriority = prioritizedContacts.findIndex((item) => rightContact.includes(item));
+      const leftRank = leftPriority === -1 ? Number.MAX_SAFE_INTEGER : leftPriority;
+      const rightRank = rightPriority === -1 ? Number.MAX_SAFE_INTEGER : rightPriority;
+      if (leftRank !== rightRank) return leftRank - rightRank;
+      return (right.timestamp || '').localeCompare(left.timestamp || '');
+    });
+  }, [inboxSummary, prioritizedContacts]);
+  const immediateReminder = useMemo(() => {
+    const now = Date.now();
+    const enriched = reminders
+      .map((item) => {
+        const parsed = new Date(item.when).getTime();
+        return {
+          ...item,
+          deltaMs: Number.isNaN(parsed) ? Number.POSITIVE_INFINITY : parsed - now,
+        };
+      })
+      .sort((a, b) => a.deltaMs - b.deltaMs);
+    return enriched[0] ?? null;
+  }, [reminders]);
+  const prepQueue = useMemo(() => {
+    const now = Date.now();
+    const meetingMemory = durableOperatorMemory?.meetings || {};
+    return reminders
+      .filter((item) => item.kind === 'event')
+      .map((item) => {
+        const parsed = new Date(item.when).getTime();
+        const deltaMs = Number.isNaN(parsed) ? Number.POSITIVE_INFINITY : parsed - now;
+        const memory = meetingMemory[normalizeMeetingKey(item.title)];
+        const importanceBoost =
+          memory?.importance === 'high' ? 3 : memory?.importance === 'normal' ? 1 : 0;
+        const urgencyBoost =
+          deltaMs <= 90 * 60 * 1000 ? 4 : deltaMs <= 4 * 60 * 60 * 1000 ? 2 : 0;
+        return {
+          ...item,
+          deltaMs,
+          memory,
+          score: importanceBoost + urgencyBoost,
+        };
+      })
+      .filter((item) => item.deltaMs >= -15 * 60 * 1000 && item.deltaMs <= 24 * 60 * 60 * 1000)
+      .sort((left, right) => {
+        if (left.score !== right.score) return right.score - left.score;
+        return left.deltaMs - right.deltaMs;
+      })
+      .slice(0, 3);
+  }, [durableOperatorMemory?.meetings, reminders]);
+
+  useEffect(() => {
+    if (!immediateReminder) return;
+    if (immediateReminder.deltaMs > 2 * 60 * 60 * 1000) return;
+    const reminderKey = `${immediateReminder.kind}-${immediateReminder.when}-${immediateReminder.title}`;
+    if (lastChimedReminderRef.current === reminderKey) return;
+    playAttentionTone();
+    lastChimedReminderRef.current = reminderKey;
+  }, [immediateReminder]);
+
+  useEffect(() => {
+    const nextPrep = prepQueue[0];
+    if (!nextPrep) return;
+    if (nextPrep.deltaMs > operatorProfile.prepLeadMinutes * 60 * 1000) return;
+    const prepKey = `${nextPrep.title}-${nextPrep.when}`;
+    if (lastAutoPrepReminderRef.current === prepKey) return;
+    if (operatorProfile.autoPrepareMeetings) {
+      const prompt = buildMeetingPrepPrompt(nextPrep, nextPrep.memory);
+      if (!streamState.isStreaming && streamState.activeToolCalls.length === 0) {
+        submitInjectedCommand(prompt);
+        setAgentNotice(`Scheduled meeting prep launched for ${nextPrep.title}.`);
+      } else {
+        injectCommand(prompt);
+        setAgentNotice(`Meeting prep queued for ${nextPrep.title} when the console is free.`);
+      }
+    } else {
+      setAgentNotice(
+        nextPrep.memory
+          ? `Upcoming meeting ready for prep: ${nextPrep.title}. Saved context is available.`
+          : `Upcoming meeting detected: ${nextPrep.title}. Consider saving prep context.`,
+      );
+    }
+    lastAutoPrepReminderRef.current = prepKey;
+  }, [operatorProfile.autoPrepareMeetings, operatorProfile.prepLeadMinutes, prepQueue, streamState.activeToolCalls.length, streamState.isStreaming]);
 
   const status: Status = useMemo(() => {
     if (streamState.isStreaming && streamState.content.trim()) return 'Responding';
@@ -482,6 +658,16 @@ export default function JarvisHudDashboard() {
     setVoiceNotice('Command loaded into the deck.');
   }
 
+  function buildMeetingPrepPrompt(
+    item: Pick<ReminderItem, 'title' | 'when' | 'detail'>,
+    memory?: { prep_style: string; notes: string } | null,
+  ) {
+    const prepStyle =
+      memory?.prep_style || 'Prepare a concise executive brief with context, likely agenda, risks, and talking points.';
+    const memoryNotes = memory?.notes ? `\nKnown meeting context: ${memory.notes}` : '';
+    return `${prepStyle}\nMeeting: ${item.title}\nWhen: ${item.when}\nDetail: ${item.detail || 'No extra detail.'}${memoryNotes}`;
+  }
+
   function submitInjectedCommand(text: string) {
     if (streamState.isStreaming) {
       window.dispatchEvent(new Event('jarvis:interrupt-stream'));
@@ -491,13 +677,42 @@ export default function JarvisHudDashboard() {
     window.dispatchEvent(new Event('jarvis:submit-input'));
   }
 
+  function playAttentionTone() {
+    try {
+      const AudioContextCtor =
+        window.AudioContext ||
+        (window as typeof window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+      if (!AudioContextCtor) return;
+      const context = new AudioContextCtor();
+      const oscillator = context.createOscillator();
+      const gain = context.createGain();
+      oscillator.type = 'sine';
+      oscillator.frequency.setValueAtTime(660, context.currentTime);
+      oscillator.frequency.exponentialRampToValueAtTime(440, context.currentTime + 0.18);
+      gain.gain.setValueAtTime(0.0001, context.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.08, context.currentTime + 0.02);
+      gain.gain.exponentialRampToValueAtTime(0.0001, context.currentTime + 0.22);
+      oscillator.connect(gain);
+      gain.connect(context.destination);
+      oscillator.start();
+      oscillator.stop(context.currentTime + 0.24);
+      window.setTimeout(() => {
+        context.close().catch(() => {});
+      }, 350);
+    } catch {}
+  }
+
   function prepareReplyDraft(item: InboxSummaryItem) {
+    recordOperatorSignal('reply', item.author_email || item.author);
+    recordOperatorMemorySignal({ kind: 'reply', contact: item.author_email || item.author })
+      .then(setDurableOperatorMemory)
+      .catch(() => {});
     setActionMode('email');
     setEmailRecipient(item.author_email || '');
     setEmailSubject(item.title.toLowerCase().startsWith('re:') ? item.title : `Re: ${item.title}`);
     setEmailBody(
       `Hi ${item.author.split('<')[0].trim() || 'there'},\n\nThanks for your email. ` +
-        `Here is my reply:\n\n`,
+        `Please use a ${operatorProfile.replyTone} tone in this reply.\n\n`,
     );
     setActionNotice('Reply draft loaded into Action Center.');
   }
@@ -510,6 +725,10 @@ export default function JarvisHudDashboard() {
   }
 
   function loadUrgentAssessment(item: InboxSummaryItem) {
+    recordOperatorSignal('urgent', item.author_email || item.author);
+    recordOperatorMemorySignal({ kind: 'urgent', contact: item.author_email || item.author })
+      .then(setDurableOperatorMemory)
+      .catch(() => {});
     injectCommand(
       `Assess whether this email is urgent, what deadline risk it contains, and the next best action.\n` +
         `Return a short executive brief.\n` +
@@ -518,25 +737,35 @@ export default function JarvisHudDashboard() {
   }
 
   function prepareFollowUp(item: InboxSummaryItem) {
+    recordOperatorSignal('reply', item.author_email || item.author);
+    recordOperatorMemorySignal({ kind: 'reply', contact: item.author_email || item.author })
+      .then(setDurableOperatorMemory)
+      .catch(() => {});
     setActionMode('email');
     setEmailRecipient(item.author_email || '');
     setEmailSubject(item.title.toLowerCase().startsWith('re:') ? item.title : `Re: ${item.title}`);
     setEmailBody(
       `Hi ${item.author.split('<')[0].trim() || 'there'},\n\n` +
         `I wanted to follow up on your message about "${item.title}". ` +
-        `Here is my response:\n\n`,
+        `Please keep the tone ${operatorProfile.replyTone}.\n\n`,
     );
     setActionNotice('Follow-up draft loaded into Action Center.');
   }
 
   function convertInboxItemToMeeting(item: InboxSummaryItem) {
+    recordOperatorSignal('meeting', item.author_email || item.author);
+    recordOperatorMemorySignal({ kind: 'meeting', contact: item.author_email || item.author })
+      .then(setDurableOperatorMemory)
+      .catch(() => {});
     setActionMode('calendar');
     setCalendarTitle(`Follow-up: ${item.title}`);
     setCalendarAttendees(item.author_email || '');
     setCalendarLocation('');
     setCalendarStartAt('');
     setCalendarEndAt('');
-    setCalendarNotes(`Meeting generated from email thread.\nFrom: ${item.author}\n\n${item.snippet}`);
+    setCalendarNotes(
+      `Meeting generated from email thread.\nFrom: ${item.author}\nPreferred work window: ${operatorProfile.workdayStart}-${operatorProfile.workdayEnd}\n\n${item.snippet}`,
+    );
     setActionNotice('Meeting draft loaded into Action Center.');
   }
 
@@ -559,6 +788,10 @@ export default function JarvisHudDashboard() {
 
   async function createFollowUpTask(title: string, notes: string, dueAt: string = '') {
     try {
+      recordOperatorSignal('task');
+      recordOperatorMemorySignal({ kind: 'task' })
+        .then(setDurableOperatorMemory)
+        .catch(() => {});
       const next = await stageTask({
         title,
         notes,
@@ -569,6 +802,55 @@ export default function JarvisHudDashboard() {
     } catch (error) {
       setActionNotice(error instanceof Error ? error.message : 'Unable to stage task.');
     }
+  }
+
+  async function rememberContact(item: InboxSummaryItem) {
+    const contact = normalizeContactKey(item.author_email || item.author);
+    if (!contact) {
+      setRelationshipNotice('No contact identifier available for this sender.');
+      return;
+    }
+    try {
+      const next = await updateOperatorRelationship({
+        contact,
+        name: item.author.split('<')[0].trim(),
+        importance: 'high',
+        relationship: 'priority contact',
+        notes: `Observed from inbox subject "${item.title}".`,
+      });
+      setDurableOperatorMemory(next);
+      setRelationshipNotice('Contact memory saved.');
+    } catch (error) {
+      setRelationshipNotice(error instanceof Error ? error.message : 'Unable to save contact memory.');
+    }
+  }
+
+  async function rememberMeeting(item: ReminderItem) {
+    const key = normalizeMeetingKey(item.title);
+    if (!key) {
+      setRelationshipNotice('No meeting title available for memory.');
+      return;
+    }
+    try {
+      const next = await updateOperatorMeeting({
+        key,
+        title: item.title,
+        importance: item.kind === 'event' ? 'high' : 'normal',
+        prep_style: 'executive brief with context, risks, and talking points',
+        notes: item.detail || `Observed from reminder at ${item.when}.`,
+      });
+      setDurableOperatorMemory(next);
+      setRelationshipNotice('Meeting memory saved.');
+    } catch (error) {
+      setRelationshipNotice(error instanceof Error ? error.message : 'Unable to save meeting memory.');
+    }
+  }
+
+  function prepareMeetingFromReminder(item: ReminderItem) {
+    const key = normalizeMeetingKey(item.title);
+    const memory = durableMeetings[key];
+    injectCommand(buildMeetingPrepPrompt(item, memory));
+    setRelationshipNotice(memory ? 'Loaded meeting prep with saved context.' : 'Meeting prep loaded.');
   }
 
   async function handleGenerateDigest() {
@@ -597,6 +879,24 @@ export default function JarvisHudDashboard() {
       setDigestNotice(error instanceof Error ? error.message : 'Unable to generate daily brief.');
     } finally {
       setDigestBusy(false);
+    }
+  }
+
+  async function handleDigestSchedule(enabled: boolean, cron?: string) {
+    setDigestScheduleBusy(true);
+    try {
+      const next = await updateDigestSchedule({
+        enabled,
+        cron: cron ?? digestSchedule?.cron ?? '0 8 * * *',
+      });
+      setDigestSchedule(next);
+      setDigestNotice(
+        enabled ? `Morning brief scheduled: ${next.cron}` : 'Morning brief schedule disabled.',
+      );
+    } catch (error) {
+      setDigestNotice(error instanceof Error ? error.message : 'Unable to update digest schedule.');
+    } finally {
+      setDigestScheduleBusy(false);
     }
   }
 
@@ -919,6 +1219,29 @@ export default function JarvisHudDashboard() {
     : [
         { icon: Radio, title: 'Session ready', detail: 'HUD is live and waiting for activity.' },
       ];
+  const adaptiveFocus = useMemo(() => {
+    const modes = [
+      {
+        label: 'Reply-driven',
+        value: operatorSignals.replyDrafts + (durableOperatorMemory?.signals.reply_drafts || 0),
+      },
+      {
+        label: 'Meeting-driven',
+        value: operatorSignals.meetingsCreated + (durableOperatorMemory?.signals.meetings_created || 0),
+      },
+      {
+        label: 'Task-driven',
+        value: operatorSignals.tasksCreated + (durableOperatorMemory?.signals.tasks_created || 0),
+      },
+      {
+        label: 'Urgency-driven',
+        value: operatorSignals.urgentReviews + (durableOperatorMemory?.signals.urgent_reviews || 0),
+      },
+    ].sort((a, b) => b.value - a.value);
+    return modes[0]?.value ? modes[0].label : 'Learning';
+  }, [durableOperatorMemory?.signals, operatorSignals]);
+  const durableRelationships = durableOperatorMemory?.relationships || {};
+  const durableMeetings = durableOperatorMemory?.meetings || {};
 
   useEffect(() => {
     if (!speechProfile?.auto_speak || !voiceLoop?.active) return;
@@ -989,6 +1312,15 @@ export default function JarvisHudDashboard() {
                 <div className="mt-1 text-sm text-cyan-50/90">{value}</div>
               </div>
             ))}
+            {immediateReminder ? (
+              <div className="rounded-[1.2rem] border border-amber-300/20 bg-amber-300/[0.08] px-4 py-3">
+                <div className="text-[10px] uppercase tracking-[0.35em] text-amber-200/70">Immediate Focus</div>
+                <div className="mt-1 text-sm text-amber-50/92">{immediateReminder.title}</div>
+                <div className="mt-1 text-[10px] uppercase tracking-[0.22em] text-amber-100/70">
+                  {formatReminderMoment(immediateReminder.when)}
+                </div>
+              </div>
+            ) : null}
             <button
               onClick={() => setFocusMode((value) => !value)}
               className="rounded-[1.2rem] border border-cyan-400/15 bg-cyan-400/[0.08] px-4 py-3 text-sm uppercase tracking-[0.22em] text-cyan-100 transition hover:bg-cyan-400/[0.14]"
@@ -1431,17 +1763,193 @@ export default function JarvisHudDashboard() {
                     Open Audio
                   </button>
                 </div>
+                <div className="mt-3 rounded-[1rem] border border-cyan-400/10 bg-slate-950/55 px-3 py-3">
+                  <div className="text-[10px] uppercase tracking-[0.28em] text-cyan-300/55">
+                    Schedule
+                  </div>
+                  <div className="mt-1 text-sm text-slate-200/76">
+                    {digestSchedule?.enabled
+                      ? `Enabled · ${digestSchedule.cron}`
+                      : 'Disabled · generate on demand'}
+                  </div>
+                  <div className="mt-3 grid gap-2 sm:grid-cols-3">
+                    <button
+                      onClick={() => handleDigestSchedule(true, '0 7 * * *')}
+                      disabled={digestScheduleBusy}
+                      className="rounded-[0.95rem] border border-cyan-400/12 bg-slate-950/70 px-3 py-2 text-xs uppercase tracking-[0.22em] text-cyan-100 transition hover:bg-cyan-400/[0.08] disabled:cursor-not-allowed disabled:opacity-40"
+                    >
+                      07:00
+                    </button>
+                    <button
+                      onClick={() => handleDigestSchedule(true, '0 8 * * *')}
+                      disabled={digestScheduleBusy}
+                      className="rounded-[0.95rem] border border-cyan-400/12 bg-slate-950/70 px-3 py-2 text-xs uppercase tracking-[0.22em] text-cyan-100 transition hover:bg-cyan-400/[0.08] disabled:cursor-not-allowed disabled:opacity-40"
+                    >
+                      08:00
+                    </button>
+                    <button
+                      onClick={() => handleDigestSchedule(false)}
+                      disabled={digestScheduleBusy}
+                      className="rounded-[0.95rem] border border-cyan-400/12 bg-slate-950/70 px-3 py-2 text-xs uppercase tracking-[0.22em] text-cyan-100 transition hover:bg-cyan-400/[0.08] disabled:cursor-not-allowed disabled:opacity-40"
+                    >
+                      Off
+                    </button>
+                  </div>
+                </div>
                 {digestNotice ? (
                   <div className="mt-3 text-sm text-cyan-100/80">{digestNotice}</div>
                 ) : null}
               </div>
             </Panel>
 
+            <Panel title="Operator Profile" kicker="Personalization">
+              <div className="rounded-[1.15rem] border border-cyan-400/10 bg-slate-950/50 px-4 py-3">
+                <div className="grid gap-3">
+                  <input
+                    value={operatorProfile.honorific}
+                    onChange={(event) => updateOperatorProfile({ honorific: event.target.value })}
+                    placeholder="Honorific"
+                    className="rounded-[0.9rem] border border-cyan-400/10 bg-slate-950/70 px-4 py-3 text-sm text-slate-100 outline-none placeholder:text-slate-500"
+                  />
+                  <input
+                    value={operatorProfile.replyTone}
+                    onChange={(event) => updateOperatorProfile({ replyTone: event.target.value })}
+                    placeholder="Preferred reply tone"
+                    className="rounded-[0.9rem] border border-cyan-400/10 bg-slate-950/70 px-4 py-3 text-sm text-slate-100 outline-none placeholder:text-slate-500"
+                  />
+                  <input
+                    value={operatorProfile.priorityContacts}
+                    onChange={(event) => updateOperatorProfile({ priorityContacts: event.target.value })}
+                    placeholder="Priority contacts"
+                    className="rounded-[0.9rem] border border-cyan-400/10 bg-slate-950/70 px-4 py-3 text-sm text-slate-100 outline-none placeholder:text-slate-500"
+                  />
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    <input
+                      value={operatorProfile.workdayStart}
+                      onChange={(event) => updateOperatorProfile({ workdayStart: event.target.value })}
+                      placeholder="08:00"
+                      className="rounded-[0.9rem] border border-cyan-400/10 bg-slate-950/70 px-4 py-3 text-sm text-slate-100 outline-none placeholder:text-slate-500"
+                    />
+                    <input
+                      value={operatorProfile.workdayEnd}
+                      onChange={(event) => updateOperatorProfile({ workdayEnd: event.target.value })}
+                      placeholder="17:00"
+                      className="rounded-[0.9rem] border border-cyan-400/10 bg-slate-950/70 px-4 py-3 text-sm text-slate-100 outline-none placeholder:text-slate-500"
+                    />
+                  </div>
+                  <div className="grid gap-3 sm:grid-cols-[1fr_auto]">
+                    <input
+                      type="number"
+                      min={15}
+                      max={240}
+                      value={operatorProfile.prepLeadMinutes}
+                      onChange={(event) =>
+                        updateOperatorProfile({
+                          prepLeadMinutes: Math.max(15, Math.min(240, Number(event.target.value) || 90)),
+                        })
+                      }
+                      placeholder="Prep lead minutes"
+                      className="rounded-[0.9rem] border border-cyan-400/10 bg-slate-950/70 px-4 py-3 text-sm text-slate-100 outline-none placeholder:text-slate-500"
+                    />
+                    <button
+                      onClick={() =>
+                        updateOperatorProfile({
+                          autoPrepareMeetings: !operatorProfile.autoPrepareMeetings,
+                        })
+                      }
+                      className={`rounded-[0.9rem] border px-4 py-3 text-xs uppercase tracking-[0.22em] transition ${
+                        operatorProfile.autoPrepareMeetings
+                          ? 'border-cyan-300/20 bg-cyan-400/[0.08] text-cyan-100 hover:bg-cyan-400/[0.14]'
+                          : 'border-cyan-400/10 bg-slate-950/70 text-slate-300 hover:bg-cyan-400/[0.08]'
+                      }`}
+                    >
+                      {operatorProfile.autoPrepareMeetings ? 'Auto Prep On' : 'Auto Prep Off'}
+                    </button>
+                  </div>
+                </div>
+                <div className="mt-3 rounded-[1rem] border border-cyan-400/10 bg-slate-950/55 px-3 py-3">
+                  <div className="text-[10px] uppercase tracking-[0.28em] text-cyan-300/55">
+                    Learned Pattern
+                  </div>
+                  <div className="mt-1 text-sm text-slate-200/76">{adaptiveFocus}</div>
+                  <div className="mt-2 text-sm text-slate-200/70">
+                    Frequent contacts: {operatorSignals.topContacts.length ? operatorSignals.topContacts.join(', ') : 'still learning'}
+                  </div>
+                </div>
+                {durableOperatorMemory?.relationships &&
+                Object.keys(durableOperatorMemory.relationships).length > 0 ? (
+                  <div className="mt-3 rounded-[1rem] border border-cyan-400/10 bg-slate-950/55 px-3 py-3">
+                    <div className="text-[10px] uppercase tracking-[0.28em] text-cyan-300/55">
+                      Contact Memory
+                    </div>
+                    <div className="mt-2 space-y-2">
+                      {Object.entries(durableOperatorMemory.relationships)
+                        .slice(0, 3)
+                        .map(([contact, relationship]) => (
+                          <div
+                            key={contact}
+                            className="rounded-[0.9rem] border border-cyan-400/10 bg-black/20 px-3 py-2"
+                          >
+                            <div className="text-xs uppercase tracking-[0.16em] text-cyan-50/90">
+                              {relationship.name || contact}
+                            </div>
+                            <div className="mt-1 text-[10px] uppercase tracking-[0.22em] text-cyan-300/60">
+                              {relationship.relationship || 'known contact'} · {relationship.importance || 'normal'}
+                            </div>
+                            {relationship.notes ? (
+                              <div className="mt-1 text-xs leading-5 text-slate-300/72">
+                                {relationship.notes}
+                              </div>
+                            ) : null}
+                          </div>
+                        ))}
+                    </div>
+                  </div>
+                ) : null}
+                {durableOperatorMemory?.meetings &&
+                Object.keys(durableOperatorMemory.meetings).length > 0 ? (
+                  <div className="mt-3 rounded-[1rem] border border-cyan-400/10 bg-slate-950/55 px-3 py-3">
+                    <div className="text-[10px] uppercase tracking-[0.28em] text-cyan-300/55">
+                      Meeting Memory
+                    </div>
+                    <div className="mt-2 space-y-2">
+                      {Object.entries(durableOperatorMemory.meetings)
+                        .slice(0, 3)
+                        .map(([key, meeting]) => (
+                          <div
+                            key={key}
+                            className="rounded-[0.9rem] border border-cyan-400/10 bg-black/20 px-3 py-2"
+                          >
+                            <div className="text-xs uppercase tracking-[0.16em] text-cyan-50/90">
+                              {meeting.title || key}
+                            </div>
+                            <div className="mt-1 text-[10px] uppercase tracking-[0.22em] text-cyan-300/60">
+                              {meeting.prep_style || 'default prep'} · {meeting.importance || 'normal'}
+                            </div>
+                            {meeting.notes ? (
+                              <div className="mt-1 text-xs leading-5 text-slate-300/72">
+                                {meeting.notes}
+                              </div>
+                            ) : null}
+                          </div>
+                        ))}
+                    </div>
+                  </div>
+                ) : null}
+                {relationshipNotice ? (
+                  <div className="mt-3 text-sm text-cyan-100/80">{relationshipNotice}</div>
+                ) : null}
+              </div>
+            </Panel>
+
             <Panel title="Inbox Snapshot" kicker="Recent mail">
               <div className="space-y-3">
-                {inboxSummary.length ? (
-                  inboxSummary.map((item) => (
-                    <div
+                {sortedInboxSummary.length ? (
+                  sortedInboxSummary.map((item) => {
+                    const relationshipKey = normalizeContactKey(item.author_email || item.author);
+                    const relationship = durableRelationships[relationshipKey];
+                    return (
+                      <div
                       key={`${item.timestamp}-${item.title}-${item.author}`}
                       className="rounded-[1.15rem] border border-cyan-400/10 bg-slate-950/50 px-4 py-3"
                     >
@@ -1451,6 +1959,21 @@ export default function JarvisHudDashboard() {
                       <div className="mt-1 text-[10px] uppercase tracking-[0.28em] text-cyan-300/55">
                         {item.author} · {item.source || 'email'}
                       </div>
+                      {relationship ? (
+                        <div className="mt-2 rounded-[0.95rem] border border-cyan-400/10 bg-cyan-400/[0.05] px-3 py-2">
+                          <div className="text-[10px] uppercase tracking-[0.24em] text-cyan-300/60">
+                            Contact memory
+                          </div>
+                          <div className="mt-1 text-sm text-cyan-50/88">
+                            {relationship.relationship || 'known contact'} · {relationship.importance || 'normal'}
+                          </div>
+                          {relationship.notes ? (
+                            <div className="mt-1 text-xs leading-5 text-slate-300/72">
+                              {relationship.notes}
+                            </div>
+                          ) : null}
+                        </div>
+                      ) : null}
                       <div className="mt-2 text-sm leading-6 text-slate-200/72">
                         {item.snippet || 'No preview available.'}
                       </div>
@@ -1494,6 +2017,12 @@ export default function JarvisHudDashboard() {
                           Convert To Meeting
                         </button>
                         <button
+                          onClick={() => rememberContact(item)}
+                          className="rounded-[0.95rem] border border-cyan-400/12 bg-slate-950/70 px-3 py-2 text-xs uppercase tracking-[0.22em] text-cyan-100 transition hover:bg-cyan-400/[0.08]"
+                        >
+                          Remember Contact
+                        </button>
+                        <button
                           onClick={() => stageInboxMutation(item, 'archive')}
                           disabled={!item.supports_mutation}
                           className="rounded-[0.95rem] border border-cyan-400/12 bg-slate-950/70 px-3 py-2 text-xs uppercase tracking-[0.22em] text-cyan-100 transition hover:bg-cyan-400/[0.08] disabled:cursor-not-allowed disabled:opacity-40"
@@ -1522,8 +2051,9 @@ export default function JarvisHudDashboard() {
                           Create Task
                         </button>
                       </div>
-                    </div>
-                  ))
+                      </div>
+                    );
+                  })
                 ) : (
                   <div className="rounded-[1.15rem] border border-cyan-400/10 bg-slate-950/50 px-4 py-3 text-sm text-slate-200/72">
                     No synced inbox messages yet. Connect Gmail or Outlook and run sync to populate this rail.
@@ -1578,25 +2108,107 @@ export default function JarvisHudDashboard() {
               </div>
             </Panel>
 
-            <Panel title="Reminder Rail" kicker="Next up">
+            <Panel title="Prep Queue" kicker="Upcoming meetings">
               <div className="space-y-3">
-                {reminders.length ? (
-                  reminders.map((item) => (
+                {prepQueue.length ? (
+                  prepQueue.map((item) => (
                     <div
-                      key={`${item.kind}-${item.when}-${item.title}`}
+                      key={`${item.title}-${item.when}`}
                       className="rounded-[1.15rem] border border-cyan-400/10 bg-slate-950/50 px-4 py-3"
                     >
                       <div className="text-sm uppercase tracking-[0.16em] text-cyan-50/92">
                         {item.title}
                       </div>
                       <div className="mt-1 text-[10px] uppercase tracking-[0.28em] text-cyan-300/55">
-                        {item.kind} · {item.when}
+                        {formatReminderMoment(item.when)}
                       </div>
                       <div className="mt-2 text-sm leading-6 text-slate-200/72">
-                        {item.detail || 'No additional detail.'}
+                        {item.memory?.notes || item.detail || 'No additional detail.'}
+                      </div>
+                      <div className="mt-2 text-[10px] uppercase tracking-[0.22em] text-cyan-300/60">
+                        {item.memory?.prep_style || 'default prep'} · {item.memory?.importance || 'normal'}
+                      </div>
+                      <div className="mt-1 text-[10px] uppercase tracking-[0.22em] text-cyan-300/45">
+                        Auto prep window: {operatorProfile.prepLeadMinutes} min
+                      </div>
+                      <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                        <button
+                          onClick={() => prepareMeetingFromReminder(item)}
+                          className="rounded-[0.95rem] border border-cyan-400/12 bg-cyan-400/[0.08] px-3 py-2 text-xs uppercase tracking-[0.22em] text-cyan-100 transition hover:bg-cyan-400/[0.14]"
+                        >
+                          Launch Prep
+                        </button>
+                        <button
+                          onClick={() => rememberMeeting(item)}
+                          className="rounded-[0.95rem] border border-cyan-400/12 bg-slate-950/70 px-3 py-2 text-xs uppercase tracking-[0.22em] text-cyan-100 transition hover:bg-cyan-400/[0.08]"
+                        >
+                          Update Memory
+                        </button>
                       </div>
                     </div>
                   ))
+                ) : (
+                  <div className="rounded-[1.15rem] border border-cyan-400/10 bg-slate-950/50 px-4 py-3 text-sm text-slate-200/72">
+                    No high-priority meeting prep queued yet. Upcoming events within the next day will appear here.
+                  </div>
+                )}
+              </div>
+            </Panel>
+
+            <Panel title="Reminder Rail" kicker="Next up">
+              <div className="space-y-3">
+                {reminders.length ? (
+                  reminders.map((item) => {
+                    const meetingMemory =
+                      item.kind === 'event' ? durableMeetings[normalizeMeetingKey(item.title)] : null;
+                    return (
+                      <div
+                        key={`${item.kind}-${item.when}-${item.title}`}
+                        className="rounded-[1.15rem] border border-cyan-400/10 bg-slate-950/50 px-4 py-3"
+                      >
+                      <div className="text-sm uppercase tracking-[0.16em] text-cyan-50/92">
+                        {item.title}
+                      </div>
+                      <div className="mt-1 text-[10px] uppercase tracking-[0.28em] text-cyan-300/55">
+                        {item.kind} · {item.when}
+                      </div>
+                      {meetingMemory ? (
+                        <div className="mt-2 rounded-[0.95rem] border border-cyan-400/10 bg-cyan-400/[0.05] px-3 py-2">
+                          <div className="text-[10px] uppercase tracking-[0.24em] text-cyan-300/60">
+                            Saved prep context
+                          </div>
+                          <div className="mt-1 text-sm text-cyan-50/88">
+                            {meetingMemory.prep_style || 'default prep'} · {meetingMemory.importance || 'normal'}
+                          </div>
+                          {meetingMemory.notes ? (
+                            <div className="mt-1 text-xs leading-5 text-slate-300/72">
+                              {meetingMemory.notes}
+                            </div>
+                          ) : null}
+                        </div>
+                      ) : null}
+                      <div className="mt-2 text-sm leading-6 text-slate-200/72">
+                        {item.detail || 'No additional detail.'}
+                      </div>
+                      {item.kind === 'event' ? (
+                        <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                          <button
+                            onClick={() => prepareMeetingFromReminder(item)}
+                            className="rounded-[0.95rem] border border-cyan-400/12 bg-cyan-400/[0.08] px-3 py-2 text-xs uppercase tracking-[0.22em] text-cyan-100 transition hover:bg-cyan-400/[0.14]"
+                          >
+                            Meeting Prep
+                          </button>
+                          <button
+                            onClick={() => rememberMeeting(item)}
+                            className="rounded-[0.95rem] border border-cyan-400/12 bg-slate-950/70 px-3 py-2 text-xs uppercase tracking-[0.22em] text-cyan-100 transition hover:bg-cyan-400/[0.08]"
+                          >
+                            Remember Meeting
+                          </button>
+                        </div>
+                      ) : null}
+                      </div>
+                    );
+                  })
                 ) : (
                   <div className="rounded-[1.15rem] border border-cyan-400/10 bg-slate-950/50 px-4 py-3 text-sm text-slate-200/72">
                     No near-term reminders yet. Upcoming calendar events and due tasks will surface here.

@@ -16,6 +16,7 @@ from openjarvis.server.comparison import comparison_router
 from openjarvis.server.connectors_router import create_connectors_router
 from openjarvis.server.dashboard import dashboard_router
 from openjarvis.server.digest_routes import create_digest_router
+from openjarvis.server.operator_memory import OperatorMemory
 from openjarvis.server.routes import router
 from openjarvis.server.upload_router import router as upload_router
 from openjarvis.server.voice_loop import VoiceLoopManager
@@ -232,6 +233,7 @@ def create_app(
     )
     app.state.workbench = WorkbenchManager(default_working_dir=str(pathlib.Path.cwd()))
     app.state.action_center = ActionCenterManager()
+    app.state.operator_memory = OperatorMemory()
     app.state.agent_manager = agent_manager
     app.state.agent_scheduler = agent_scheduler
     app.state.session_start = time.time()
