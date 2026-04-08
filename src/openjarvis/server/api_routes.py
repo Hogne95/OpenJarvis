@@ -6,6 +6,8 @@ import inspect
 import json
 import logging
 from typing import Any, Dict, List, Literal, Optional
+from email.utils import parseaddr
+from datetime import datetime, timedelta, timezone
 
 from fastapi.concurrency import run_in_threadpool
 from fastapi import APIRouter, HTTPException, Request, Response, WebSocket, WebSocketDisconnect
@@ -99,6 +101,36 @@ class WorkbenchStageRequest(BaseModel):
     command: str
     working_dir: Optional[str] = None
     timeout: int = 30
+
+
+class ActionEmailDraftRequest(BaseModel):
+    recipient: str
+    subject: str
+    body: str
+    provider: str = "gmail"
+
+
+class ActionCalendarBriefRequest(BaseModel):
+    title: str
+    start_at: str
+    end_at: Optional[str] = None
+    attendees: Optional[str] = None
+    location: Optional[str] = None
+    notes: Optional[str] = None
+
+
+class InboxActionStageRequest(BaseModel):
+    action_kind: Literal["archive", "star"]
+    source: str
+    message_id: str
+    title: str
+    author: str
+
+
+class ActionTaskCreateRequest(BaseModel):
+    title: str
+    notes: Optional[str] = None
+    due_at: Optional[str] = None
 
 
 # ---- Agent routes ----
@@ -711,6 +743,7 @@ async def learning_policy(request: Request):
 speech_router = APIRouter(prefix="/v1/speech", tags=["speech"])
 voice_loop_router = APIRouter(prefix="/v1/voice-loop", tags=["voice-loop"])
 workbench_router = APIRouter(prefix="/v1/workbench", tags=["workbench"])
+action_center_router = APIRouter(prefix="/v1/action-center", tags=["action-center"])
 
 
 @speech_router.post("/transcribe")
@@ -971,6 +1004,251 @@ async def workbench_hold(request: Request):
     return manager.hold()
 
 
+@action_center_router.get("/status")
+async def action_center_status(request: Request):
+    manager = getattr(request.app.state, "action_center", None)
+    if manager is None:
+        raise HTTPException(status_code=503, detail="Action center not configured")
+    return manager.status()
+
+
+@action_center_router.post("/stage-email")
+async def action_center_stage_email(req: ActionEmailDraftRequest, request: Request):
+    manager = getattr(request.app.state, "action_center", None)
+    if manager is None:
+        raise HTTPException(status_code=503, detail="Action center not configured")
+    try:
+        return manager.stage_email_draft(
+            recipient=req.recipient,
+            subject=req.subject,
+            body=req.body,
+            provider=req.provider,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@action_center_router.post("/stage-calendar")
+async def action_center_stage_calendar(req: ActionCalendarBriefRequest, request: Request):
+    manager = getattr(request.app.state, "action_center", None)
+    if manager is None:
+        raise HTTPException(status_code=503, detail="Action center not configured")
+    try:
+        return manager.stage_calendar_brief(
+            title=req.title,
+            start_at=req.start_at,
+            end_at=req.end_at or "",
+            attendees=req.attendees or "",
+            location=req.location or "",
+            notes=req.notes or "",
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@action_center_router.post("/stage-inbox-action")
+async def action_center_stage_inbox_action(req: InboxActionStageRequest, request: Request):
+    manager = getattr(request.app.state, "action_center", None)
+    if manager is None:
+        raise HTTPException(status_code=503, detail="Action center not configured")
+    try:
+        return manager.stage_inbox_action(
+            action_kind=req.action_kind,
+            source=req.source,
+            message_id=req.message_id,
+            title=req.title,
+            author=req.author,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@action_center_router.post("/stage-task")
+async def action_center_stage_task(req: ActionTaskCreateRequest, request: Request):
+    manager = getattr(request.app.state, "action_center", None)
+    if manager is None:
+        raise HTTPException(status_code=503, detail="Action center not configured")
+    try:
+        return manager.stage_task(
+            title=req.title,
+            notes=req.notes or "",
+            due_at=req.due_at or "",
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@action_center_router.post("/approve")
+async def action_center_approve(request: Request):
+    manager = getattr(request.app.state, "action_center", None)
+    if manager is None:
+        raise HTTPException(status_code=503, detail="Action center not configured")
+    try:
+        return await run_in_threadpool(manager.approve)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@action_center_router.post("/hold")
+async def action_center_hold(request: Request):
+    manager = getattr(request.app.state, "action_center", None)
+    if manager is None:
+        raise HTTPException(status_code=503, detail="Action center not configured")
+    return manager.hold()
+
+
+@action_center_router.get("/inbox-summary")
+async def action_center_inbox_summary(limit: int = 5):
+    try:
+        from openjarvis.connectors.store import KnowledgeStore
+
+        store = KnowledgeStore()
+        rows = store._conn.execute(
+            """
+            SELECT doc_id, thread_id, title, author, timestamp, content, source
+            FROM knowledge_chunks
+            WHERE doc_type = 'email' AND source IN ('gmail', 'gmail_imap', 'outlook')
+            ORDER BY timestamp DESC, created_at DESC
+            LIMIT ?
+            """,
+            (max(1, min(limit, 10)),),
+        ).fetchall()
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+
+    items = []
+    seen: set[tuple[str, str, str]] = set()
+    for row in rows:
+        key = (row["title"] or "", row["author"] or "", row["timestamp"] or "")
+        if key in seen:
+            continue
+        seen.add(key)
+        items.append(
+            {
+                "doc_id": row["doc_id"] or "",
+                "thread_id": row["thread_id"] or "",
+                "title": row["title"] or "(No subject)",
+                "author": row["author"] or "Unknown sender",
+                "author_email": parseaddr(row["author"] or "")[1],
+                "timestamp": row["timestamp"] or "",
+                "snippet": (row["content"] or "").strip()[:220],
+                "source": row["source"] or "",
+                "supports_mutation": (row["source"] or "") == "gmail" and str(row["doc_id"] or "").startswith("gmail:"),
+            }
+        )
+    return {"items": items}
+
+
+@action_center_router.get("/task-summary")
+async def action_center_task_summary(limit: int = 6):
+    try:
+        from openjarvis.connectors.store import KnowledgeStore
+
+        store = KnowledgeStore()
+        rows = store._conn.execute(
+            """
+            SELECT title, timestamp, content, metadata, source
+            FROM knowledge_chunks
+            WHERE doc_type = 'task' AND source = 'google_tasks'
+            ORDER BY timestamp DESC, created_at DESC
+            LIMIT ?
+            """,
+            (max(1, min(limit, 12)),),
+        ).fetchall()
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+
+    items = []
+    for row in rows:
+        try:
+            metadata = json.loads(row["metadata"] or "{}")
+        except Exception:
+            metadata = {}
+        items.append(
+            {
+                "title": row["title"] or "Untitled Task",
+                "timestamp": row["timestamp"] or "",
+                "notes": (row["content"] or "").strip()[:180],
+                "status": metadata.get("status", ""),
+                "due": metadata.get("due", ""),
+                "source": row["source"] or "",
+            }
+        )
+    return {"items": items}
+
+
+@action_center_router.get("/reminders")
+async def action_center_reminders(limit: int = 8):
+    try:
+        from openjarvis.connectors.store import KnowledgeStore
+
+        store = KnowledgeStore()
+        now = datetime.now(timezone.utc)
+        upcoming_cutoff = (now + timedelta(hours=24)).isoformat()
+        now_iso = now.isoformat()
+
+        event_rows = store._conn.execute(
+            """
+            SELECT title, timestamp, content, source
+            FROM knowledge_chunks
+            WHERE doc_type = 'event'
+              AND source = 'gcalendar'
+              AND timestamp >= ?
+              AND timestamp <= ?
+            ORDER BY timestamp ASC
+            LIMIT ?
+            """,
+            (now_iso, upcoming_cutoff, max(1, min(limit, 8))),
+        ).fetchall()
+
+        task_rows = store._conn.execute(
+            """
+            SELECT title, metadata, timestamp, source
+            FROM knowledge_chunks
+            WHERE doc_type = 'task'
+              AND source = 'google_tasks'
+            ORDER BY created_at DESC
+            LIMIT 30
+            """
+        ).fetchall()
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+
+    items = []
+    for row in event_rows:
+        items.append(
+            {
+                "kind": "event",
+                "title": row["title"] or "(No title)",
+                "when": row["timestamp"] or "",
+                "detail": ((row["content"] or "").splitlines()[1:2] or [""])[0],
+                "source": row["source"] or "",
+            }
+        )
+
+    for row in task_rows:
+        try:
+            metadata = json.loads(row["metadata"] or "{}")
+        except Exception:
+            metadata = {}
+        status = metadata.get("status", "")
+        due = metadata.get("due", "")
+        if status == "completed" or not due:
+            continue
+        items.append(
+            {
+                "kind": "task",
+                "title": row["title"] or "Untitled Task",
+                "when": due,
+                "detail": f"Status: {status or 'needsAction'}",
+                "source": row["source"] or "",
+            }
+        )
+
+    items.sort(key=lambda item: item.get("when", ""))
+    return {"items": items[: max(1, min(limit, 10))]}
+
+
 # ---- Feedback routes ----
 
 feedback_router = APIRouter(prefix="/v1/feedback", tags=["feedback"])
@@ -1084,6 +1362,7 @@ def include_all_routes(app) -> None:
     app.include_router(speech_router)
     app.include_router(voice_loop_router)
     app.include_router(workbench_router)
+    app.include_router(action_center_router)
     app.include_router(feedback_router)
     app.include_router(optimize_router)
 
@@ -1135,6 +1414,7 @@ __all__ = [
     "speech_router",
     "voice_loop_router",
     "workbench_router",
+    "action_center_router",
     "feedback_router",
     "optimize_router",
 ]

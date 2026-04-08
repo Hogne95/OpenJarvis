@@ -320,6 +320,74 @@ export interface WorkbenchStatus {
   result?: WorkbenchEntry;
 }
 
+export interface ActionCenterEntry {
+  id: string;
+  action_type: string;
+  title: string;
+  summary: string;
+  payload: Record<string, unknown>;
+  created_at: number;
+  completed_at: number;
+  status: string;
+  result: string;
+  metadata?: Record<string, unknown>;
+}
+
+export interface PendingActionCenterEntry {
+  id: string;
+  action_type: string;
+  title: string;
+  summary: string;
+  payload: Record<string, unknown>;
+  created_at: number;
+  status: string;
+}
+
+export interface ActionCenterStatus {
+  pending: PendingActionCenterEntry | null;
+  history: ActionCenterEntry[];
+  result?: ActionCenterEntry;
+}
+
+export interface InboxSummaryItem {
+  doc_id: string;
+  thread_id: string;
+  title: string;
+  author: string;
+  author_email: string;
+  timestamp: string;
+  snippet: string;
+  source: string;
+  supports_mutation: boolean;
+}
+
+export interface TaskSummaryItem {
+  title: string;
+  timestamp: string;
+  notes: string;
+  status: string;
+  due: string;
+  source: string;
+}
+
+export interface DailyDigest {
+  text: string;
+  sections: Record<string, unknown>;
+  sources_used: string[];
+  generated_at: string;
+  model_used: string;
+  voice_used: string;
+  audio_available: boolean;
+}
+
+export interface ReminderItem {
+  kind: 'event' | 'task';
+  title: string;
+  when: string;
+  detail: string;
+  source: string;
+}
+
 interface TranscribeAudioOptions {
   filename?: string;
   languageHints?: string[];
@@ -559,6 +627,156 @@ export async function holdWorkbenchCommand(): Promise<WorkbenchStatus> {
     throw new Error(detail.detail || `Workbench hold failed: ${res.status}`);
   }
   return res.json();
+}
+
+export async function fetchActionCenterStatus(): Promise<ActionCenterStatus> {
+  const res = await fetch(`${getBase()}/v1/action-center/status`);
+  if (!res.ok) throw new Error(`Action center status failed: ${res.status}`);
+  return res.json();
+}
+
+export async function stageEmailDraft(body: {
+  recipient: string;
+  subject: string;
+  body: string;
+  provider?: string;
+}): Promise<ActionCenterStatus> {
+  const res = await fetch(`${getBase()}/v1/action-center/stage-email`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const detail = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(detail.detail || `Email draft staging failed: ${res.status}`);
+  }
+  return res.json();
+}
+
+export async function stageCalendarBrief(body: {
+  title: string;
+  start_at: string;
+  end_at?: string;
+  attendees?: string;
+  location?: string;
+  notes?: string;
+}): Promise<ActionCenterStatus> {
+  const res = await fetch(`${getBase()}/v1/action-center/stage-calendar`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const detail = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(detail.detail || `Calendar staging failed: ${res.status}`);
+  }
+  return res.json();
+}
+
+export async function approveActionCenterItem(): Promise<ActionCenterStatus> {
+  const res = await fetch(`${getBase()}/v1/action-center/approve`, { method: 'POST' });
+  if (!res.ok) {
+    const detail = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(detail.detail || `Action approval failed: ${res.status}`);
+  }
+  return res.json();
+}
+
+export async function holdActionCenterItem(): Promise<ActionCenterStatus> {
+  const res = await fetch(`${getBase()}/v1/action-center/hold`, { method: 'POST' });
+  if (!res.ok) {
+    const detail = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(detail.detail || `Action hold failed: ${res.status}`);
+  }
+  return res.json();
+}
+
+export async function fetchInboxSummary(limit: number = 5): Promise<InboxSummaryItem[]> {
+  const res = await fetch(`${getBase()}/v1/action-center/inbox-summary?limit=${limit}`);
+  if (!res.ok) {
+    const detail = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(detail.detail || `Inbox summary failed: ${res.status}`);
+  }
+  const data = await res.json();
+  return data.items || [];
+}
+
+export async function stageInboxAction(body: {
+  action_kind: 'archive' | 'star';
+  source: string;
+  message_id: string;
+  title: string;
+  author: string;
+}): Promise<ActionCenterStatus> {
+  const res = await fetch(`${getBase()}/v1/action-center/stage-inbox-action`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const detail = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(detail.detail || `Inbox action staging failed: ${res.status}`);
+  }
+  return res.json();
+}
+
+export async function stageTask(body: {
+  title: string;
+  notes?: string;
+  due_at?: string;
+}): Promise<ActionCenterStatus> {
+  const res = await fetch(`${getBase()}/v1/action-center/stage-task`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const detail = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(detail.detail || `Task staging failed: ${res.status}`);
+  }
+  return res.json();
+}
+
+export async function fetchTaskSummary(limit: number = 6): Promise<TaskSummaryItem[]> {
+  const res = await fetch(`${getBase()}/v1/action-center/task-summary?limit=${limit}`);
+  if (!res.ok) {
+    const detail = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(detail.detail || `Task summary failed: ${res.status}`);
+  }
+  const data = await res.json();
+  return data.items || [];
+}
+
+export async function fetchDailyDigest(): Promise<DailyDigest> {
+  const res = await fetch(`${getBase()}/api/digest`);
+  if (!res.ok) {
+    const detail = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(detail.detail || `Digest fetch failed: ${res.status}`);
+  }
+  return res.json();
+}
+
+export async function generateDailyDigest(): Promise<{ status: string; text: string }> {
+  const res = await fetch(`${getBase()}/api/digest/generate`, { method: 'POST' });
+  if (!res.ok) {
+    const detail = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(detail.detail || `Digest generation failed: ${res.status}`);
+  }
+  return res.json();
+}
+
+export function getDailyDigestAudioUrl(): string {
+  return `${getBase()}/api/digest/audio`;
+}
+
+export async function fetchReminders(limit: number = 8): Promise<ReminderItem[]> {
+  const res = await fetch(`${getBase()}/v1/action-center/reminders?limit=${limit}`);
+  if (!res.ok) {
+    const detail = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(detail.detail || `Reminder fetch failed: ${res.status}`);
+  }
+  const data = await res.json();
+  return data.items || [];
 }
 
 // ---------------------------------------------------------------------------

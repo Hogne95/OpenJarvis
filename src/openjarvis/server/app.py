@@ -11,6 +11,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from openjarvis.server.api_routes import include_all_routes
+from openjarvis.server.action_center import ActionCenterManager
 from openjarvis.server.comparison import comparison_router
 from openjarvis.server.connectors_router import create_connectors_router
 from openjarvis.server.dashboard import dashboard_router
@@ -230,6 +231,7 @@ def create_app(
         wake_threshold=getattr(speech_cfg, "wake_threshold", 0.5),
     )
     app.state.workbench = WorkbenchManager(default_working_dir=str(pathlib.Path.cwd()))
+    app.state.action_center = ActionCenterManager()
     app.state.agent_manager = agent_manager
     app.state.agent_scheduler = agent_scheduler
     app.state.session_start = time.time()

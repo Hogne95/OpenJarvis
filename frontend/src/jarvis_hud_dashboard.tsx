@@ -8,10 +8,13 @@ import {
   CheckCircle2,
   ChevronRight,
   Cpu,
+  Flag,
   Folder,
   Mail,
   Mic,
   Radio,
+  Reply,
+  Siren,
   Shield,
   Terminal,
   Wrench,
@@ -20,21 +23,39 @@ import {
 import { useNavigate } from 'react-router';
 import {
   checkHealth,
+  approveActionCenterItem,
   approveWorkbenchCommand,
   createManagedAgent,
+  fetchActionCenterStatus,
+  fetchDailyDigest,
+  fetchInboxSummary,
   fetchManagedAgents,
+  fetchReminders,
   fetchSpeechHealth,
   fetchSpeechProfile,
+  fetchTaskSummary,
   fetchVoiceLoopStatus,
   fetchWorkbenchStatus,
+  generateDailyDigest,
+  getDailyDigestAudioUrl,
+  holdActionCenterItem,
   holdWorkbenchCommand,
   runManagedAgent,
   startVoiceLoop,
+  stageCalendarBrief,
+  stageEmailDraft,
+  stageInboxAction,
+  stageTask,
   stageWorkbenchCommand,
   stopVoiceLoop,
   synthesizeSpeech,
   updateVoiceLoopState,
+  type ActionCenterStatus,
+  type DailyDigest,
+  type InboxSummaryItem,
+  type ReminderItem,
   type SpeechProfile,
+  type TaskSummaryItem,
   type VoiceLoopStatus,
   type WorkbenchStatus,
 } from './lib/api';
@@ -160,12 +181,32 @@ export default function JarvisHudDashboard() {
   const [speechProfile, setSpeechProfile] = useState<SpeechProfile | null>(null);
   const [focusMode, setFocusMode] = useState(false);
   const [workbench, setWorkbench] = useState<WorkbenchStatus | null>(null);
+  const [actionCenter, setActionCenter] = useState<ActionCenterStatus | null>(null);
   const [workbenchCommand, setWorkbenchCommand] = useState('');
   const [workbenchDirectory, setWorkbenchDirectory] = useState('');
   const [workbenchTimeout, setWorkbenchTimeout] = useState(30);
   const [workbenchBusy, setWorkbenchBusy] = useState<'stage' | 'approve' | 'hold' | null>(null);
   const [workbenchNotice, setWorkbenchNotice] = useState('');
+  const [actionMode, setActionMode] = useState<'email' | 'calendar'>('email');
+  const [actionBusy, setActionBusy] = useState<'stage' | 'approve' | 'hold' | null>(null);
+  const [actionNotice, setActionNotice] = useState('');
+  const [emailRecipient, setEmailRecipient] = useState('');
+  const [emailSubject, setEmailSubject] = useState('');
+  const [emailBody, setEmailBody] = useState('');
+  const [calendarTitle, setCalendarTitle] = useState('');
+  const [calendarStartAt, setCalendarStartAt] = useState('');
+  const [calendarAttendees, setCalendarAttendees] = useState('');
+  const [calendarLocation, setCalendarLocation] = useState('');
+  const [calendarNotes, setCalendarNotes] = useState('');
+  const [calendarEndAt, setCalendarEndAt] = useState('');
+  const [inboxSummary, setInboxSummary] = useState<InboxSummaryItem[]>([]);
+  const [taskSummary, setTaskSummary] = useState<TaskSummaryItem[]>([]);
+  const [dailyDigest, setDailyDigest] = useState<DailyDigest | null>(null);
+  const [reminders, setReminders] = useState<ReminderItem[]>([]);
+  const [digestNotice, setDigestNotice] = useState('');
+  const [digestBusy, setDigestBusy] = useState(false);
   const lastSyncedPhaseRef = useRef('');
+  const hasAutoRequestedDigestRef = useRef(false);
   const lastSpokenMessageRef = useRef<string>('');
   const audioUrlRef = useRef<string | null>(null);
   const audioElementRef = useRef<HTMLAudioElement | null>(null);
@@ -182,7 +223,12 @@ export default function JarvisHudDashboard() {
     let cancelled = false;
 
     const refreshLiveStatus = async () => {
-      const [health, speech, agents, connectors, loop, profile, wb] = await Promise.allSettled([
+      const [action, digest, inbox, tasks, reminderItems, health, speech, agents, connectors, loop, profile, wb] = await Promise.allSettled([
+        fetchActionCenterStatus(),
+        fetchDailyDigest(),
+        fetchInboxSummary(),
+        fetchTaskSummary(),
+        fetchReminders(),
         checkHealth(),
         fetchSpeechHealth(),
         fetchManagedAgents(),
@@ -194,6 +240,11 @@ export default function JarvisHudDashboard() {
 
       if (cancelled) return;
 
+      if (action.status === 'fulfilled') setActionCenter(action.value);
+      if (digest.status === 'fulfilled') setDailyDigest(digest.value);
+      if (inbox.status === 'fulfilled') setInboxSummary(inbox.value);
+      if (tasks.status === 'fulfilled') setTaskSummary(tasks.value);
+      if (reminderItems.status === 'fulfilled') setReminders(reminderItems.value);
       setApiReachable(health.status === 'fulfilled' ? health.value : false);
       setSpeechAvailable(speech.status === 'fulfilled' ? speech.value.available : false);
       setRunningAgentCount(
@@ -250,6 +301,26 @@ export default function JarvisHudDashboard() {
   }, [workbenchNotice]);
 
   useEffect(() => {
+    if (!actionNotice) return;
+    const timeout = window.setTimeout(() => setActionNotice(''), 5000);
+    return () => window.clearTimeout(timeout);
+  }, [actionNotice]);
+
+  useEffect(() => {
+    if (!digestNotice) return;
+    const timeout = window.setTimeout(() => setDigestNotice(''), 5000);
+    return () => window.clearTimeout(timeout);
+  }, [digestNotice]);
+
+  useEffect(() => {
+    if (hasAutoRequestedDigestRef.current) return;
+    if (digestBusy) return;
+    if (dailyDigest || apiReachable === false) return;
+    hasAutoRequestedDigestRef.current = true;
+    handleGenerateDigest().catch(() => {});
+  }, [apiReachable, dailyDigest, digestBusy]);
+
+  useEffect(() => {
     if (!voiceLoop?.active) {
       lastSyncedPhaseRef.current = '';
       return;
@@ -283,7 +354,9 @@ export default function JarvisHudDashboard() {
       : null;
   const latestLogEntries = useMemo(() => [...logEntries].slice(-5).reverse(), [logEntries]);
   const toolSummary = summarizeToolCall(activeToolCall);
+  const pendingAction = actionCenter?.pending ?? null;
   const pendingWorkbench = workbench?.pending ?? null;
+  const latestActionResult = actionCenter?.history?.[0] ?? null;
   const latestWorkbenchResult = workbench?.history?.[0] ?? null;
 
   const status: Status = useMemo(() => {
@@ -390,17 +463,11 @@ export default function JarvisHudDashboard() {
           : 'Needs STT'
         : 'Disabled',
     },
-    { icon: Shield, label: 'Approval', value: activeToolCall ? 'Engaged' : 'Ready' },
-  ];
-
-  const sourceReadiness = [
-    { icon: Mail, label: 'Inbox', value: connectorSummary.emailReady ? 'Connected' : 'Setup' },
     {
-      icon: CalendarDays,
-      label: 'Calendar',
-      value: connectorSummary.calendarReady ? 'Connected' : 'Setup',
+      icon: Shield,
+      label: 'Approval',
+      value: activeToolCall || pendingAction || pendingWorkbench ? 'Engaged' : 'Ready',
     },
-    { icon: Folder, label: 'Knowledge', value: connectorSummary.docsReady ? 'Connected' : 'Optional' },
   ];
 
   const quickActions = [
@@ -422,6 +489,115 @@ export default function JarvisHudDashboard() {
     audioElementRef.current?.pause();
     injectCommand(text);
     window.dispatchEvent(new Event('jarvis:submit-input'));
+  }
+
+  function prepareReplyDraft(item: InboxSummaryItem) {
+    setActionMode('email');
+    setEmailRecipient(item.author_email || '');
+    setEmailSubject(item.title.toLowerCase().startsWith('re:') ? item.title : `Re: ${item.title}`);
+    setEmailBody(
+      `Hi ${item.author.split('<')[0].trim() || 'there'},\n\nThanks for your email. ` +
+        `Here is my reply:\n\n`,
+    );
+    setActionNotice('Reply draft loaded into Action Center.');
+  }
+
+  function triageInboxItem(item: InboxSummaryItem) {
+    injectCommand(
+      `Summarize this email, explain whether it is urgent, and propose a reply draft.\n` +
+        `Subject: ${item.title}\nFrom: ${item.author}\nSnippet: ${item.snippet}`,
+    );
+  }
+
+  function loadUrgentAssessment(item: InboxSummaryItem) {
+    injectCommand(
+      `Assess whether this email is urgent, what deadline risk it contains, and the next best action.\n` +
+        `Return a short executive brief.\n` +
+        `Subject: ${item.title}\nFrom: ${item.author}\nSnippet: ${item.snippet}`,
+    );
+  }
+
+  function prepareFollowUp(item: InboxSummaryItem) {
+    setActionMode('email');
+    setEmailRecipient(item.author_email || '');
+    setEmailSubject(item.title.toLowerCase().startsWith('re:') ? item.title : `Re: ${item.title}`);
+    setEmailBody(
+      `Hi ${item.author.split('<')[0].trim() || 'there'},\n\n` +
+        `I wanted to follow up on your message about "${item.title}". ` +
+        `Here is my response:\n\n`,
+    );
+    setActionNotice('Follow-up draft loaded into Action Center.');
+  }
+
+  function convertInboxItemToMeeting(item: InboxSummaryItem) {
+    setActionMode('calendar');
+    setCalendarTitle(`Follow-up: ${item.title}`);
+    setCalendarAttendees(item.author_email || '');
+    setCalendarLocation('');
+    setCalendarStartAt('');
+    setCalendarEndAt('');
+    setCalendarNotes(`Meeting generated from email thread.\nFrom: ${item.author}\n\n${item.snippet}`);
+    setActionNotice('Meeting draft loaded into Action Center.');
+  }
+
+  async function stageInboxMutation(item: InboxSummaryItem, actionKind: 'archive' | 'star') {
+    try {
+      const messageId = item.doc_id.startsWith('gmail:') ? item.doc_id.slice('gmail:'.length) : item.doc_id;
+      const next = await stageInboxAction({
+        action_kind: actionKind,
+        source: item.source,
+        message_id: messageId,
+        title: item.title,
+        author: item.author,
+      });
+      setActionCenter(next);
+      setActionNotice(`${actionKind === 'archive' ? 'Archive' : 'Star'} action staged for approval.`);
+    } catch (error) {
+      setActionNotice(error instanceof Error ? error.message : 'Unable to stage inbox action.');
+    }
+  }
+
+  async function createFollowUpTask(title: string, notes: string, dueAt: string = '') {
+    try {
+      const next = await stageTask({
+        title,
+        notes,
+        due_at: dueAt,
+      });
+      setActionCenter(next);
+      setActionNotice('Task staged for approval.');
+    } catch (error) {
+      setActionNotice(error instanceof Error ? error.message : 'Unable to stage task.');
+    }
+  }
+
+  async function handleGenerateDigest() {
+    setDigestBusy(true);
+    try {
+      const result = await generateDailyDigest();
+      setDailyDigest((current) =>
+        current
+          ? {
+              ...current,
+              text: result.text,
+              generated_at: new Date().toISOString(),
+            }
+          : {
+              text: result.text,
+              sections: {},
+              sources_used: [],
+              generated_at: new Date().toISOString(),
+              model_used: selectedModel || serverInfo?.model || '',
+              voice_used: speechProfile?.reply_voice_id || '',
+              audio_available: false,
+            },
+      );
+      setDigestNotice('Daily brief generated.');
+    } catch (error) {
+      setDigestNotice(error instanceof Error ? error.message : 'Unable to generate daily brief.');
+    } finally {
+      setDigestBusy(false);
+    }
   }
 
   async function ensureAgent(kind: 'inbox' | 'meeting-prep') {
@@ -636,8 +812,74 @@ export default function JarvisHudDashboard() {
     }
   }
 
+  async function handleStageAction() {
+    setActionBusy('stage');
+    try {
+      let next: ActionCenterStatus;
+      if (actionMode === 'email') {
+        next = await stageEmailDraft({
+          recipient: emailRecipient,
+          subject: emailSubject,
+          body: emailBody,
+          provider: 'gmail',
+        });
+      } else {
+        next = await stageCalendarBrief({
+          title: calendarTitle,
+          start_at: calendarStartAt,
+          end_at: calendarEndAt,
+          attendees: calendarAttendees,
+          location: calendarLocation,
+          notes: calendarNotes,
+        });
+      }
+      setActionCenter(next);
+      setActionNotice(actionMode === 'email' ? 'Email draft staged for approval.' : 'Calendar plan staged for approval.');
+    } catch (error) {
+      setActionNotice(error instanceof Error ? error.message : 'Unable to stage action.');
+    } finally {
+      setActionBusy(null);
+    }
+  }
+
+  async function handleApproveAction() {
+    setActionBusy('approve');
+    try {
+      const next = await approveActionCenterItem();
+      setActionCenter(next);
+      setActionNotice(next.result?.result || 'Action approved.');
+      if (next.result) {
+        useAppStore.getState().addLogEntry({
+          timestamp: Date.now(),
+          level: next.result.status === 'error' ? 'error' : 'info',
+          category: 'tool',
+          message: `${next.result.action_type}: ${next.result.result}`,
+        });
+      }
+    } catch (error) {
+      setActionNotice(error instanceof Error ? error.message : 'Unable to approve action.');
+    } finally {
+      setActionBusy(null);
+    }
+  }
+
+  async function handleHoldAction() {
+    setActionBusy('hold');
+    try {
+      const next = await holdActionCenterItem();
+      setActionCenter(next);
+      setActionNotice('Pending action held.');
+    } catch (error) {
+      setActionNotice(error instanceof Error ? error.message : 'Unable to hold action.');
+    } finally {
+      setActionBusy(null);
+    }
+  }
+
   const approvalLabel = activeToolCall
     ? `Tool running: ${activeToolCall.tool}`
+    : pendingAction
+    ? `${pendingAction.action_type.replace('_', ' ')} is waiting for approval.`
     : pendingWorkbench
     ? 'Workbench command is waiting for approval.'
     : streamState.isStreaming
@@ -938,7 +1180,9 @@ export default function JarvisHudDashboard() {
                     Proposed Action
                   </div>
                   <div className="text-sm leading-7 text-slate-200/78">
-                    {pendingWorkbench
+                    {pendingAction
+                      ? `${pendingAction.title} - ${pendingAction.summary}`
+                      : pendingWorkbench
                       ? `${pendingWorkbench.command} [${pendingWorkbench.working_dir}]`
                       : toolSummary}
                   </div>
@@ -946,18 +1190,18 @@ export default function JarvisHudDashboard() {
 
                 <div className="mt-4 grid gap-3 sm:grid-cols-2">
                   <button
-                    onClick={handleApproveWorkbench}
-                    disabled={!pendingWorkbench || workbenchBusy !== null}
+                    onClick={pendingAction ? handleApproveAction : handleApproveWorkbench}
+                    disabled={(!pendingAction && !pendingWorkbench) || workbenchBusy !== null || actionBusy !== null}
                     className="rounded-[1.1rem] border border-emerald-400/30 bg-emerald-400/12 px-4 py-3 text-sm uppercase tracking-[0.24em] text-emerald-200 transition hover:bg-emerald-400/20 disabled:cursor-not-allowed disabled:opacity-45"
                   >
                     <span className="flex items-center justify-center gap-2">
                       <CheckCircle2 className="h-4 w-4" />
-                      {workbenchBusy === 'approve' ? 'Running' : 'Approve'}
+                      {workbenchBusy === 'approve' || actionBusy === 'approve' ? 'Running' : 'Approve'}
                     </span>
                   </button>
                   <button
-                    onClick={handleHoldWorkbench}
-                    disabled={!pendingWorkbench || workbenchBusy !== null}
+                    onClick={pendingAction ? handleHoldAction : handleHoldWorkbench}
+                    disabled={(!pendingAction && !pendingWorkbench) || workbenchBusy !== null || actionBusy !== null}
                     className="rounded-[1.1rem] border border-rose-400/30 bg-rose-400/12 px-4 py-3 text-sm uppercase tracking-[0.24em] text-rose-200 transition hover:bg-rose-400/20 disabled:cursor-not-allowed disabled:opacity-45"
                   >
                     <span className="flex items-center justify-center gap-2">
@@ -971,7 +1215,13 @@ export default function JarvisHudDashboard() {
                   {approvalLabel}
                 </div>
                 <div className="mt-3 rounded-[1.15rem] border border-cyan-400/10 bg-slate-950/45 px-4 py-3 text-sm text-slate-200/76">
-                  {workbenchNotice || (pendingWorkbench ? 'Approve to execute the staged terminal command.' : 'No staged workbench command right now.')}
+                  {actionNotice ||
+                    workbenchNotice ||
+                    (pendingAction
+                      ? 'Approve to send the staged email or finalize the calendar plan.'
+                      : pendingWorkbench
+                      ? 'Approve to execute the staged terminal command.'
+                      : 'No staged action right now.')}
                 </div>
               </Panel>
 
@@ -987,6 +1237,101 @@ export default function JarvisHudDashboard() {
 
                 <div className="mt-4 rounded-[1.15rem] border border-cyan-400/10 bg-black/20 py-2">
                   <InputArea />
+                </div>
+
+                <div className="mt-4 rounded-[1.15rem] border border-cyan-400/10 bg-slate-950/55 p-4">
+                  <div className="mb-2 flex items-center justify-between gap-3">
+                    <div className="text-[10px] uppercase tracking-[0.35em] text-cyan-300/55">
+                      Action Center
+                    </div>
+                    <div className="flex gap-2">
+                      {(['email', 'calendar'] as const).map((mode) => (
+                        <button
+                          key={mode}
+                          onClick={() => setActionMode(mode)}
+                          className={`rounded-full border px-3 py-1 text-[10px] uppercase tracking-[0.24em] transition ${
+                            actionMode === mode
+                              ? 'border-cyan-300/30 bg-cyan-400/[0.12] text-cyan-50'
+                              : 'border-cyan-400/10 bg-slate-950/60 text-cyan-200/65 hover:bg-cyan-400/[0.08]'
+                          }`}
+                        >
+                          {mode}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                  {actionMode === 'email' ? (
+                    <div className="grid gap-3">
+                      <input
+                        value={emailRecipient}
+                        onChange={(event) => setEmailRecipient(event.target.value)}
+                        placeholder="recipient@example.com"
+                        className="rounded-[0.9rem] border border-cyan-400/10 bg-slate-950/70 px-4 py-3 text-sm text-slate-100 outline-none placeholder:text-slate-500"
+                      />
+                      <input
+                        value={emailSubject}
+                        onChange={(event) => setEmailSubject(event.target.value)}
+                        placeholder="Subject"
+                        className="rounded-[0.9rem] border border-cyan-400/10 bg-slate-950/70 px-4 py-3 text-sm text-slate-100 outline-none placeholder:text-slate-500"
+                      />
+                      <textarea
+                        value={emailBody}
+                        onChange={(event) => setEmailBody(event.target.value)}
+                        rows={4}
+                        placeholder="Write the email body JARVIS should stage."
+                        className="rounded-[0.9rem] border border-cyan-400/10 bg-slate-950/70 px-4 py-3 text-sm text-slate-100 outline-none placeholder:text-slate-500"
+                      />
+                    </div>
+                  ) : (
+                    <div className="grid gap-3">
+                      <input
+                        value={calendarTitle}
+                        onChange={(event) => setCalendarTitle(event.target.value)}
+                        placeholder="Meeting title"
+                        className="rounded-[0.9rem] border border-cyan-400/10 bg-slate-950/70 px-4 py-3 text-sm text-slate-100 outline-none placeholder:text-slate-500"
+                      />
+                      <input
+                        value={calendarStartAt}
+                        onChange={(event) => setCalendarStartAt(event.target.value)}
+                        placeholder="2026-04-08T14:00:00+02:00"
+                        className="rounded-[0.9rem] border border-cyan-400/10 bg-slate-950/70 px-4 py-3 text-sm text-slate-100 outline-none placeholder:text-slate-500"
+                      />
+                      <input
+                        value={calendarEndAt}
+                        onChange={(event) => setCalendarEndAt(event.target.value)}
+                        placeholder="2026-04-08T15:00:00+02:00"
+                        className="rounded-[0.9rem] border border-cyan-400/10 bg-slate-950/70 px-4 py-3 text-sm text-slate-100 outline-none placeholder:text-slate-500"
+                      />
+                      <div className="grid gap-3 md:grid-cols-2">
+                        <input
+                          value={calendarAttendees}
+                          onChange={(event) => setCalendarAttendees(event.target.value)}
+                          placeholder="Attendees"
+                          className="rounded-[0.9rem] border border-cyan-400/10 bg-slate-950/70 px-4 py-3 text-sm text-slate-100 outline-none placeholder:text-slate-500"
+                        />
+                        <input
+                          value={calendarLocation}
+                          onChange={(event) => setCalendarLocation(event.target.value)}
+                          placeholder="Location"
+                          className="rounded-[0.9rem] border border-cyan-400/10 bg-slate-950/70 px-4 py-3 text-sm text-slate-100 outline-none placeholder:text-slate-500"
+                        />
+                      </div>
+                      <textarea
+                        value={calendarNotes}
+                        onChange={(event) => setCalendarNotes(event.target.value)}
+                        rows={3}
+                        placeholder="Talking points or notes"
+                        className="rounded-[0.9rem] border border-cyan-400/10 bg-slate-950/70 px-4 py-3 text-sm text-slate-100 outline-none placeholder:text-slate-500"
+                      />
+                    </div>
+                  )}
+                  <button
+                    onClick={handleStageAction}
+                    disabled={actionBusy !== null}
+                    className="mt-3 w-full rounded-[0.9rem] border border-cyan-300/20 bg-cyan-400/[0.08] px-4 py-3 text-xs uppercase tracking-[0.28em] text-cyan-100 transition hover:bg-cyan-400/[0.14] disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    {actionBusy === 'stage' ? 'Staging' : 'Stage for Approval'}
+                  </button>
                 </div>
 
                 <div className="mt-4 rounded-[1.15rem] border border-cyan-400/10 bg-slate-950/55 p-4">
@@ -1038,37 +1383,155 @@ export default function JarvisHudDashboard() {
                     </button>
                   ))}
                 </div>
-
-                <div className="mt-4 grid gap-3 sm:grid-cols-3">
-                  {sourceReadiness.map(({ icon: Icon, label, value }) => (
-                    <div
-                      key={label}
-                      className="rounded-[1rem] border border-cyan-400/10 bg-slate-950/45 px-3 py-3"
-                    >
-                      <Icon className="mb-2 h-4 w-4 text-cyan-200" />
-                      <div className="text-[10px] uppercase tracking-[0.3em] text-cyan-300/55">{label}</div>
-                      <div className="mt-1 text-sm text-cyan-50/90">{value}</div>
-                    </div>
-                  ))}
-                </div>
               </Panel>
             </div>
 
-            <Panel title="Workbench Output" kicker="Terminal mirror">
+            <Panel title="Operator Output" kicker="Recent result">
               <div className="rounded-[1.15rem] border border-cyan-400/10 bg-black/30 p-4 font-mono text-xs leading-6 text-slate-200/78">
                 <div className="mb-3 text-[10px] uppercase tracking-[0.32em] text-cyan-300/55">
-                  {latestWorkbenchResult
+                  {latestActionResult
+                    ? `${latestActionResult.status} · ${latestActionResult.title}`
+                    : latestWorkbenchResult
                     ? `${latestWorkbenchResult.status} · ${latestWorkbenchResult.command}`
-                    : 'No workbench output yet'}
+                    : 'No operator output yet'}
                 </div>
                 <pre className="max-h-72 overflow-auto whitespace-pre-wrap break-words">
-                  {latestWorkbenchResult?.output || 'Stage a safe terminal command and approve it from the gate to see output here.'}
+                  {latestActionResult?.result ||
+                    latestWorkbenchResult?.output ||
+                    'Stage an action or a safe terminal command and approve it from the gate to see output here.'}
                 </pre>
               </div>
             </Panel>
           </div>
 
           {!focusMode ? <div className="space-y-4">
+            <Panel title="Daily Brief" kicker="Morning digest">
+              <div className="rounded-[1.15rem] border border-cyan-400/10 bg-slate-950/50 px-4 py-3">
+                <div className="text-sm leading-7 text-slate-200/78">
+                  {dailyDigest?.text || 'No daily brief yet. Generate one to get your current priorities, schedule, and message triage in one pass.'}
+                </div>
+                <div className="mt-3 text-[10px] uppercase tracking-[0.28em] text-cyan-300/55">
+                  {dailyDigest?.generated_at
+                    ? `Generated ${new Date(dailyDigest.generated_at).toLocaleString()}`
+                    : 'Digest idle'}
+                </div>
+                <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                  <button
+                    onClick={handleGenerateDigest}
+                    disabled={digestBusy}
+                    className="rounded-[0.95rem] border border-cyan-400/12 bg-cyan-400/[0.08] px-3 py-2 text-xs uppercase tracking-[0.22em] text-cyan-100 transition hover:bg-cyan-400/[0.14] disabled:cursor-not-allowed disabled:opacity-40"
+                  >
+                    {digestBusy ? 'Generating' : 'Generate Brief'}
+                  </button>
+                  <button
+                    onClick={() => dailyDigest?.audio_available && window.open(getDailyDigestAudioUrl(), '_blank', 'noopener,noreferrer')}
+                    disabled={!dailyDigest?.audio_available}
+                    className="rounded-[0.95rem] border border-cyan-400/12 bg-slate-950/70 px-3 py-2 text-xs uppercase tracking-[0.22em] text-cyan-100 transition hover:bg-cyan-400/[0.08] disabled:cursor-not-allowed disabled:opacity-40"
+                  >
+                    Open Audio
+                  </button>
+                </div>
+                {digestNotice ? (
+                  <div className="mt-3 text-sm text-cyan-100/80">{digestNotice}</div>
+                ) : null}
+              </div>
+            </Panel>
+
+            <Panel title="Inbox Snapshot" kicker="Recent mail">
+              <div className="space-y-3">
+                {inboxSummary.length ? (
+                  inboxSummary.map((item) => (
+                    <div
+                      key={`${item.timestamp}-${item.title}-${item.author}`}
+                      className="rounded-[1.15rem] border border-cyan-400/10 bg-slate-950/50 px-4 py-3"
+                    >
+                      <div className="text-sm uppercase tracking-[0.16em] text-cyan-50/92">
+                        {item.title}
+                      </div>
+                      <div className="mt-1 text-[10px] uppercase tracking-[0.28em] text-cyan-300/55">
+                        {item.author} · {item.source || 'email'}
+                      </div>
+                      <div className="mt-2 text-sm leading-6 text-slate-200/72">
+                        {item.snippet || 'No preview available.'}
+                      </div>
+                      <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                        <button
+                          onClick={() => prepareReplyDraft(item)}
+                          disabled={!item.author_email}
+                          className="rounded-[0.95rem] border border-cyan-400/12 bg-cyan-400/[0.08] px-3 py-2 text-xs uppercase tracking-[0.22em] text-cyan-100 transition hover:bg-cyan-400/[0.14] disabled:cursor-not-allowed disabled:opacity-40"
+                        >
+                          <span className="flex items-center justify-center gap-2">
+                            <Reply className="h-3.5 w-3.5" />
+                            Reply Draft
+                          </span>
+                        </button>
+                        <button
+                          onClick={() => triageInboxItem(item)}
+                          className="rounded-[0.95rem] border border-cyan-400/12 bg-slate-950/70 px-3 py-2 text-xs uppercase tracking-[0.22em] text-cyan-100 transition hover:bg-cyan-400/[0.08]"
+                        >
+                          Triage
+                        </button>
+                        <button
+                          onClick={() => loadUrgentAssessment(item)}
+                          className="rounded-[0.95rem] border border-amber-300/18 bg-amber-300/[0.08] px-3 py-2 text-xs uppercase tracking-[0.22em] text-amber-100 transition hover:bg-amber-300/[0.14]"
+                        >
+                          <span className="flex items-center justify-center gap-2">
+                            <Siren className="h-3.5 w-3.5" />
+                            Urgent
+                          </span>
+                        </button>
+                        <button
+                          onClick={() => prepareFollowUp(item)}
+                          disabled={!item.author_email}
+                          className="rounded-[0.95rem] border border-cyan-400/12 bg-slate-950/70 px-3 py-2 text-xs uppercase tracking-[0.22em] text-cyan-100 transition hover:bg-cyan-400/[0.08] disabled:cursor-not-allowed disabled:opacity-40"
+                        >
+                          Reply Later
+                        </button>
+                        <button
+                          onClick={() => convertInboxItemToMeeting(item)}
+                          className="rounded-[0.95rem] border border-cyan-400/12 bg-slate-950/70 px-3 py-2 text-xs uppercase tracking-[0.22em] text-cyan-100 transition hover:bg-cyan-400/[0.08] sm:col-span-2"
+                        >
+                          Convert To Meeting
+                        </button>
+                        <button
+                          onClick={() => stageInboxMutation(item, 'archive')}
+                          disabled={!item.supports_mutation}
+                          className="rounded-[0.95rem] border border-cyan-400/12 bg-slate-950/70 px-3 py-2 text-xs uppercase tracking-[0.22em] text-cyan-100 transition hover:bg-cyan-400/[0.08] disabled:cursor-not-allowed disabled:opacity-40"
+                        >
+                          Archive
+                        </button>
+                        <button
+                          onClick={() => stageInboxMutation(item, 'star')}
+                          disabled={!item.supports_mutation}
+                          className="rounded-[0.95rem] border border-cyan-400/12 bg-slate-950/70 px-3 py-2 text-xs uppercase tracking-[0.22em] text-cyan-100 transition hover:bg-cyan-400/[0.08] disabled:cursor-not-allowed disabled:opacity-40"
+                        >
+                          <span className="flex items-center justify-center gap-2">
+                            <Flag className="h-3.5 w-3.5" />
+                            Star
+                          </span>
+                        </button>
+                        <button
+                          onClick={() =>
+                            createFollowUpTask(
+                              `Follow up: ${item.title}`,
+                              `Follow up on email from ${item.author}.\n\n${item.snippet}`,
+                            )
+                          }
+                          className="rounded-[0.95rem] border border-cyan-400/12 bg-slate-950/70 px-3 py-2 text-xs uppercase tracking-[0.22em] text-cyan-100 transition hover:bg-cyan-400/[0.08] sm:col-span-2"
+                        >
+                          Create Task
+                        </button>
+                      </div>
+                    </div>
+                  ))
+                ) : (
+                  <div className="rounded-[1.15rem] border border-cyan-400/10 bg-slate-950/50 px-4 py-3 text-sm text-slate-200/72">
+                    No synced inbox messages yet. Connect Gmail or Outlook and run sync to populate this rail.
+                  </div>
+                )}
+              </div>
+            </Panel>
+
             <Panel title="Tactical Timeline" kicker="Event stream">
               <div className="space-y-3">
                 {timelineItems.map(({ icon: Icon, title, detail }) => (
@@ -1088,35 +1551,60 @@ export default function JarvisHudDashboard() {
               </div>
             </Panel>
 
-            <Panel title="Session Focus" kicker="Current state">
+            <Panel title="Task Rail" kicker="Follow-through">
               <div className="space-y-3">
-                {[
-                  voiceLoop?.active
-                    ? `Voice loop is ${voicePhaseLabel.toLowerCase()} and ready for the next command.`
-                    : 'Voice loop is idle until you arm the reactor mic.',
-                  connectorSummary.emailReady
-                    ? 'Inbox sources are connected for triage and summaries.'
-                    : 'Connect an email source to unlock inbox workflows.',
-                  connectorSummary.calendarReady
-                    ? 'Calendar context is available for planning and meeting prep.'
-                    : 'Connect a calendar to improve planning and meeting prep.',
-                  runningAgentCount > 0
-                    ? `${runningAgentCount} managed agent${runningAgentCount === 1 ? '' : 's'} currently running.`
-                    : 'No managed agents are running right now.',
-                ].map((item, index) => (
-                  <div
-                    key={item}
-                    className="flex items-center gap-3 rounded-[1.15rem] border border-cyan-400/10 bg-cyan-400/[0.04] px-4 py-3"
-                  >
-                    <div className="flex h-8 w-8 items-center justify-center rounded-full border border-cyan-300/16 bg-slate-950/65 text-xs uppercase tracking-[0.25em] text-cyan-200">
-                      {index + 1}
+                {taskSummary.length ? (
+                  taskSummary.map((item) => (
+                    <div
+                      key={`${item.timestamp}-${item.title}-${item.due}`}
+                      className="rounded-[1.15rem] border border-cyan-400/10 bg-slate-950/50 px-4 py-3"
+                    >
+                      <div className="text-sm uppercase tracking-[0.16em] text-cyan-50/92">
+                        {item.title}
+                      </div>
+                      <div className="mt-1 text-[10px] uppercase tracking-[0.28em] text-cyan-300/55">
+                        {item.status || 'needsAction'}{item.due ? ` · due ${item.due}` : ''}
+                      </div>
+                      <div className="mt-2 text-sm leading-6 text-slate-200/72">
+                        {item.notes || 'No task notes available.'}
+                      </div>
                     </div>
-                    <div className="flex-1 text-sm leading-6 text-slate-200/78">{item}</div>
-                    <ChevronRight className="h-4 w-4 text-cyan-300/55" />
+                  ))
+                ) : (
+                  <div className="rounded-[1.15rem] border border-cyan-400/10 bg-slate-950/50 px-4 py-3 text-sm text-slate-200/72">
+                    No synced tasks yet. Connect Google Tasks and sync to build a follow-through rail.
                   </div>
-                ))}
+                )}
               </div>
             </Panel>
+
+            <Panel title="Reminder Rail" kicker="Next up">
+              <div className="space-y-3">
+                {reminders.length ? (
+                  reminders.map((item) => (
+                    <div
+                      key={`${item.kind}-${item.when}-${item.title}`}
+                      className="rounded-[1.15rem] border border-cyan-400/10 bg-slate-950/50 px-4 py-3"
+                    >
+                      <div className="text-sm uppercase tracking-[0.16em] text-cyan-50/92">
+                        {item.title}
+                      </div>
+                      <div className="mt-1 text-[10px] uppercase tracking-[0.28em] text-cyan-300/55">
+                        {item.kind} · {item.when}
+                      </div>
+                      <div className="mt-2 text-sm leading-6 text-slate-200/72">
+                        {item.detail || 'No additional detail.'}
+                      </div>
+                    </div>
+                  ))
+                ) : (
+                  <div className="rounded-[1.15rem] border border-cyan-400/10 bg-slate-950/50 px-4 py-3 text-sm text-slate-200/72">
+                    No near-term reminders yet. Upcoming calendar events and due tasks will surface here.
+                  </div>
+                )}
+              </div>
+            </Panel>
+
           </div> : null}
         </div>
       </div>
