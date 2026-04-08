@@ -71,11 +71,55 @@ def _find_role_agent(agent_manager: Any, role: str) -> dict[str, Any] | None:
     return None
 
 
+def _list_role_tasks(agent_manager: Any, role_agent: dict[str, Any] | None) -> list[dict[str, Any]]:
+    if agent_manager is None or role_agent is None:
+        return []
+    agent_id = str(role_agent.get("id", "")).strip()
+    if not agent_id:
+        return []
+    try:
+        return list(agent_manager.list_tasks(agent_id))
+    except Exception:
+        return []
+
+
+def _upsert_architecture_mission(
+    app_state: Any,
+    *,
+    mission_id: str,
+    title: str,
+    domain: str,
+    status: str,
+    phase: str,
+    summary: str,
+    next_step: str = "",
+    result: str = "",
+    retry_hint: str = "",
+) -> dict[str, Any] | None:
+    operator_memory = getattr(app_state, "operator_memory", None)
+    if operator_memory is None:
+        return None
+    return operator_memory.update_mission(
+        mission_id,
+        {
+            "title": title,
+            "domain": domain,
+            "status": status,
+            "phase": phase,
+            "summary": summary,
+            "next_step": next_step,
+            "result": result,
+            "retry_hint": retry_hint,
+        },
+    )
+
+
 def build_architecture_status(app_state: Any) -> dict[str, Any]:
     agent_manager = getattr(app_state, "agent_manager", None)
     voice_loop = getattr(app_state, "voice_loop", None)
     operator_memory = getattr(app_state, "operator_memory", None)
     roles: list[dict[str, Any]] = []
+    role_agents: dict[str, dict[str, Any] | None] = {}
 
     voice_snapshot = voice_loop.snapshot() if voice_loop is not None else {}
     voice_active = bool(voice_snapshot.get("active"))
@@ -99,6 +143,7 @@ def build_architecture_status(app_state: Any) -> dict[str, Any]:
 
     for role_name, spec in ROLE_SPECS.items():
         agent = _find_role_agent(agent_manager, role_name)
+        role_agents[role_name] = agent
         roles.append(
             {
                 "role": role_name,
@@ -141,6 +186,103 @@ def build_architecture_status(app_state: Any) -> dict[str, Any]:
 
     active_roles = sum(1 for item in roles if item["ready"])
     managed_ready = sum(1 for item in roles if item["kind"] == "managed" and item["ready"])
+    missions = memory_snapshot.get("missions", []) if memory_snapshot else []
+    planner_mission = next(
+        (
+            item
+            for item in missions
+            if str(item.get("domain", "")).strip().lower() == "planner"
+            or str(item.get("id", "")).strip().lower() == "planner-executor"
+        ),
+        None,
+    )
+    if planner_mission and agent_manager is not None:
+        planner_tasks = _list_role_tasks(agent_manager, role_agents.get("planner"))
+        executor_tasks = _list_role_tasks(agent_manager, role_agents.get("executor"))
+        recent_tasks = sorted(
+            [*planner_tasks, *executor_tasks],
+            key=lambda item: float(item.get("created_at") or 0.0),
+            reverse=True,
+        )
+        failed_task = next((item for item in recent_tasks if str(item.get("status", "")).lower() == "failed"), None)
+        completed_task = next(
+            (item for item in recent_tasks if str(item.get("status", "")).lower() == "completed"),
+            None,
+        )
+        active_task = next(
+            (
+                item
+                for item in recent_tasks
+                if str(item.get("status", "")).lower() in {"active", "pending", "running"}
+            ),
+            None,
+        )
+        if failed_task is not None:
+            mission_snapshot = _upsert_architecture_mission(
+                app_state,
+                mission_id="planner-executor",
+                title=str(planner_mission.get("title", "")).strip() or "Planner to Executor Mission",
+                domain="planner",
+                status="blocked",
+                phase="retry",
+                summary="Planner/executor mission is blocked.",
+                next_step="Review the latest blocker and retry or narrow the brief.",
+                result=str(failed_task.get("description", "")).strip(),
+                retry_hint="Retry the handoff after clarifying scope or reducing risk.",
+            )
+            if mission_snapshot is not None:
+                planner_mission = next(
+                    (
+                        item
+                        for item in mission_snapshot.get("missions", [])
+                        if str(item.get("id", "")).strip().lower() == "planner-executor"
+                    ),
+                    planner_mission,
+                )
+        elif completed_task is not None:
+            mission_snapshot = _upsert_architecture_mission(
+                app_state,
+                mission_id="planner-executor",
+                title=str(planner_mission.get("title", "")).strip() or "Planner to Executor Mission",
+                domain="planner",
+                status="complete",
+                phase="done",
+                summary="Planner/executor mission completed.",
+                next_step="Review the latest outcome and decide whether to continue.",
+                result=str(completed_task.get("description", "")).strip(),
+                retry_hint="Start a new handoff if more work remains.",
+            )
+            if mission_snapshot is not None:
+                planner_mission = next(
+                    (
+                        item
+                        for item in mission_snapshot.get("missions", [])
+                        if str(item.get("id", "")).strip().lower() == "planner-executor"
+                    ),
+                    planner_mission,
+                )
+        elif active_task is not None:
+            mission_snapshot = _upsert_architecture_mission(
+                app_state,
+                mission_id="planner-executor",
+                title=str(planner_mission.get("title", "")).strip() or "Planner to Executor Mission",
+                domain="planner",
+                status="active",
+                phase="act" if str(active_task.get("agent_id", "")).strip() else "plan",
+                summary="Planner/executor mission is active.",
+                next_step="Review planner and executor task progress.",
+                result=str(active_task.get("description", "")).strip() or str(planner_mission.get("result", "")),
+                retry_hint=str(planner_mission.get("retry_hint", "")).strip(),
+            )
+            if mission_snapshot is not None:
+                planner_mission = next(
+                    (
+                        item
+                        for item in mission_snapshot.get("missions", [])
+                        if str(item.get("id", "")).strip().lower() == "planner-executor"
+                    ),
+                    planner_mission,
+                )
     return {
         "roles": roles,
         "summary": {
@@ -149,6 +291,7 @@ def build_architecture_status(app_state: Any) -> dict[str, Any]:
             "managed_ready": managed_ready,
             "managed_total": len(ROLE_SPECS),
         },
+        "mission": planner_mission,
     }
 
 
@@ -220,6 +363,18 @@ def create_role_handoff(app_state: Any, *, brief: str, source: str = "hud") -> d
         executor["id"],
         f"Latest executor handoff from {source}: {cleaned_brief[:240]}",
     )
+    mission_snapshot = _upsert_architecture_mission(
+        app_state,
+        mission_id="planner-executor",
+        title="Planner to Executor Mission",
+        domain="planner",
+        status="active",
+        phase="act",
+        summary=f"Planner and executor are working a handoff from {source}.",
+        next_step="Review planner and executor task updates.",
+        result=cleaned_brief[:280],
+        retry_hint="Retry the handoff if the delegated tasks stall or block.",
+    )
 
     refreshed = build_architecture_status(app_state)
     refreshed["handoff"] = {
@@ -236,6 +391,15 @@ def create_role_handoff(app_state: Any, *, brief: str, source: str = "hud") -> d
             "name": executor.get("name"),
         },
     }
+    if mission_snapshot is not None:
+        refreshed["mission"] = next(
+            (
+                item
+                for item in mission_snapshot.get("missions", [])
+                if str(item.get("id", "")).strip().lower() == "planner-executor"
+            ),
+            refreshed.get("mission"),
+        )
     return refreshed
 
 

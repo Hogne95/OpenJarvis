@@ -95,6 +95,20 @@ class VisualBrief:
     created_at: str = ""
 
 
+@dataclass(slots=True)
+class MissionMemory:
+    id: str
+    title: str
+    domain: str = ""
+    status: str = "idle"
+    phase: str = "detect"
+    summary: str = ""
+    next_step: str = ""
+    result: str = ""
+    retry_hint: str = ""
+    updated_at: str = ""
+
+
 class OperatorMemory:
     """Simple JSON-backed operator memory for cross-session HUD personalization."""
 
@@ -110,6 +124,7 @@ class OperatorMemory:
         self._visual_observations: list[VisualObservation] = []
         self._visual_insights: list[VisualInsight] = []
         self._visual_briefs: list[VisualBrief] = []
+        self._missions: list[MissionMemory] = []
         self._load()
 
     def _load(self) -> None:
@@ -219,6 +234,23 @@ class OperatorMemory:
             for value in visual_briefs
             if str(value.get("summary", "")).strip() or str(value.get("details", "")).strip()
         ]
+        missions = data.get("missions", [])
+        self._missions = [
+            MissionMemory(
+                id=str(value.get("id", "")),
+                title=str(value.get("title", "")),
+                domain=str(value.get("domain", "")),
+                status=str(value.get("status", "idle")),
+                phase=str(value.get("phase", "detect")),
+                summary=str(value.get("summary", "")),
+                next_step=str(value.get("next_step", "")),
+                result=str(value.get("result", "")),
+                retry_hint=str(value.get("retry_hint", "")),
+                updated_at=str(value.get("updated_at", "")),
+            )
+            for value in missions
+            if str(value.get("id", "")).strip() and str(value.get("title", "")).strip()
+        ]
 
     def _save(self) -> None:
         payload = {
@@ -231,6 +263,7 @@ class OperatorMemory:
             "visual_observations": [asdict(value) for value in self._visual_observations],
             "visual_insights": [asdict(value) for value in self._visual_insights],
             "visual_briefs": [asdict(value) for value in self._visual_briefs],
+            "missions": [asdict(value) for value in self._missions],
         }
         self._path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
 
@@ -245,6 +278,7 @@ class OperatorMemory:
             "visual_observations": [asdict(value) for value in self._visual_observations],
             "visual_insights": [asdict(value) for value in self._visual_insights],
             "visual_briefs": [asdict(value) for value in self._visual_briefs],
+            "missions": [asdict(value) for value in self._missions],
         }
 
     def update_profile(self, partial: dict[str, Any]) -> dict[str, Any]:
@@ -513,6 +547,30 @@ class OperatorMemory:
             ),
         )
         self._visual_briefs = self._visual_briefs[:24]
+        self._save()
+        return self.snapshot()
+
+    def update_mission(self, mission_id: str, partial: dict[str, Any]) -> dict[str, Any]:
+        cleaned_id = mission_id.strip()
+        title = str(partial.get("title", "")).strip()
+        if not cleaned_id:
+            raise ValueError("Mission id is required")
+        if not title:
+            raise ValueError("Mission title is required")
+        existing = next((item for item in self._missions if item.id == cleaned_id), None)
+        mission = existing or MissionMemory(id=cleaned_id, title=title)
+        mission.title = title
+        mission.domain = str(partial.get("domain", mission.domain)).strip()
+        mission.status = str(partial.get("status", mission.status)).strip() or mission.status
+        mission.phase = str(partial.get("phase", mission.phase)).strip() or mission.phase
+        mission.summary = str(partial.get("summary", mission.summary)).strip()
+        mission.next_step = str(partial.get("next_step", mission.next_step)).strip()
+        mission.result = str(partial.get("result", mission.result)).strip()
+        mission.retry_hint = str(partial.get("retry_hint", mission.retry_hint)).strip()
+        mission.updated_at = str(partial.get("updated_at", mission.updated_at)).strip()
+        self._missions = [item for item in self._missions if item.id != cleaned_id]
+        self._missions.insert(0, mission)
+        self._missions = self._missions[:24]
         self._save()
         return self.snapshot()
 

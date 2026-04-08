@@ -92,6 +92,7 @@ import {
   updateOperatorMeeting,
   updateOperatorProject,
   updateOperatorRelationship,
+  updateOperatorMission,
   updateOperatorVisualBrief,
   updateOperatorVisualInsight,
   updateOperatorVisualObservation,
@@ -568,6 +569,7 @@ export default function JarvisHudDashboard() {
   const lastSelfImproveOutcomeRef = useRef('');
   const lastSelfImproveFollowupRef = useRef('');
   const lastSelfImprovePatchRef = useRef('');
+  const lastMissionSyncRef = useRef('');
 
   const {
     state: hudSpeechState,
@@ -3990,6 +3992,36 @@ export default function JarvisHudDashboard() {
     workbenchBusy,
     workspaceChecks?.checks,
   ]);
+
+  useEffect(() => {
+    if (!autonomyMissions.length) {
+      lastMissionSyncRef.current = '';
+      return;
+    }
+    const payload = autonomyMissions.slice(0, 4).map((mission) => ({
+      id: mission.id,
+      title: mission.title,
+      domain: mission.domain,
+      status: mission.status,
+      phase: mission.phase,
+      summary: mission.summary,
+      next_step: mission.nextStep,
+      result: mission.result,
+      retry_hint: mission.retryHint || '',
+      updated_at: new Date().toISOString(),
+    }));
+    const serialized = JSON.stringify(payload);
+    if (lastMissionSyncRef.current === serialized) return;
+    lastMissionSyncRef.current = serialized;
+    Promise.all(payload.map((mission) => updateOperatorMission(mission)))
+      .then((results) => {
+        const latest = results[results.length - 1];
+        if (latest) setDurableOperatorMemory(latest);
+      })
+      .catch(() => {
+        lastMissionSyncRef.current = '';
+      });
+  }, [autonomyMissions]);
 
   useEffect(() => {
     if (!architectureTaskOutcome || !agentArchitecture?.handoff?.source?.startsWith('self-improve')) return;

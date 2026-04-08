@@ -225,6 +225,19 @@ class OperatorVisualBriefRequest(BaseModel):
     created_at: Optional[str] = None
 
 
+class OperatorMissionUpdateRequest(BaseModel):
+    id: str
+    title: str
+    domain: Optional[str] = None
+    status: Optional[str] = None
+    phase: Optional[str] = None
+    summary: Optional[str] = None
+    next_step: Optional[str] = None
+    result: Optional[str] = None
+    retry_hint: Optional[str] = None
+    updated_at: Optional[str] = None
+
+
 class AgentArchitectureHandoffRequest(BaseModel):
     brief: str
     source: Optional[str] = "hud"
@@ -1574,6 +1587,20 @@ async def operator_memory_add_visual_brief(
         raise HTTPException(status_code=400, detail=str(exc))
 
 
+@operator_memory_router.post("/mission")
+async def operator_memory_update_mission(
+    req: OperatorMissionUpdateRequest,
+    request: Request,
+):
+    manager = getattr(request.app.state, "operator_memory", None)
+    if manager is None:
+        raise HTTPException(status_code=503, detail="Operator memory not configured")
+    try:
+        return manager.update_mission(req.id, req.model_dump(exclude_none=True))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
 @operator_memory_router.get("/visual/{observation_id}/asset")
 async def operator_memory_visual_asset(
     observation_id: str,
@@ -1595,7 +1622,7 @@ async def operator_memory_visual_asset(
 
 
 @vision_router.post("/analyze")
-async def vision_analyze(req: VisionAnalyzeRequest):
+async def vision_analyze(req: VisionAnalyzeRequest, request: Request):
     api_key = os.environ.get("OPENAI_API_KEY", "").strip()
     if not api_key:
         raise HTTPException(status_code=503, detail="Vision analysis requires OPENAI_API_KEY")
@@ -1641,6 +1668,15 @@ async def vision_analyze(req: VisionAnalyzeRequest):
     choice = response.choices[0] if response.choices else None
     if choice and choice.message:
         content = (choice.message.content or "").strip()
+    _update_visual_mission(
+        request.app.state,
+        phase="detect",
+        status="active",
+        summary=f"Visual analysis complete for {req.label or 'current visual'}.",
+        next_step="Review the visual brief and decide whether to extract signals or ask a follow-up question.",
+        result=content[:400],
+        retry_hint="Re-run analysis with a clearer note or fresher capture if the summary feels incomplete.",
+    )
     return {
         "content": content,
         "model": os.environ.get("OPENJARVIS_VISION_MODEL", "gpt-4o-mini"),
@@ -1649,7 +1685,7 @@ async def vision_analyze(req: VisionAnalyzeRequest):
 
 
 @vision_router.post("/analyze-multi")
-async def vision_analyze_multi(req: VisionAnalyzeMultiRequest):
+async def vision_analyze_multi(req: VisionAnalyzeMultiRequest, request: Request):
     api_key = os.environ.get("OPENAI_API_KEY", "").strip()
     if not api_key:
         raise HTTPException(status_code=503, detail="Vision analysis requires OPENAI_API_KEY")
@@ -1706,6 +1742,15 @@ async def vision_analyze_multi(req: VisionAnalyzeMultiRequest):
     choice = response.choices[0] if response.choices else None
     if choice and choice.message:
         content = (choice.message.content or "").strip()
+    _update_visual_mission(
+        request.app.state,
+        phase="detect",
+        status="active",
+        summary=f"Multi-screen visual analysis complete for {len(req.images)} screen(s).",
+        next_step="Review cross-screen risks and extract the next action or signal set.",
+        result=content[:400],
+        retry_hint="Capture all relevant monitors again if the setup changed or important context is missing.",
+    )
     return {
         "content": content,
         "model": os.environ.get("OPENJARVIS_VISION_MODEL", "gpt-4o-mini"),
@@ -1824,7 +1869,7 @@ async def vision_extract_text_multi(req: VisionExtractMultiRequest):
 
 
 @vision_router.post("/suggest-actions")
-async def vision_suggest_actions(req: VisionSuggestActionsRequest):
+async def vision_suggest_actions(req: VisionSuggestActionsRequest, request: Request):
     api_key = os.environ.get("OPENAI_API_KEY", "").strip()
     if not api_key:
         raise HTTPException(status_code=503, detail="Vision action suggestions require OPENAI_API_KEY")
@@ -1906,6 +1951,20 @@ async def vision_suggest_actions(req: VisionSuggestActionsRequest):
                 }
             )
 
+    top_action = actions[0] if actions else None
+    _update_visual_mission(
+        request.app.state,
+        phase="plan" if top_action else "detect",
+        status="active" if top_action else "idle",
+        summary=(
+            f"Visual action suggestions ready for {req.label or 'current visual'}."
+            if top_action
+            else f"No strong visual action suggestions for {req.label or 'current visual'}."
+        ),
+        next_step=(top_action.get("title", "") if top_action else "Ask a focused visual question or extract signals."),
+        result=(top_action.get("detail", "") if top_action else content[:400]),
+        retry_hint="Try a clearer capture or add a stronger context note if the next action is still ambiguous.",
+    )
     return {
         "actions": actions,
         "model": os.environ.get("OPENJARVIS_VISION_MODEL", "gpt-4o-mini"),
@@ -2016,7 +2075,7 @@ async def vision_extract_ui_targets(req: VisionUiTargetsRequest):
 
 
 @vision_router.post("/ui-action-plan")
-async def vision_plan_ui_action(req: VisionUiActionPlanRequest):
+async def vision_plan_ui_action(req: VisionUiActionPlanRequest, request: Request):
     api_key = os.environ.get("OPENAI_API_KEY", "").strip()
     if not api_key:
         raise HTTPException(status_code=503, detail="Vision UI planning requires OPENAI_API_KEY")
@@ -2099,6 +2158,15 @@ async def vision_plan_ui_action(req: VisionUiActionPlanRequest):
             steps = [content]
             plan_prompt = content
 
+    _update_visual_mission(
+        request.app.state,
+        phase="plan",
+        status="active",
+        summary=summary or f"UI interaction plan ready for {req.target_label.strip()}.",
+        next_step=(steps[0] if steps else "Review the interaction plan before staging a desktop action."),
+        result=(plan_prompt or "\n".join(steps))[:400],
+        retry_hint="Verify the target again if the UI changed or the plan feels uncertain.",
+    )
     return {
         "summary": summary or f"Interaction plan ready for {req.target_label.strip()}.",
         "steps": steps,
@@ -2215,7 +2283,7 @@ async def vision_verify_ui_target(req: VisionUiVerifyRequest):
 
 
 @vision_router.post("/query")
-async def vision_query(req: VisionQueryRequest):
+async def vision_query(req: VisionQueryRequest, request: Request):
     api_key = os.environ.get("OPENAI_API_KEY", "").strip()
     if not api_key:
         raise HTTPException(status_code=503, detail="Visual question answering requires OPENAI_API_KEY")
@@ -2275,6 +2343,15 @@ async def vision_query(req: VisionQueryRequest):
     if choice and choice.message:
         content = (choice.message.content or "").strip()
 
+    _update_visual_mission(
+        request.app.state,
+        phase="verify",
+        status="active",
+        summary=f"Visual question answered for {req.label or 'current visual'}.",
+        next_step="Use the answer to decide the next operator action or ask a tighter follow-up.",
+        result=content[:400],
+        retry_hint="Ask a narrower follow-up question if the answer is still uncertain.",
+    )
     return {
         "answer": content,
         "question": question,
@@ -2342,6 +2419,34 @@ def _routine_defaults(routine_id: str, operator_memory: Any | None = None) -> di
         "meeting_prep": "0 * * * *",
     }
     return {"prompt": prompts[routine_id], "cron": crons[routine_id]}
+
+
+def _update_visual_mission(
+    app_state: Any,
+    *,
+    phase: str,
+    status: str,
+    summary: str,
+    next_step: str = "",
+    result: str = "",
+    retry_hint: str = "",
+) -> dict[str, Any] | None:
+    operator_memory = getattr(app_state, "operator_memory", None)
+    if operator_memory is None:
+        return None
+    return operator_memory.update_mission(
+        "visual-mission",
+        {
+            "title": "Visual Mission",
+            "domain": "visual",
+            "status": status,
+            "phase": phase,
+            "summary": summary,
+            "next_step": next_step,
+            "result": result,
+            "retry_hint": retry_hint,
+        },
+    )
 
 
 @automation_router.get("/status")

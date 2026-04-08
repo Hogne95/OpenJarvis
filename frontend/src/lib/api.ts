@@ -501,6 +501,18 @@ export interface DurableOperatorSignals {
 export interface DurableOperatorMemory {
   profile: DurableOperatorProfile;
   signals: DurableOperatorSignals;
+  missions?: Array<{
+    id: string;
+    title: string;
+    domain: string;
+    status: string;
+    phase: string;
+    summary: string;
+    next_step: string;
+    result: string;
+    retry_hint: string;
+    updated_at: string;
+  }>;
   explicit_memories?: Array<{
     id: string;
     content: string;
@@ -1466,6 +1478,30 @@ export async function updateOperatorVisualBrief(body: {
   if (!res.ok) {
     const detail = await res.json().catch(() => ({ detail: res.statusText }));
     throw new Error(detail.detail || `Visual brief update failed: ${res.status}`);
+  }
+  return res.json();
+}
+
+export async function updateOperatorMission(body: {
+  id: string;
+  title: string;
+  domain?: string;
+  status?: string;
+  phase?: string;
+  summary?: string;
+  next_step?: string;
+  result?: string;
+  retry_hint?: string;
+  updated_at?: string;
+}): Promise<DurableOperatorMemory> {
+  const res = await fetch(`${getBase()}/v1/operator-memory/mission`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const detail = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(detail.detail || `Operator mission update failed: ${res.status}`);
   }
   return res.json();
 }
