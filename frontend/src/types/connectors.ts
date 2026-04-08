@@ -67,7 +67,7 @@ export const SOURCE_CATALOG: ConnectorMeta[] = [
     description: 'Paste text or upload documents',
     unitLabel: 'documents',
     steps: [
-      { label: 'Paste text or upload files (.txt, .md, .pdf, .docx, .csv) to add them to your knowledge base.' },
+      { label: 'Paste text or upload files (.txt, .md, .pdf, .docx, .csv, .tsv, .xlsx, .pptx) to add them to your knowledge base.' },
     ],
     inputFields: [],
   },

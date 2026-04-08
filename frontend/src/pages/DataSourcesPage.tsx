@@ -92,7 +92,7 @@ function InlineConnectForm({
 // Upload / Paste form
 // ---------------------------------------------------------------------------
 
-const ACCEPTED_EXTENSIONS = '.txt,.md,.pdf,.docx,.csv';
+const ACCEPTED_EXTENSIONS = '.txt,.md,.pdf,.docx,.csv,.tsv,.xlsx,.pptx';
 
 function UploadForm({ onDone }: { onDone?: () => void }) {
   const [tab, setTab] = useState<'paste' | 'upload'>('paste');
@@ -725,7 +725,7 @@ function DataSourcesSection() {
                 {isExpanded && c.connector_id === 'upload' && (
                   <div style={{ borderTop: '1px solid var(--color-border)', padding: 12 }}>
                     <div style={{ fontSize: 12, color: 'var(--color-text-secondary)', marginBottom: 10 }}>
-                      Paste text or upload files (.txt, .md, .pdf, .docx, .csv) to add them to your knowledge base.
+                      Paste text or upload files (.txt, .md, .pdf, .docx, .csv, .tsv, .xlsx, .pptx) to add them to your knowledge base.
                     </div>
                     <UploadForm onDone={loadConnectors} />
                   </div>

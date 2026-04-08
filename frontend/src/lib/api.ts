@@ -200,6 +200,46 @@ export async function checkHealth(): Promise<boolean> {
   }
 }
 
+export async function analyzeDocumentFiles(params: {
+  files: File[];
+  mode: 'summary' | 'business_review' | 'finance_review' | 'investment_memo' | 'kpi_extract';
+  title?: string;
+}): Promise<DocumentAnalysisResult> {
+  const formData = new FormData();
+  for (const file of params.files) {
+    formData.append('files', file);
+  }
+  formData.append('mode', params.mode);
+  if (params.title) formData.append('title', params.title);
+  const res = await fetch(`${getBase()}/v1/connectors/upload/analyze/files`, {
+    method: 'POST',
+    body: formData,
+  });
+  if (!res.ok) {
+    const detail = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(detail.detail || `Document analysis failed: ${res.status}`);
+  }
+  return res.json();
+}
+
+export async function exportDocumentAnalysis(params: {
+  title: string;
+  mode: 'summary' | 'business_review' | 'finance_review' | 'investment_memo' | 'kpi_extract' | string;
+  content: string;
+  format: 'docx' | 'xlsx' | 'txt';
+}): Promise<Blob> {
+  const res = await fetch(`${getBase()}/v1/connectors/upload/export`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(params),
+  });
+  if (!res.ok) {
+    const detail = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(detail.detail || `Document export failed: ${res.status}`);
+  }
+  return res.blob();
+}
+
 export async function fetchEnergy(): Promise<unknown> {
   if (isTauri()) {
     try {
@@ -290,6 +330,13 @@ export interface SpeechProfile {
   auto_speak: boolean;
   auto_submit_voice_commands: boolean;
   require_wake_phrase: boolean;
+}
+
+export interface DocumentAnalysisResult {
+  mode: string;
+  content: string;
+  files: string[];
+  model: string;
 }
 
 export interface WorkbenchEntry {
@@ -537,6 +584,14 @@ export interface DurableOperatorMemory {
   visual_briefs?: Array<{
     id: string;
     label: string;
+    summary: string;
+    details: string;
+    created_at: string;
+  }>;
+  document_briefs?: Array<{
+    id: string;
+    label: string;
+    mode: string;
     summary: string;
     details: string;
     created_at: string;
@@ -1478,6 +1533,25 @@ export async function updateOperatorVisualBrief(body: {
   if (!res.ok) {
     const detail = await res.json().catch(() => ({ detail: res.statusText }));
     throw new Error(detail.detail || `Visual brief update failed: ${res.status}`);
+  }
+  return res.json();
+}
+
+export async function updateOperatorDocumentBrief(body: {
+  label: string;
+  mode: string;
+  summary: string;
+  details?: string;
+  created_at?: string;
+}): Promise<DurableOperatorMemory> {
+  const res = await fetch(`${getBase()}/v1/operator-memory/document-brief`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const detail = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(detail.detail || `Document brief update failed: ${res.status}`);
   }
   return res.json();
 }

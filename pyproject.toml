@@ -93,6 +93,11 @@ channel-twitter = ["tweepy>=4.14"]
 browser = ["playwright>=1.40"]
 media = ["openai>=1.30"]
 pdf = ["pdfplumber>=0.10"]
+documents-office = [
+    "python-docx>=1.1",
+    "openpyxl>=3.1",
+    "python-pptx>=1.0",
+]
 scheduler = ["croniter>=2.0"]
 security-signing = ["cryptography>=43"]
 sandbox-wasm = ["wasmtime>=25"]

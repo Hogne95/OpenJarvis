@@ -76,6 +76,8 @@ export interface OperatorProfile {
   priorityContacts: string;
   workdayStart: string;
   workdayEnd: string;
+  designStyle: string;
+  designGoals: string;
   prepLeadMinutes: number;
   autoPrepareMeetings: boolean;
   autoTriageInbox: boolean;
@@ -121,6 +123,8 @@ function loadOperatorProfile(): OperatorProfile {
     priorityContacts: '',
     workdayStart: '08:00',
     workdayEnd: '17:00',
+    designStyle: 'bold, cinematic, high-clarity',
+    designGoals: 'clear hierarchy, strong visual identity, practical usability',
     prepLeadMinutes: 90,
     autoPrepareMeetings: true,
     autoTriageInbox: true,

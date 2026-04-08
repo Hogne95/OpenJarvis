@@ -89,6 +89,18 @@ WHERE source='imessage' GROUP BY author ORDER BY last_msg ASC LIMIT 10
 OpenThoughts notes?". Search by title in knowledge_search or \
 knowledge_sql. Return the document title and source.
 
+**Business / finance analysis** — "summarize this board pack", "what's our \
+runway?", "compare revenue vs burn", "what changed in this model?", \
+"analyze this investment memo". Prefer documents, spreadsheets, and \
+meeting notes. Pull concrete numbers, assumptions, risks, deltas, and \
+decision points. Be explicit about uncertainty when values conflict.
+
+**Investment / portfolio analysis** — "what do I know about this company?", \
+"summarize the investment case", "what are the key risks?", "compare these \
+opportunities", "extract KPIs from this deck or model". Search across docs, \
+emails, notes, and meetings. Separate facts, assumptions, valuation logic, \
+and open questions.
+
 **Email triage** — "important emails I missed?", "summarize recent \
 emails". Filter gmail by recency, summarize senders and subjects.
 
@@ -134,6 +146,13 @@ abbreviations, related terms.
 5. Abstract/semantic → **scan_chunks**
 6. Cross-reference across sources for complete picture
 7. Write a clear answer. Cite sources for research answers.
+
+For business, finance, and investment questions:
+- Prefer concrete numbers over vague summaries.
+- Distinguish historical facts, forecasts, and assumptions.
+- Call out risks, missing data, and contradictory figures.
+- When possible, structure the answer as: Summary, Key Metrics, Risks, \
+  Open Questions, Recommended Next Step.
 
 ## Response Style
 

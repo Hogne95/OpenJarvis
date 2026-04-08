@@ -96,6 +96,16 @@ class VisualBrief:
 
 
 @dataclass(slots=True)
+class DocumentBrief:
+    id: str
+    label: str
+    mode: str = ""
+    summary: str = ""
+    details: str = ""
+    created_at: str = ""
+
+
+@dataclass(slots=True)
 class MissionMemory:
     id: str
     title: str
@@ -124,6 +134,7 @@ class OperatorMemory:
         self._visual_observations: list[VisualObservation] = []
         self._visual_insights: list[VisualInsight] = []
         self._visual_briefs: list[VisualBrief] = []
+        self._document_briefs: list[DocumentBrief] = []
         self._missions: list[MissionMemory] = []
         self._load()
 
@@ -234,6 +245,19 @@ class OperatorMemory:
             for value in visual_briefs
             if str(value.get("summary", "")).strip() or str(value.get("details", "")).strip()
         ]
+        document_briefs = data.get("document_briefs", [])
+        self._document_briefs = [
+            DocumentBrief(
+                id=str(value.get("id", "")),
+                label=str(value.get("label", "")),
+                mode=str(value.get("mode", "")),
+                summary=str(value.get("summary", "")),
+                details=str(value.get("details", "")),
+                created_at=str(value.get("created_at", "")),
+            )
+            for value in document_briefs
+            if str(value.get("summary", "")).strip() or str(value.get("details", "")).strip()
+        ]
         missions = data.get("missions", [])
         self._missions = [
             MissionMemory(
@@ -263,6 +287,7 @@ class OperatorMemory:
             "visual_observations": [asdict(value) for value in self._visual_observations],
             "visual_insights": [asdict(value) for value in self._visual_insights],
             "visual_briefs": [asdict(value) for value in self._visual_briefs],
+            "document_briefs": [asdict(value) for value in self._document_briefs],
             "missions": [asdict(value) for value in self._missions],
         }
         self._path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
@@ -278,6 +303,7 @@ class OperatorMemory:
             "visual_observations": [asdict(value) for value in self._visual_observations],
             "visual_insights": [asdict(value) for value in self._visual_insights],
             "visual_briefs": [asdict(value) for value in self._visual_briefs],
+            "document_briefs": [asdict(value) for value in self._document_briefs],
             "missions": [asdict(value) for value in self._missions],
         }
 
@@ -547,6 +573,39 @@ class OperatorMemory:
             ),
         )
         self._visual_briefs = self._visual_briefs[:24]
+        self._save()
+        return self.snapshot()
+
+    def add_document_brief(
+        self,
+        *,
+        label: str,
+        mode: str,
+        summary: str,
+        details: str,
+        created_at: str = "",
+    ) -> dict[str, Any]:
+        cleaned_label = label.strip() or "Document Brief"
+        cleaned_mode = mode.strip().lower()
+        cleaned_summary = summary.strip()
+        cleaned_details = details.strip()
+        if not cleaned_summary and not cleaned_details:
+            raise ValueError("Document brief content is required")
+        stamp = (created_at or f"{cleaned_label}-{cleaned_mode or 'document'}").strip().lower().replace(" ", "-")
+        brief_id = f"document-brief-{stamp}"
+        self._document_briefs = [item for item in self._document_briefs if item.id != brief_id]
+        self._document_briefs.insert(
+            0,
+            DocumentBrief(
+                id=brief_id,
+                label=cleaned_label,
+                mode=cleaned_mode,
+                summary=cleaned_summary,
+                details=cleaned_details,
+                created_at=created_at,
+            ),
+        )
+        self._document_briefs = self._document_briefs[:24]
         self._save()
         return self.snapshot()
 

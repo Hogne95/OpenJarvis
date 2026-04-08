@@ -225,6 +225,14 @@ class OperatorVisualBriefRequest(BaseModel):
     created_at: Optional[str] = None
 
 
+class OperatorDocumentBriefRequest(BaseModel):
+    label: str
+    mode: str
+    summary: str
+    details: Optional[str] = None
+    created_at: Optional[str] = None
+
+
 class OperatorMissionUpdateRequest(BaseModel):
     id: str
     title: str
@@ -266,6 +274,11 @@ def _mission_followup_payload(mission: dict[str, Any], action: str) -> dict[str,
             return None
         return {"kind": "prompt", "content": content, "label": title}
     if domain == "visual":
+        content = result or summary or next_step
+        if not content:
+            return None
+        return {"kind": "prompt", "content": content, "label": title}
+    if domain == "document":
         content = result or summary or next_step
         if not content:
             return None
@@ -1652,6 +1665,26 @@ async def operator_memory_add_visual_brief(
     try:
         return manager.add_visual_brief(
             label=req.label,
+            summary=req.summary,
+            details=req.details or "",
+            created_at=req.created_at or "",
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@operator_memory_router.post("/document-brief")
+async def operator_memory_add_document_brief(
+    req: OperatorDocumentBriefRequest,
+    request: Request,
+):
+    manager = getattr(request.app.state, "operator_memory", None)
+    if manager is None:
+        raise HTTPException(status_code=503, detail="Operator memory not configured")
+    try:
+        return manager.add_document_brief(
+            label=req.label,
+            mode=req.mode,
             summary=req.summary,
             details=req.details or "",
             created_at=req.created_at or "",

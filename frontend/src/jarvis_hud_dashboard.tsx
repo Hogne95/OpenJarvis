@@ -27,6 +27,8 @@ import {
 import { useNavigate } from 'react-router';
 import {
   checkHealth,
+  analyzeDocumentFiles,
+  exportDocumentAnalysis,
   approveActionCenterItem,
   analyzeVision,
   analyzeVisionMulti,
@@ -94,6 +96,7 @@ import {
     updateOperatorProject,
   updateOperatorRelationship,
   updateOperatorMission,
+  updateOperatorDocumentBrief,
   updateOperatorVisualBrief,
   updateOperatorVisualInsight,
   updateOperatorVisualObservation,
@@ -105,6 +108,7 @@ import {
   type AutomationStatus,
   type CodingWorkspaceStatus,
   type DailyDigest,
+  type DocumentAnalysisResult,
   type DesktopState,
   type DigestSchedule,
   type DurableOperatorMemory,
@@ -537,6 +541,11 @@ export default function JarvisHudDashboard() {
   const [visionQuery, setVisionQuery] = useState<VisionQueryResult | null>(null);
   const [visionQuestion, setVisionQuestion] = useState('');
   const [visionBusy, setVisionBusy] = useState(false);
+  const [documentFiles, setDocumentFiles] = useState<File[]>([]);
+  const [documentAnalysisMode, setDocumentAnalysisMode] = useState<'summary' | 'business_review' | 'finance_review' | 'investment_memo' | 'kpi_extract'>('summary');
+  const [documentAnalysisTitle, setDocumentAnalysisTitle] = useState('');
+  const [documentAnalysis, setDocumentAnalysis] = useState<DocumentAnalysisResult | null>(null);
+  const [documentBusy, setDocumentBusy] = useState(false);
   const [screenSnapshot, setScreenSnapshot] = useState<{
     dataUrl: string;
     capturedAt: number;
@@ -1292,6 +1301,28 @@ export default function JarvisHudDashboard() {
     visionSuggestedActions?.actions,
     visionTextExtraction?.content,
   ]);
+  const documentBrief = useMemo(() => {
+    if (!documentAnalysis?.content.trim()) return null;
+    const label = documentAnalysisTitle.trim() || documentAnalysis.files[0] || 'Document set';
+    const modeLabel = documentAnalysis.mode.replace(/_/g, ' ');
+    const summary =
+      documentAnalysis.content.split('\n').find((line) => line.trim())?.trim() ||
+      `Document analysis ready in ${modeLabel} mode.`;
+    const details = `Mode: ${modeLabel}\nFiles: ${documentAnalysis.files.join(', ') || 'Unknown'}\n\n${documentAnalysis.content}`;
+    return {
+      title: `Document Intel · ${label}`,
+      summary,
+      details,
+      memoPrompt:
+        `Create a concise ${modeLabel} deliverable for these documents.\n` +
+        `Title: ${label}\nFiles: ${documentAnalysis.files.join(', ')}\n\n${documentAnalysis.content}\n\n` +
+        'Return a sharp executive-ready memo with summary, key metrics, risks, open questions, and recommended next step.',
+      prompt:
+        `I analyzed these documents: ${documentAnalysis.files.join(', ')}.\n` +
+        `Mode: ${documentAnalysis.mode}\nTitle: ${label}\n\n${documentAnalysis.content}\n\n` +
+        'Turn this into the next best action, decisions, risks, and open questions.',
+    };
+  }, [documentAnalysis, documentAnalysisTitle]);
   const architectureTaskOutcome = useMemo(() => {
     const plannerTask = agentRoleTasks.planner?.[0] || null;
     const executorTask = agentRoleTasks.executor?.[0] || null;
@@ -1445,21 +1476,23 @@ export default function JarvisHudDashboard() {
     return {
       selfImprove:
         entries.find((item) => item.id === 'mission-self-improve' || item.domain === 'self-improve') || null,
-      planner:
-        entries.find((item) => item.id === 'planner-executor' || item.id === 'mission-planner-executor' || item.domain === 'planner') ||
-        null,
-      visual:
-        entries.find((item) => item.id === 'visual-mission' || item.id === 'mission-visual' || item.domain === 'visual') || null,
-    };
-  }, [durableOperatorMemory?.missions]);
+        planner:
+          entries.find((item) => item.id === 'planner-executor' || item.id === 'mission-planner-executor' || item.domain === 'planner') ||
+          null,
+        visual:
+          entries.find((item) => item.id === 'visual-mission' || item.id === 'mission-visual' || item.domain === 'visual') || null,
+        document:
+          entries.find((item) => item.id === 'document-mission' || item.id === 'mission-document' || item.domain === 'document') || null,
+      };
+    }, [durableOperatorMemory?.missions]);
   const autonomyMissions = useMemo(() => {
-    const missions: Array<{
-      id: string;
-      title: string;
-      domain: 'self-improve' | 'planner' | 'visual';
-      status: MissionStatus;
-      phase: MissionPhase;
-      summary: string;
+      const missions: Array<{
+        id: string;
+        title: string;
+        domain: 'self-improve' | 'planner' | 'visual' | 'document';
+        status: MissionStatus;
+        phase: MissionPhase;
+        summary: string;
       nextStep: string;
       result: string;
       retryHint?: string;
@@ -1577,6 +1610,27 @@ export default function JarvisHudDashboard() {
       });
     }
 
+      if (documentBrief || durableMissionLookup.document) {
+        const durable = durableMissionLookup.document;
+        missions.push({
+          id: durable?.id || 'mission-document',
+          title: durable?.title || documentBrief?.title || 'Document Intel mission',
+          domain: 'document',
+          status: ((durable?.status as MissionStatus | undefined) || (documentAnalysis ? 'complete' : 'active')),
+          phase: ((durable?.phase as MissionPhase | undefined) || (documentAnalysis ? 'done' : 'plan')),
+          summary: durable?.summary || documentBrief?.summary || 'Document analysis lane is ready.',
+          nextStep:
+            durable?.next_step ||
+            (documentAnalysis
+              ? 'Review the document brief and route it to planning, tasks, or next decisions.'
+              : 'Upload documents and run analysis.'),
+          result: durable?.result || documentBrief?.details || 'Awaiting the next document result.',
+          retryHint: durable?.retry_hint || undefined,
+          actionLabel: documentAnalysis ? 'Load Brief' : 'Open Intel',
+          action: () => (documentBrief ? injectCommand(documentBrief.prompt) : setFocusMode(false)),
+      });
+    }
+
     return missions;
   }, [
     activeSelfImproveTask?.status,
@@ -1585,6 +1639,8 @@ export default function JarvisHudDashboard() {
     agentRoleTasks.executor,
     agentRoleTasks.planner,
     architectureTaskOutcome,
+    documentAnalysis,
+    documentBrief,
     screenSnapshot?.label,
       selfImproveBrief,
       selfImprovePatchPlan,
@@ -1595,7 +1651,7 @@ export default function JarvisHudDashboard() {
       visionSuggestedActions?.actions,
     visionUiPlan?.steps,
     visionUiPlan?.summary,
-    visionUiVerify?.summary,
+      visionUiVerify?.summary,
     visualBrief,
     workspaceChecks?.checks,
   ]);
@@ -1797,6 +1853,18 @@ export default function JarvisHudDashboard() {
         detail: visualBrief.summary,
         actionLabel: 'Load Brief',
         action: () => injectCommand(visualBrief.prompt),
+      });
+    }
+
+    if (documentBrief) {
+      items.push({
+        id: `document-brief-${documentBrief.title}`,
+        priority: 58,
+        label: 'Document Intel',
+        title: documentBrief.title,
+        detail: documentBrief.summary,
+        actionLabel: 'Load Brief',
+        action: () => injectCommand(documentBrief.prompt),
       });
     }
 
@@ -2046,7 +2114,7 @@ export default function JarvisHudDashboard() {
     }
 
     return items.sort((left, right) => right.priority - left.priority).slice(0, 6);
-  }, [activeAutomationAlerts, agentArchitecture?.handoff?.brief, agentArchitecture?.handoff?.executor?.task_id, agentArchitecture?.handoff?.planner?.task_id, agentArchitecture?.roles, agentRoleTasks.executor, agentRoleTasks.planner, architectureTaskOutcome, autonomyMissions, editorFilePath, gitCommitMessage, inboxFocusQueue, latestCodeResult?.file_path, latestValidationFailure, latestValidationSuccess, nextCodingTask, nextReviewQueueItem, pendingAction, pendingCodeEdit, pendingWorkbench, prepQueue, screenSnapshot?.capturedAt, screenSnapshot?.label, selfImproveBrief, selfImprovePatchPlan, selfImproveRuns, visionAnalysis?.content, visionQuery?.answer, visionQuery?.question, visionSignals, visionSuggestedActions?.actions, visionTextExtraction?.content, visionUiPlan?.summary, visionUiPlan?.target_label, visionUiTargets?.targets, visionUiVerify?.summary, visionUiVerify?.risk_level, visionUiVerify?.target_label, visualBrief]);
+  }, [activeAutomationAlerts, agentArchitecture?.handoff?.brief, agentArchitecture?.handoff?.executor?.task_id, agentArchitecture?.handoff?.planner?.task_id, agentArchitecture?.roles, agentRoleTasks.executor, agentRoleTasks.planner, architectureTaskOutcome, autonomyMissions, documentBrief, editorFilePath, gitCommitMessage, inboxFocusQueue, latestCodeResult?.file_path, latestValidationFailure, latestValidationSuccess, nextCodingTask, nextReviewQueueItem, pendingAction, pendingCodeEdit, pendingWorkbench, prepQueue, screenSnapshot?.capturedAt, screenSnapshot?.label, selfImproveBrief, selfImprovePatchPlan, selfImproveRuns, visionAnalysis?.content, visionQuery?.answer, visionQuery?.question, visionSignals, visionSuggestedActions?.actions, visionTextExtraction?.content, visionUiPlan?.summary, visionUiPlan?.target_label, visionUiTargets?.targets, visionUiVerify?.summary, visionUiVerify?.risk_level, visionUiVerify?.target_label, visualBrief]);
   const connectorCapabilities = useMemo(() => {
     const ids = new Set(connectedConnectorIds);
     const gmailConnected = ids.has('gmail') || ids.has('gmail_imap');
@@ -2240,6 +2308,51 @@ export default function JarvisHudDashboard() {
     [workspaceSummary?.branch, workspaceSummary?.root],
   );
   const currentProjectMemory = durableOperatorMemory?.projects?.[currentProjectKey] || null;
+  const designBrief = useMemo(() => {
+    const sections: string[] = [];
+    const summaryParts: string[] = [];
+    const preferredStyle = operatorProfile.designStyle.trim();
+    const designGoals = operatorProfile.designGoals.trim();
+
+    if (preferredStyle) {
+      sections.push(`Preferred design style: ${preferredStyle}`);
+      summaryParts.push(`Style: ${preferredStyle}`);
+    }
+    if (designGoals) {
+      sections.push(`Design goals: ${designGoals}`);
+    }
+    if (visualBrief) {
+      sections.push(`Visual context\n${visualBrief.details}`);
+      summaryParts.push(visualBrief.summary);
+    }
+    if (documentBrief) {
+      sections.push(`Document context\n${documentBrief.details}`);
+    }
+    if (currentProjectMemory) {
+      sections.push(
+        `Project context\nFocus: ${currentProjectMemory.focus || 'None'}\nStatus: ${currentProjectMemory.status || 'Unknown'}\nNext step: ${currentProjectMemory.next_step || 'None'}\nNotes: ${currentProjectMemory.notes || 'None'}`,
+      );
+    }
+    if (!sections.length) return null;
+
+    return {
+      title: 'Design Intelligence',
+      summary: summaryParts[0] || 'Design context is ready.',
+      details: sections.join('\n\n'),
+      critiquePrompt:
+        `Act as a senior product designer and creative director.\n${sections.join('\n\n')}\n\n` +
+        'Give a concise design critique covering hierarchy, clarity, interaction, aesthetic direction, and the highest-value improvement.',
+      systemPrompt:
+        `Act as a design systems lead.\n${sections.join('\n\n')}\n\n` +
+        'Turn this into a reusable design direction with principles, components, typography, color and motion guidance, and implementation notes.',
+      creativePrompt:
+        `Act as a strong frontend design partner.\n${sections.join('\n\n')}\n\n` +
+        'Propose a more creative visual direction that still preserves usability. Focus on composition, typography, color, motion, and distinctive identity.',
+      implementationPrompt:
+        `Act as a frontend design engineer.\n${sections.join('\n\n')}\n\n` +
+        'Translate this design context into implementation guidance: layout structure, component changes, CSS direction, accessibility checks, and a safe build order.',
+    };
+  }, [currentProjectMemory, documentBrief, operatorProfile.designGoals, operatorProfile.designStyle, visualBrief]);
   const activeWorkspaceRepo = useMemo(
     () => workspaceRepos?.repos.find((repo) => repo.root === workspaceRepos.active_root) || null,
     [workspaceRepos],
@@ -2538,6 +2651,95 @@ export default function JarvisHudDashboard() {
       return null;
     } finally {
       setIntentBusy(null);
+    }
+  }
+
+  async function selectDocumentFiles() {
+    if (typeof document === 'undefined') {
+      setWorkbenchNotice('Document upload is not available in this environment.');
+      return;
+    }
+    const files = await new Promise<File[]>((resolve) => {
+      const input = document.createElement('input');
+      input.type = 'file';
+      input.multiple = true;
+      input.accept = '.txt,.md,.pdf,.docx,.csv,.tsv,.xlsx,.pptx';
+      input.onchange = () => resolve(Array.from(input.files || []));
+      input.click();
+    });
+    if (!files.length) {
+      setWorkbenchNotice('Document upload cancelled.');
+      return;
+    }
+    setDocumentFiles(files);
+    setDocumentAnalysis(null);
+    setWorkbenchNotice(`Loaded ${files.length} document${files.length === 1 ? '' : 's'} for analysis.`);
+  }
+
+  async function analyzeCurrentDocuments() {
+    if (!documentFiles.length) {
+      setWorkbenchNotice('Upload one or more documents first.');
+      return;
+    }
+    setDocumentBusy(true);
+    try {
+      const result = await analyzeDocumentFiles({
+        files: documentFiles,
+        mode: documentAnalysisMode,
+        title: documentAnalysisTitle.trim() || undefined,
+      });
+      setDocumentAnalysis(result);
+      setWorkbenchNotice(`Document analysis ready in ${documentAnalysisMode.replace('_', ' ')} mode.`);
+    } catch (error) {
+      setWorkbenchNotice(error instanceof Error ? error.message : 'Document analysis failed.');
+    } finally {
+      setDocumentBusy(false);
+    }
+  }
+
+  async function saveDocumentBrief() {
+    if (!documentBrief || !documentAnalysis) {
+      setWorkbenchNotice('Build a document analysis first.');
+      return;
+    }
+    try {
+      const next = await updateOperatorDocumentBrief({
+        label: documentBrief.title,
+        mode: documentAnalysis.mode,
+        summary: documentBrief.summary,
+        details: documentBrief.details,
+        created_at: new Date().toISOString(),
+      });
+      setDurableOperatorMemory(next);
+      setWorkbenchNotice('Document brief saved to durable memory.');
+    } catch (error) {
+      setWorkbenchNotice(error instanceof Error ? error.message : 'Unable to save document brief.');
+    }
+  }
+
+  async function exportCurrentDocumentAnalysis(format: 'docx' | 'xlsx' | 'txt') {
+    if (!documentAnalysis || !documentBrief) {
+      setWorkbenchNotice('Build a document analysis first.');
+      return;
+    }
+    try {
+      const blob = await exportDocumentAnalysis({
+        title: documentBrief.title,
+        mode: documentAnalysis.mode,
+        content: documentAnalysis.content,
+        format,
+      });
+      const url = window.URL.createObjectURL(blob);
+      const link = window.document.createElement('a');
+      link.href = url;
+      link.download = `${documentBrief.title.replace(/[^\w\- ]+/g, '').trim().replace(/\s+/g, '-') || 'document-intel'}.${format}`;
+      window.document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.URL.revokeObjectURL(url);
+      setWorkbenchNotice(`Document analysis exported as ${format.toUpperCase()}.`);
+    } catch (error) {
+      setWorkbenchNotice(error instanceof Error ? error.message : 'Unable to export document analysis.');
     }
   }
 
@@ -3205,6 +3407,41 @@ export default function JarvisHudDashboard() {
         : mode === 'review'
         ? 'Review prompt loaded.'
         : 'Refactor prompt loaded.',
+    );
+  }
+
+  function loadDesignPrompt(
+    mode: 'critique' | 'system' | 'creative' | 'implementation',
+  ) {
+    const fallbackSections = [
+      operatorProfile.designStyle.trim() ? `Preferred design style: ${operatorProfile.designStyle.trim()}` : '',
+      operatorProfile.designGoals.trim() ? `Design goals: ${operatorProfile.designGoals.trim()}` : '',
+      currentProjectMemory
+        ? `Project context\nFocus: ${currentProjectMemory.focus || 'None'}\nStatus: ${currentProjectMemory.status || 'Unknown'}\nNext step: ${currentProjectMemory.next_step || 'None'}`
+        : '',
+    ].filter(Boolean);
+    const fallbackBase = fallbackSections.join('\n\n');
+    const prompt =
+      mode === 'critique'
+        ? designBrief?.critiquePrompt ||
+          `Act as a senior product designer and critique the current interface or concept.\n${fallbackBase}\n\nFocus on hierarchy, clarity, usability, and the highest-value improvement.`
+        : mode === 'system'
+        ? designBrief?.systemPrompt ||
+          `Act as a design systems lead.\n${fallbackBase}\n\nDefine reusable principles, components, typography, color, and motion guidance.`
+        : mode === 'creative'
+        ? designBrief?.creativePrompt ||
+          `Act as a creative frontend design partner.\n${fallbackBase}\n\nPropose a more distinctive visual direction while keeping usability strong.`
+        : designBrief?.implementationPrompt ||
+          `Act as a frontend design engineer.\n${fallbackBase}\n\nTranslate the current design direction into concrete implementation guidance and a safe build order.`;
+    injectCommand(prompt);
+    setWorkbenchNotice(
+      mode === 'critique'
+        ? 'Design critique prompt loaded.'
+        : mode === 'system'
+        ? 'Design system prompt loaded.'
+        : mode === 'creative'
+        ? 'Creative direction prompt loaded.'
+        : 'Design implementation prompt loaded.',
     );
   }
 
@@ -5243,9 +5480,168 @@ export default function JarvisHudDashboard() {
                         <div className="mt-2 text-xs text-slate-300/72">{text}</div>
                       </button>
                     ))}
-                  </div>
-                  {intentPreview ? (
+                    </div>
                     <div className="mt-3 rounded-[0.95rem] border border-cyan-400/10 bg-black/20 px-3 py-3">
+                      <div className="flex items-center justify-between gap-3">
+                        <div className="text-[10px] uppercase tracking-[0.22em] text-cyan-300/55">Document Intel</div>
+                        <div className="text-[10px] uppercase tracking-[0.22em] text-cyan-300/45">
+                          pdf · word · excel · powerpoint
+                        </div>
+                      </div>
+                      <div className="mt-2 text-sm text-slate-200/76">
+                        Upload business and finance documents for direct analysis in the HUD.
+                      </div>
+                      <input
+                        value={documentAnalysisTitle}
+                        onChange={(event) => setDocumentAnalysisTitle(event.target.value)}
+                        placeholder="Optional document set title"
+                        className="mt-3 w-full rounded-[0.85rem] border border-cyan-400/12 bg-slate-950/70 px-3 py-2 text-sm text-cyan-50 outline-none transition placeholder:text-slate-500 focus:border-cyan-300/40"
+                      />
+                      <div className="mt-3 grid gap-2 sm:grid-cols-[1fr_auto_auto]">
+                        <select
+                          value={documentAnalysisMode}
+                          onChange={(event) =>
+                              setDocumentAnalysisMode(
+                                event.target.value as 'summary' | 'business_review' | 'finance_review' | 'investment_memo' | 'kpi_extract',
+                              )
+                            }
+                          className="rounded-[0.85rem] border border-cyan-400/12 bg-slate-950/70 px-3 py-2 text-sm text-cyan-50 outline-none transition focus:border-cyan-300/40"
+                        >
+                          <option value="summary">Summary</option>
+                          <option value="business_review">Business Review</option>
+                          <option value="finance_review">Finance Review</option>
+                          <option value="investment_memo">Investment Memo</option>
+                          <option value="kpi_extract">KPI Extract</option>
+                        </select>
+                        <button
+                          onClick={() => void selectDocumentFiles()}
+                          className="rounded-[0.85rem] border border-cyan-400/12 bg-slate-950/70 px-3 py-2 text-[10px] uppercase tracking-[0.22em] text-cyan-100 transition hover:bg-cyan-400/[0.08]"
+                        >
+                          Upload Docs
+                        </button>
+                        <button
+                          onClick={() => void analyzeCurrentDocuments()}
+                          disabled={!documentFiles.length || documentBusy}
+                          className="rounded-[0.85rem] border border-cyan-400/12 bg-cyan-400/[0.08] px-3 py-2 text-[10px] uppercase tracking-[0.22em] text-cyan-100 transition hover:bg-cyan-400/[0.14] disabled:cursor-not-allowed disabled:opacity-40"
+                        >
+                          {documentBusy ? 'Analyzing' : 'Analyze Docs'}
+                        </button>
+                      </div>
+                      {documentFiles.length ? (
+                        <div className="mt-3 rounded-[0.85rem] border border-cyan-400/10 bg-slate-950/55 px-3 py-2 text-xs text-slate-200/76">
+                          {documentFiles.map((file) => file.name).join(', ')}
+                        </div>
+                      ) : null}
+                      {documentAnalysis ? (
+                        <div className="mt-3 rounded-[0.9rem] border border-cyan-400/10 bg-slate-950/55 px-3 py-3">
+                          <div className="flex items-center justify-between gap-3">
+                            <div className="text-[10px] uppercase tracking-[0.22em] text-cyan-300/55">Document Analysis</div>
+                            <div className="text-[10px] uppercase tracking-[0.22em] text-cyan-300/45">
+                              {documentAnalysis.mode.replace('_', ' ')} · {documentAnalysis.model}
+                            </div>
+                          </div>
+                          <pre className="mt-2 max-h-56 overflow-auto whitespace-pre-wrap break-words text-sm text-slate-200/76">
+                            {documentAnalysis.content}
+                          </pre>
+                            <div className="mt-3 flex gap-2">
+                              <button
+                                onClick={() =>
+                                  injectCommand(documentBrief?.prompt || `I analyzed these documents: ${documentAnalysis.files.join(', ')}.\nMode: ${documentAnalysis.mode}\n\n${documentAnalysis.content}\n\nTurn this into the next best action, decisions, and risks.`)
+                                }
+                                className="rounded-[0.85rem] border border-cyan-400/12 bg-cyan-400/[0.08] px-3 py-2 text-[10px] uppercase tracking-[0.22em] text-cyan-100 transition hover:bg-cyan-400/[0.14]"
+                              >
+                                Load Analysis
+                              </button>
+                              <button
+                                onClick={() => handoffWithBrief(documentBrief?.prompt || documentAnalysis.content, 'document-intel')}
+                                disabled={architectureBusy}
+                                className="rounded-[0.85rem] border border-cyan-400/12 bg-slate-950/70 px-3 py-2 text-[10px] uppercase tracking-[0.22em] text-cyan-100 transition hover:bg-cyan-400/[0.08] disabled:cursor-not-allowed disabled:opacity-40"
+                              >
+                                {architectureBusy ? 'Routing' : 'Route To Planner'}
+                              </button>
+                              <button
+                                onClick={() => injectCommand(documentBrief?.memoPrompt || documentAnalysis.content)}
+                                className="rounded-[0.85rem] border border-cyan-400/12 bg-slate-950/70 px-3 py-2 text-[10px] uppercase tracking-[0.22em] text-cyan-100 transition hover:bg-cyan-400/[0.08]"
+                              >
+                                Prepare Memo
+                              </button>
+                              <button
+                                onClick={() => void saveDocumentBrief()}
+                                className="rounded-[0.85rem] border border-cyan-400/12 bg-slate-950/70 px-3 py-2 text-[10px] uppercase tracking-[0.22em] text-cyan-100 transition hover:bg-cyan-400/[0.08]"
+                              >
+                                Save Brief
+                              </button>
+                              <button
+                                onClick={() => void exportCurrentDocumentAnalysis('docx')}
+                                className="rounded-[0.85rem] border border-cyan-400/12 bg-slate-950/70 px-3 py-2 text-[10px] uppercase tracking-[0.22em] text-cyan-100 transition hover:bg-cyan-400/[0.08]"
+                              >
+                                Export DOCX
+                              </button>
+                              <button
+                                onClick={() => void exportCurrentDocumentAnalysis(documentAnalysis.mode === 'kpi_extract' ? 'xlsx' : 'txt')}
+                                className="rounded-[0.85rem] border border-cyan-400/12 bg-slate-950/70 px-3 py-2 text-[10px] uppercase tracking-[0.22em] text-cyan-100 transition hover:bg-cyan-400/[0.08]"
+                              >
+                                {documentAnalysis.mode === 'kpi_extract' ? 'Export XLSX' : 'Export TXT'}
+                              </button>
+                              <button
+                                onClick={() =>
+                                  createFollowUpTask(
+                                  `Document review · ${documentAnalysisTitle.trim() || documentAnalysis.files[0] || 'analysis'}`,
+                                  documentAnalysis.content,
+                                )
+                              }
+                              className="rounded-[0.85rem] border border-emerald-300/18 bg-emerald-400/[0.08] px-3 py-2 text-[10px] uppercase tracking-[0.22em] text-emerald-100 transition hover:bg-emerald-400/[0.14]"
+                            >
+                              Make Task
+                            </button>
+                          </div>
+                        </div>
+                        ) : null}
+                        {durableOperatorMemory?.document_briefs?.length ? (
+                          <div className="mt-3 rounded-[0.9rem] border border-cyan-400/10 bg-slate-950/55 px-3 py-3">
+                            <div className="text-[10px] uppercase tracking-[0.22em] text-cyan-300/55">Recent Document Briefs</div>
+                            <div className="mt-3 space-y-3">
+                              {durableOperatorMemory.document_briefs.slice(0, 4).map((item) => (
+                                <div key={item.id} className="rounded-[0.85rem] border border-cyan-400/10 bg-black/20 px-3 py-3">
+                                  <div className="flex items-start justify-between gap-3">
+                                    <div>
+                                      <div className="text-sm text-cyan-50/92">{item.label}</div>
+                                      <div className="mt-1 text-[10px] uppercase tracking-[0.22em] text-cyan-300/55">
+                                        {item.mode.replace(/_/g, ' ')} · {item.created_at || 'saved'}
+                                      </div>
+                                    </div>
+                                  </div>
+                                  <div className="mt-2 text-sm text-slate-200/76">{item.summary}</div>
+                                  <div className="mt-3 flex gap-2">
+                                    <button
+                                      onClick={() =>
+                                        injectCommand(
+                                          `I saved a document brief.\nLabel: ${item.label}\nMode: ${item.mode}\nSummary: ${item.summary}\nDetails:\n${item.details}\nContinue from this document context and suggest the next best action.`,
+                                        )
+                                      }
+                                      className="rounded-[0.85rem] border border-cyan-400/12 bg-cyan-400/[0.08] px-3 py-2 text-[10px] uppercase tracking-[0.22em] text-cyan-100 transition hover:bg-cyan-400/[0.14]"
+                                    >
+                                      Load Brief
+                                    </button>
+                                    <button
+                                      onClick={() =>
+                                        injectCommand(
+                                          `Create a concise executive memo from this saved document brief.\nLabel: ${item.label}\nMode: ${item.mode}\nSummary: ${item.summary}\nDetails:\n${item.details}`,
+                                        )
+                                      }
+                                      className="rounded-[0.85rem] border border-cyan-400/12 bg-slate-950/70 px-3 py-2 text-[10px] uppercase tracking-[0.22em] text-cyan-100 transition hover:bg-cyan-400/[0.08]"
+                                    >
+                                      Memo
+                                    </button>
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        ) : null}
+                      </div>
+                    {intentPreview ? (
+                      <div className="mt-3 rounded-[0.95rem] border border-cyan-400/10 bg-black/20 px-3 py-3">
                       <div className="text-[10px] uppercase tracking-[0.22em] text-cyan-300/55">Intent Preview</div>
                       <div className="mt-1 text-sm text-cyan-50/92">
                         {intentPreview.type} · {intentPreview.action}
@@ -6552,6 +6948,50 @@ export default function JarvisHudDashboard() {
                       </button>
                     ))}
                   </div>
+                  <div className="mt-4 rounded-[1rem] border border-cyan-400/10 bg-slate-950/55 p-3">
+                    <div className="text-[10px] uppercase tracking-[0.32em] text-cyan-300/55">Design Intelligence</div>
+                    <div className="mt-2 text-sm leading-7 text-slate-200/75">
+                      Turn visual, product, and project context into stronger creative direction and implementation guidance.
+                    </div>
+                    <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                      {([
+                        ['Design Critique', () => loadDesignPrompt('critique')],
+                        ['Design System', () => loadDesignPrompt('system')],
+                        ['Creative Direction', () => loadDesignPrompt('creative')],
+                        ['Design To Code', () => loadDesignPrompt('implementation')],
+                      ] as const).map(([label, action]) => (
+                        <button
+                          key={label}
+                          onClick={action}
+                          className="rounded-[0.95rem] border border-cyan-400/12 bg-cyan-400/[0.08] px-3 py-3 text-xs uppercase tracking-[0.22em] text-cyan-100 transition hover:bg-cyan-400/[0.14]"
+                        >
+                          {label}
+                        </button>
+                      ))}
+                    </div>
+                    {designBrief ? (
+                      <div className="mt-3 rounded-[0.95rem] border border-cyan-400/10 bg-black/20 px-3 py-3">
+                        <div className="text-[10px] uppercase tracking-[0.22em] text-cyan-300/55">Design Brief</div>
+                        <div className="mt-2 text-sm leading-6 text-cyan-50/88">{designBrief.summary}</div>
+                        <div className="mt-3 flex flex-wrap gap-2">
+                          <button
+                            type="button"
+                            onClick={() => injectCommand(designBrief.creativePrompt)}
+                            className="rounded-full border border-cyan-400/20 bg-cyan-500/10 px-3 py-1.5 text-[10px] uppercase tracking-[0.3em] text-cyan-100 transition hover:border-cyan-300/40 hover:bg-cyan-500/20"
+                          >
+                            Load Brief
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handoffWithBrief(designBrief.implementationPrompt, 'design-intel')}
+                            className="rounded-full border border-cyan-400/20 bg-cyan-500/10 px-3 py-1.5 text-[10px] uppercase tracking-[0.3em] text-cyan-100 transition hover:border-cyan-300/40 hover:bg-cyan-500/20"
+                          >
+                            Route To Planner
+                          </button>
+                        </div>
+                      </div>
+                    ) : null}
+                  </div>
                   <div className="mt-3 grid gap-2 sm:grid-cols-2">
                     {([
                       ['Git Status', () => loadWorkbenchPreset('status')],
@@ -7243,6 +7683,18 @@ export default function JarvisHudDashboard() {
                     value={operatorProfile.priorityContacts}
                     onChange={(event) => updateOperatorProfile({ priorityContacts: event.target.value })}
                     placeholder="Priority contacts"
+                    className="rounded-[0.9rem] border border-cyan-400/10 bg-slate-950/70 px-4 py-3 text-sm text-slate-100 outline-none placeholder:text-slate-500"
+                  />
+                  <input
+                    value={operatorProfile.designStyle}
+                    onChange={(event) => updateOperatorProfile({ designStyle: event.target.value })}
+                    placeholder="Preferred design style"
+                    className="rounded-[0.9rem] border border-cyan-400/10 bg-slate-950/70 px-4 py-3 text-sm text-slate-100 outline-none placeholder:text-slate-500"
+                  />
+                  <input
+                    value={operatorProfile.designGoals}
+                    onChange={(event) => updateOperatorProfile({ designGoals: event.target.value })}
+                    placeholder="Design goals"
                     className="rounded-[0.9rem] border border-cyan-400/10 bg-slate-950/70 px-4 py-3 text-sm text-slate-100 outline-none placeholder:text-slate-500"
                   />
                   <div className="grid gap-3 sm:grid-cols-2">
