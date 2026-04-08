@@ -95,6 +95,8 @@ def _upsert_architecture_mission(
     next_step: str = "",
     result: str = "",
     retry_hint: str = "",
+    result_data: dict[str, Any] | None = None,
+    next_action: dict[str, Any] | None = None,
 ) -> dict[str, Any] | None:
     operator_memory = getattr(app_state, "operator_memory", None)
     if operator_memory is None:
@@ -110,6 +112,8 @@ def _upsert_architecture_mission(
             "next_step": next_step,
             "result": result,
             "retry_hint": retry_hint,
+            "result_data": result_data or {},
+            "next_action": next_action or {},
         },
     )
 
@@ -229,6 +233,16 @@ def build_architecture_status(app_state: Any) -> dict[str, Any]:
                 next_step="Review the latest blocker and retry or narrow the brief.",
                 result=str(failed_task.get("description", "")).strip(),
                 retry_hint="Retry the handoff after clarifying scope or reducing risk.",
+                result_data={
+                    "task_id": failed_task.get("id"),
+                    "status": failed_task.get("status"),
+                    "agent_id": failed_task.get("agent_id"),
+                },
+                next_action={
+                    "kind": "brief",
+                    "content": str(failed_task.get("description", "")).strip(),
+                    "label": "Planner Retry",
+                },
             )
             if mission_snapshot is not None:
                 planner_mission = next(
@@ -251,6 +265,16 @@ def build_architecture_status(app_state: Any) -> dict[str, Any]:
                 next_step="Review the latest outcome and decide whether to continue.",
                 result=str(completed_task.get("description", "")).strip(),
                 retry_hint="Start a new handoff if more work remains.",
+                result_data={
+                    "task_id": completed_task.get("id"),
+                    "status": completed_task.get("status"),
+                    "agent_id": completed_task.get("agent_id"),
+                },
+                next_action={
+                    "kind": "brief",
+                    "content": str(completed_task.get("description", "")).strip(),
+                    "label": "Planner Outcome",
+                },
             )
             if mission_snapshot is not None:
                 planner_mission = next(
@@ -273,6 +297,16 @@ def build_architecture_status(app_state: Any) -> dict[str, Any]:
                 next_step="Review planner and executor task progress.",
                 result=str(active_task.get("description", "")).strip() or str(planner_mission.get("result", "")),
                 retry_hint=str(planner_mission.get("retry_hint", "")).strip(),
+                result_data={
+                    "task_id": active_task.get("id"),
+                    "status": active_task.get("status"),
+                    "agent_id": active_task.get("agent_id"),
+                },
+                next_action={
+                    "kind": "brief",
+                    "content": str(active_task.get("description", "")).strip() or str(planner_mission.get("summary", "")).strip(),
+                    "label": "Planner Progress",
+                },
             )
             if mission_snapshot is not None:
                 planner_mission = next(
@@ -374,6 +408,16 @@ def create_role_handoff(app_state: Any, *, brief: str, source: str = "hud") -> d
         next_step="Review planner and executor task updates.",
         result=cleaned_brief[:280],
         retry_hint="Retry the handoff if the delegated tasks stall or block.",
+        result_data={
+            "planner_task_id": planner_task.get("id"),
+            "executor_task_id": executor_task.get("id"),
+            "source": source,
+        },
+        next_action={
+            "kind": "brief",
+            "content": cleaned_brief,
+            "label": "Planner Handoff",
+        },
     )
 
     refreshed = build_architecture_status(app_state)

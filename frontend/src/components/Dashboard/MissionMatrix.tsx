@@ -11,6 +11,8 @@ export type MissionMatrixItem = {
   nextStep: string;
   result: string;
   retryHint?: string;
+  nextActionLabel?: string;
+  resultMeta?: string[];
   actionLabel: string;
   action?: () => void;
 };
@@ -73,6 +75,21 @@ export function MissionMatrix({
               <div className="mt-2 text-sm text-slate-200/78">{mission.summary}</div>
               <div className="mt-2 text-xs leading-6 text-slate-300/72">Next: {mission.nextStep}</div>
               <div className="mt-1 text-xs leading-6 text-slate-300/60">Result: {mission.result}</div>
+              {mission.nextActionLabel ? (
+                <div className="mt-1 text-xs leading-6 text-cyan-200/78">Action: {mission.nextActionLabel}</div>
+              ) : null}
+              {mission.resultMeta?.length ? (
+                <div className="mt-1 flex flex-wrap gap-2">
+                  {mission.resultMeta.slice(0, 3).map((item) => (
+                    <div
+                      key={item}
+                      className="rounded-full border border-cyan-400/10 bg-cyan-400/[0.06] px-2 py-1 text-[10px] uppercase tracking-[0.18em] text-cyan-200/70"
+                    >
+                      {item}
+                    </div>
+                  ))}
+                </div>
+              ) : null}
               {mission.retryHint ? <div className="mt-1 text-xs leading-6 text-amber-200/78">Retry: {mission.retryHint}</div> : null}
             </div>
           ))}

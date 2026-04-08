@@ -116,6 +116,8 @@ class MissionMemory:
     next_step: str = ""
     result: str = ""
     retry_hint: str = ""
+    result_data: dict[str, Any] = field(default_factory=dict)
+    next_action: dict[str, Any] = field(default_factory=dict)
     updated_at: str = ""
 
 
@@ -270,6 +272,8 @@ class OperatorMemory:
                 next_step=str(value.get("next_step", "")),
                 result=str(value.get("result", "")),
                 retry_hint=str(value.get("retry_hint", "")),
+                result_data=value.get("result_data", {}) if isinstance(value.get("result_data", {}), dict) else {},
+                next_action=value.get("next_action", {}) if isinstance(value.get("next_action", {}), dict) else {},
                 updated_at=str(value.get("updated_at", "")),
             )
             for value in missions
@@ -626,6 +630,10 @@ class OperatorMemory:
         mission.next_step = str(partial.get("next_step", mission.next_step)).strip()
         mission.result = str(partial.get("result", mission.result)).strip()
         mission.retry_hint = str(partial.get("retry_hint", mission.retry_hint)).strip()
+        if "result_data" in partial and isinstance(partial.get("result_data"), dict):
+            mission.result_data = dict(partial.get("result_data") or {})
+        if "next_action" in partial and isinstance(partial.get("next_action"), dict):
+            mission.next_action = dict(partial.get("next_action") or {})
         mission.updated_at = str(partial.get("updated_at", mission.updated_at)).strip()
         self._missions = [item for item in self._missions if item.id != cleaned_id]
         self._missions.insert(0, mission)

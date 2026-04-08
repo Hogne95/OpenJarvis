@@ -4,6 +4,7 @@ type ExecutionHint = {
   ready: boolean;
   button: string;
   label: string;
+  provider?: string;
 };
 
 type ConnectorCapability = {
@@ -156,6 +157,11 @@ export function ActionCenterPanel({
       </button>
       <div className="mt-3 rounded-[0.9rem] border border-cyan-400/10 bg-black/20 px-3 py-3 text-sm text-slate-200/76">
         {executionHint.label}
+        {executionHint.provider ? (
+          <div className="mt-2 text-[10px] uppercase tracking-[0.22em] text-cyan-300/55">
+            Preferred path: {executionHint.provider}
+          </div>
+        ) : null}
       </div>
       <div className="mt-3 grid gap-2 sm:grid-cols-2">
         {connectorCapabilities.map((item) => (

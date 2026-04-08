@@ -186,6 +186,8 @@ type ConnectorSummary = {
   calendarReady: boolean;
   docsReady: boolean;
   messagingReady: boolean;
+  emailProvider: 'gmail' | 'outlook' | '';
+  calendarProvider: 'gcalendar' | 'outlook' | '';
 };
 
 function Panel({
@@ -234,6 +236,15 @@ function missionPhaseLabel(phase: MissionPhase) {
     default:
       return phase;
   }
+}
+
+function summarizeMissionMeta(payload: unknown): string[] {
+  if (!payload || typeof payload !== 'object') return [];
+  const record = payload as Record<string, unknown>;
+  return Object.entries(record)
+    .filter(([, value]) => value !== null && value !== undefined && String(value).trim())
+    .slice(0, 3)
+    .map(([key, value]) => `${key.replace(/_/g, ' ')}: ${String(value)}`);
 }
 
 function Equalizer({ bars }: { bars: number[] }) {
@@ -474,6 +485,8 @@ export default function JarvisHudDashboard() {
     calendarReady: false,
     docsReady: false,
     messagingReady: false,
+    emailProvider: '',
+    calendarProvider: '',
   });
   const [connectedConnectorIds, setConnectedConnectorIds] = useState<string[]>([]);
   const [agentNotice, setAgentNotice] = useState('');
@@ -636,6 +649,12 @@ export default function JarvisHudDashboard() {
       honorific: durableOperatorMemory?.profile.honorific || operatorProfile.honorific || 'sir',
     };
   }, [durableOperatorMemory?.profile.honorific, durableOperatorMemory?.profile.reply_tone, operatorProfile.honorific, operatorProfile.replyTone, speechProfile?.reply_speed]);
+  const canAutoSpeak = useMemo(() => {
+    if (!speechProfile?.auto_speak || !voiceLoop?.active) return false;
+    if (streamState.isStreaming || hudSpeechState === 'recording' || hudSpeechState === 'transcribing') return false;
+    if (hudSpeechTelemetry.speechLikely) return false;
+    return true;
+  }, [hudSpeechState, hudSpeechTelemetry.speechLikely, speechProfile?.auto_speak, streamState.isStreaming, voiceLoop?.active]);
 
   useEffect(() => {
     let cancelled = false;
@@ -697,10 +716,12 @@ export default function JarvisHudDashboard() {
         setConnectedConnectorIds(Array.from(ids));
         setConnectorSummary({
           totalConnected: connected.length,
-          emailReady: ids.has('gmail_imap') || ids.has('outlook'),
+          emailReady: ids.has('gmail') || ids.has('gmail_imap') || ids.has('outlook'),
           calendarReady: ids.has('gcalendar') || ids.has('outlook'),
           docsReady: ids.has('gdrive') || ids.has('notion') || ids.has('obsidian'),
           messagingReady: ids.has('slack') || ids.has('imessage') || ids.has('whatsapp'),
+          emailProvider: ids.has('gmail') ? 'gmail' : ids.has('outlook') ? 'outlook' : ids.has('gmail_imap') ? 'gmail' : '',
+          calendarProvider: ids.has('gcalendar') ? 'gcalendar' : ids.has('outlook') ? 'outlook' : '',
         });
       }
 
@@ -845,24 +866,13 @@ export default function JarvisHudDashboard() {
   }, [apiReachable, dailyDigest, digestBusy]);
 
   useEffect(() => {
-    if (!dailyDigest?.text || !speechProfile?.auto_speak) return;
+    if (!dailyDigest?.text || !canAutoSpeak) return;
     if (lastSpokenDigestRef.current === dailyDigest.generated_at) return;
     let cancelled = false;
-    synthesizeSpeech({
-      text: buildSpokenLine(dailyDigest.text, 'digest'),
-      backend: speechProfile.reply_backend,
-      voice_id: speechProfile.reply_voice_id,
-      speed: voicePersona.speed,
-      output_format: 'wav',
-    })
-      .then((blob) => {
+    playHudSpeech(dailyDigest.text, 'digest')
+      .then((played) => {
         if (cancelled) return;
-        if (audioUrlRef.current) URL.revokeObjectURL(audioUrlRef.current);
-        const url = URL.createObjectURL(blob);
-        audioUrlRef.current = url;
-        const audio = new Audio(url);
-        audioElementRef.current = audio;
-        audio.play().catch(() => {});
+        if (!played) return;
         lastSpokenDigestRef.current = dailyDigest.generated_at;
       })
       .catch(() => {});
@@ -870,7 +880,7 @@ export default function JarvisHudDashboard() {
     return () => {
       cancelled = true;
     };
-  }, [dailyDigest?.generated_at, dailyDigest?.text, speechProfile, voicePersona.speed]);
+  }, [canAutoSpeak, dailyDigest?.generated_at, dailyDigest?.text, playHudSpeech]);
 
   useEffect(() => {
     const latestLog = automationLogs[0] ?? null;
@@ -896,34 +906,28 @@ export default function JarvisHudDashboard() {
       }
     }
 
-    if (!speechProfile?.auto_speak || streamState.isStreaming || hudSpeechState === 'recording' || hudSpeechState === 'transcribing') {
+    if (!canAutoSpeak) {
       return;
     }
 
     let cancelled = false;
-    synthesizeSpeech({
-      text: buildSpokenLine(announcement, 'announcement'),
-      backend: speechProfile.reply_backend,
-      voice_id: speechProfile.reply_voice_id,
-      speed: voicePersona.speed,
-      output_format: 'wav',
-    })
-      .then((blob) => {
+    playHudSpeech(announcement, 'announcement')
+      .then((played) => {
         if (cancelled) return;
-        audioElementRef.current?.pause();
-        if (audioUrlRef.current) URL.revokeObjectURL(audioUrlRef.current);
-        const url = URL.createObjectURL(blob);
-        audioUrlRef.current = url;
-        const audio = new Audio(url);
-        audioElementRef.current = audio;
-        audio.play().catch(() => {});
+        if (!played) return;
       })
       .catch(() => {});
 
     return () => {
       cancelled = true;
     };
-  }, [automationLogs, hudSpeechState, speechProfile, streamState.isStreaming, voicePersona.speed]);
+  }, [automationLogs, canAutoSpeak, playHudSpeech]);
+
+  useEffect(() => {
+    if (hudSpeechState !== 'recording' && hudSpeechState !== 'transcribing' && !hudSpeechTelemetry.speechLikely) return;
+    if (!audioElementRef.current) return;
+    audioElementRef.current.pause();
+  }, [hudSpeechState, hudSpeechTelemetry.speechLikely]);
 
   useEffect(() => {
     if (!voiceLoop?.active) {
@@ -1562,6 +1566,8 @@ export default function JarvisHudDashboard() {
               : 'Load the self-improvement brief.'),
           result: durable?.result || latestRun?.detail || architectureTaskOutcome?.summary || 'Awaiting the next self-improvement result.',
           retryHint: durable?.retry_hint || (blocked ? 'Retry the mission after preparing the smallest safe patch.' : undefined),
+          nextActionLabel: typeof durable?.next_action?.label === 'string' ? durable.next_action.label : undefined,
+          resultMeta: summarizeMissionMeta(durable?.result_data),
           actionLabel: blocked ? 'Load Repair' : selfImprovePatchPlan ? 'Load Plan' : 'Load Brief',
           action: () =>
             blocked
@@ -1592,6 +1598,8 @@ export default function JarvisHudDashboard() {
             : 'Open Core Agents and watch the delegated work progress.'),
           result: durable?.result || architectureTaskOutcome?.summary || 'No planner/executor outcome reported yet.',
           retryHint: durable?.retry_hint || (blocked ? 'Retry after clarifying the brief or reducing mission scope.' : undefined),
+          nextActionLabel: typeof durable?.next_action?.label === 'string' ? durable.next_action.label : undefined,
+          resultMeta: summarizeMissionMeta(durable?.result_data),
           actionLabel: blocked ? 'Retry Mission' : 'Open Core Agents',
           action: () =>
             blocked && selfImproveBrief
@@ -1622,6 +1630,8 @@ export default function JarvisHudDashboard() {
             visionSignals?.summary ||
             'No resolved visual action yet.',
           retryHint: durable?.retry_hint || undefined,
+          nextActionLabel: typeof durable?.next_action?.label === 'string' ? durable.next_action.label : undefined,
+          resultMeta: summarizeMissionMeta(durable?.result_data),
           actionLabel: topVisualAction?.desktop_intent ? 'Stage Desktop' : 'Load Visual',
           action: () =>
             topVisualAction?.desktop_intent
@@ -1650,6 +1660,8 @@ export default function JarvisHudDashboard() {
               : 'Upload documents and run analysis.'),
           result: durable?.result || documentBrief?.details || 'Awaiting the next document result.',
           retryHint: durable?.retry_hint || undefined,
+          nextActionLabel: typeof durable?.next_action?.label === 'string' ? durable.next_action.label : undefined,
+          resultMeta: summarizeMissionMeta(durable?.result_data),
           actionLabel: documentAnalysis ? 'Load Brief' : 'Open Intel',
           action: () => (documentBrief ? injectCommand(documentBrief.prompt) : setFocusMode(false)),
       });
@@ -1704,6 +1716,12 @@ export default function JarvisHudDashboard() {
           handledFollowup = true;
         } else if (followup.kind === 'prompt') {
           injectCommand(followup.content);
+          handledFollowup = true;
+        } else if (followup.kind === 'task') {
+          await createFollowUpTask(
+            String(followup.label || mission.summary || 'Mission follow-up'),
+            followup.content,
+          );
           handledFollowup = true;
         }
       }
@@ -2148,7 +2166,11 @@ export default function JarvisHudDashboard() {
     return [
       {
         label: 'Email Drafts',
-        value: connectorSummary.emailReady ? 'Ready' : 'Not connected',
+        value: connectorSummary.emailReady
+          ? connectorSummary.emailProvider === 'outlook'
+            ? 'Outlook draft path'
+            : 'Gmail draft path'
+          : 'Not connected',
       },
       {
         label: 'Inbox Mutations',
@@ -2156,7 +2178,7 @@ export default function JarvisHudDashboard() {
       },
       {
         label: 'Calendar Create',
-        value: googleCalendarConnected ? 'Google path ready' : outlookConnected ? 'Outlook context only' : 'Limited',
+        value: googleCalendarConnected ? 'Google path ready' : outlookConnected ? 'Outlook draft path' : 'Limited',
       },
       {
         label: 'Task Create',
@@ -2175,14 +2197,18 @@ export default function JarvisHudDashboard() {
           ready: false,
           label: 'Connect Gmail or Outlook to stage email drafts.',
           button: 'Email Source Needed',
+          provider: '',
         };
       }
+      const preferredProvider = connectorSummary.emailProvider || (gmailConnected ? 'gmail' : 'outlook');
       return {
         ready: true,
-        label: gmailConnected
-          ? 'Email actions can proceed through the Gmail path when scopes allow.'
-          : 'Email draft staging is available. Direct send may depend on provider support.',
+        label:
+          preferredProvider === 'gmail'
+            ? 'Email actions can proceed through the Gmail path when scopes allow.'
+            : 'Email draft staging is available through Outlook. Approval will keep this in draft-ready mode when direct send is unavailable.',
         button: 'Stage for Approval',
+        provider: preferredProvider === 'gmail' ? 'Gmail' : 'Outlook',
       };
     }
 
@@ -2191,6 +2217,7 @@ export default function JarvisHudDashboard() {
         ready: true,
         label: 'Calendar actions can attempt direct Google Calendar creation.',
         button: 'Stage for Approval',
+        provider: 'Google Calendar',
       };
     }
     if (outlookConnected) {
@@ -2198,14 +2225,17 @@ export default function JarvisHudDashboard() {
         ready: true,
         label: 'Calendar planning is available. Outlook may still require manual create after approval.',
         button: 'Stage for Approval',
+        provider: 'Outlook',
       };
     }
     return {
       ready: false,
       label: 'Connect Google Calendar or Outlook to stage calendar actions.',
       button: 'Calendar Source Needed',
+      provider: '',
     };
-  }, [actionMode, connectedConnectorIds, connectorSummary.emailReady]);
+  }, [actionMode, connectedConnectorIds, connectorSummary.emailProvider, connectorSummary.emailReady]);
+
   const apiBase = useMemo(() => getApiBase(), []);
 
   useEffect(() => {
@@ -2543,6 +2573,27 @@ export default function JarvisHudDashboard() {
       return `${honorific}, ${cleaned}`;
     }
     return cleaned;
+  }
+
+  async function playHudSpeech(text: string, purpose: 'digest' | 'announcement' | 'reply' = 'reply') {
+    if (!speechProfile || !canAutoSpeak) return false;
+    const spoken = buildSpokenLine(text, purpose);
+    if (!spoken) return false;
+    const blob = await synthesizeSpeech({
+      text: spoken,
+      backend: speechProfile.reply_backend,
+      voice_id: speechProfile.reply_voice_id,
+      speed: voicePersona.speed,
+      output_format: 'wav',
+    });
+    audioElementRef.current?.pause();
+    if (audioUrlRef.current) URL.revokeObjectURL(audioUrlRef.current);
+    const url = URL.createObjectURL(blob);
+    audioUrlRef.current = url;
+    const audio = new Audio(url);
+    audioElementRef.current = audio;
+    await audio.play().catch(() => {});
+    return true;
   }
 
   async function classifyIntentCommand() {
@@ -4567,7 +4618,7 @@ export default function JarvisHudDashboard() {
           recipient: emailRecipient,
           subject: emailSubject,
           body: emailBody,
-          provider: 'gmail',
+          provider: connectorSummary.emailProvider || 'gmail',
         });
       } else {
         next = await stageCalendarBrief({
@@ -4758,26 +4809,15 @@ export default function JarvisHudDashboard() {
   const durableMeetings = durableOperatorMemory?.meetings || {};
 
   useEffect(() => {
-    if (!speechProfile?.auto_speak || !voiceLoop?.active) return;
+    if (!canAutoSpeak) return;
     const text = latestAssistantMessage?.content?.trim();
     if (!text || text === lastSpokenMessageRef.current) return;
 
     let cancelled = false;
-    synthesizeSpeech({
-      text,
-      backend: speechProfile.reply_backend,
-      voice_id: speechProfile.reply_voice_id,
-      speed: speechProfile.reply_speed,
-      output_format: 'wav',
-    })
-      .then((blob) => {
+    playHudSpeech(text, 'reply')
+      .then((played) => {
         if (cancelled) return;
-        if (audioUrlRef.current) URL.revokeObjectURL(audioUrlRef.current);
-        const url = URL.createObjectURL(blob);
-        audioUrlRef.current = url;
-        const audio = new Audio(url);
-        audioElementRef.current = audio;
-        audio.play().catch(() => {});
+        if (!played) return;
         lastSpokenMessageRef.current = text;
       })
       .catch(() => {});
@@ -4785,7 +4825,7 @@ export default function JarvisHudDashboard() {
     return () => {
       cancelled = true;
     };
-  }, [latestAssistantMessage?.content, speechProfile, voiceLoop?.active]);
+  }, [canAutoSpeak, latestAssistantMessage?.content, playHudSpeech]);
 
   return (
     <section className="relative min-h-screen overflow-hidden bg-[#02050d] text-slate-100">

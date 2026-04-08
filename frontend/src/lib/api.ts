@@ -558,6 +558,13 @@ export interface DurableOperatorMemory {
     next_step: string;
     result: string;
     retry_hint: string;
+    result_data?: Record<string, unknown>;
+    next_action?: {
+      kind: string;
+      content?: string;
+      label?: string;
+      [key: string]: unknown;
+    };
     updated_at: string;
   }>;
   explicit_memories?: Array<{
@@ -1566,6 +1573,8 @@ export async function updateOperatorMission(body: {
   next_step?: string;
   result?: string;
   retry_hint?: string;
+  result_data?: Record<string, unknown>;
+  next_action?: Record<string, unknown>;
   updated_at?: string;
 }): Promise<DurableOperatorMemory> {
   const res = await fetch(`${getBase()}/v1/operator-memory/mission`, {
@@ -1598,12 +1607,20 @@ export async function actOnOperatorMission(body: {
     next_step: string;
     result: string;
     retry_hint: string;
+    result_data?: Record<string, unknown>;
+    next_action?: {
+      kind: string;
+      content?: string;
+      label?: string;
+      [key: string]: unknown;
+    };
     updated_at?: string;
   };
   followup?: {
-    kind: 'brief' | 'prompt';
+    kind: 'brief' | 'prompt' | string;
     content: string;
     label?: string;
+    [key: string]: unknown;
   } | null;
 }> {
   const res = await fetch(`${getBase()}/v1/operator-memory/mission/action`, {

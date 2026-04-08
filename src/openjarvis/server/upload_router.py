@@ -6,7 +6,7 @@ import io
 import logging
 import os
 import uuid
-from typing import List, Optional
+from typing import Any, List, Optional
 
 from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import StreamingResponse
@@ -200,10 +200,26 @@ def _update_document_mission(
     status: str = "active",
     phase: str = "plan",
     retry_hint: str = "",
+    result_data: dict[str, Any] | None = None,
+    next_action: dict[str, Any] | None = None,
 ) -> None:
     operator_memory = getattr(request.app.state, "operator_memory", None)
     if operator_memory is None:
         return
+    mission_result_data = {
+        "summary": summary,
+        "result": result,
+        "phase": phase,
+        "status": status,
+        **(result_data or {}),
+    }
+    mode = str(mission_result_data.get("mode", "")).strip().lower()
+    default_kind = "brief" if mode in {"business_review", "finance_review", "investment_memo", "kpi_extract"} else "prompt"
+    default_label = (
+        f"{title} Memo"
+        if default_kind == "brief" and status == "complete"
+        else title
+    )
     try:
         operator_memory.update_mission(
             "document-mission",
@@ -216,6 +232,13 @@ def _update_document_mission(
                 "next_step": next_step,
                 "result": result,
                 "retry_hint": retry_hint,
+                "result_data": mission_result_data,
+                "next_action": next_action
+                or {
+                    "kind": default_kind,
+                    "content": result or next_step or summary,
+                    "label": default_label,
+                },
             },
         )
     except Exception:

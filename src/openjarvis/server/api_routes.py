@@ -243,6 +243,8 @@ class OperatorMissionUpdateRequest(BaseModel):
     next_step: Optional[str] = None
     result: Optional[str] = None
     retry_hint: Optional[str] = None
+    result_data: Optional[Dict[str, Any]] = None
+    next_action: Optional[Dict[str, Any]] = None
     updated_at: Optional[str] = None
 
 
@@ -254,12 +256,18 @@ class OperatorMissionActionRequest(BaseModel):
     retry_hint: Optional[str] = None
 
 
-def _mission_followup_payload(mission: dict[str, Any], action: str) -> dict[str, str] | None:
+def _mission_followup_payload(mission: dict[str, Any], action: str) -> dict[str, Any] | None:
     domain = str(mission.get("domain", "")).strip().lower()
     summary = str(mission.get("summary", "")).strip()
     result = str(mission.get("result", "")).strip()
     next_step = str(mission.get("next_step", "")).strip()
     title = str(mission.get("title", "mission")).strip() or "mission"
+    result_data = mission.get("result_data") if isinstance(mission.get("result_data"), dict) else {}
+    next_action = mission.get("next_action")
+    if action in {"resume", "retry"} and isinstance(next_action, dict) and next_action.get("kind"):
+        enriched = dict(next_action)
+        enriched.setdefault("label", title)
+        return enriched
 
     if action not in {"resume", "retry"}:
         return None
@@ -282,6 +290,9 @@ def _mission_followup_payload(mission: dict[str, Any], action: str) -> dict[str,
         content = result or summary or next_step
         if not content:
             return None
+        mode = str(result_data.get("mode", "")).strip().lower()
+        if mode in {"business_review", "finance_review", "investment_memo", "kpi_extract"}:
+            return {"kind": "brief", "content": content, "label": f"{title} Memo"}
         return {"kind": "prompt", "content": content, "label": title}
     return None
 
@@ -1735,6 +1746,7 @@ async def operator_memory_act_on_mission(
         "complete": f"Mission completed: {current.get('title', 'mission')}.",
         "block": f"Mission blocked: {current.get('title', 'mission')}.",
     }
+    followup = _mission_followup_payload(current, action)
     try:
         updated = manager.update_mission(
             req.id,
@@ -1747,6 +1759,8 @@ async def operator_memory_act_on_mission(
                 "next_step": str(current.get("next_step", "")).strip(),
                 "result": (req.result or str(current.get("result", ""))).strip(),
                 "retry_hint": (req.retry_hint or str(current.get("retry_hint", ""))).strip(),
+                "result_data": dict(current.get("result_data") or {}) if isinstance(current.get("result_data"), dict) else {},
+                "next_action": followup or (dict(current.get("next_action") or {}) if isinstance(current.get("next_action"), dict) else {}),
             },
         )
         updated_mission = next(
@@ -2610,6 +2624,17 @@ def _update_visual_mission(
             "next_step": next_step,
             "result": result,
             "retry_hint": retry_hint,
+            "result_data": {
+                "summary": summary,
+                "result": result,
+                "phase": phase,
+                "status": status,
+            },
+            "next_action": {
+                "kind": "prompt",
+                "content": result or next_step or summary,
+                "label": "Visual Follow-up",
+            },
         },
     )
 
@@ -2660,6 +2685,20 @@ def _update_self_improve_mission(
             "next_step": next_step,
             "result": result,
             "retry_hint": retry_hint,
+            "result_data": {
+                "summary": summary,
+                "result": result,
+                "phase": phase,
+                "status": status,
+                "file_path": str(current.get("result_data", {}).get("file_path", "")).strip()
+                if isinstance(current.get("result_data"), dict)
+                else "",
+            },
+            "next_action": {
+                "kind": "prompt",
+                "content": result or next_step or summary,
+                "label": "Self-Improve Step",
+            },
         },
     )
 
