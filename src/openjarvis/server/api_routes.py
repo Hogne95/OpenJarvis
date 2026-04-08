@@ -219,6 +219,30 @@ class VisionAnalyzeRequest(BaseModel):
     label: Optional[str] = None
 
 
+class VisionAnalyzeMultiRequest(BaseModel):
+    images: list[dict[str, str]]
+    note: Optional[str] = None
+    label: Optional[str] = None
+
+
+class VisionExtractRequest(BaseModel):
+    image_data_url: str
+    note: Optional[str] = None
+    label: Optional[str] = None
+
+
+class VisionExtractMultiRequest(BaseModel):
+    images: list[dict[str, str]]
+    note: Optional[str] = None
+    label: Optional[str] = None
+
+
+class VisionSuggestActionsRequest(BaseModel):
+    images: list[dict[str, str]]
+    note: Optional[str] = None
+    label: Optional[str] = None
+
+
 # ---- Agent routes ----
 
 agents_router = APIRouter(prefix="/v1/agents", tags=["agents"])
@@ -1500,6 +1524,269 @@ async def vision_analyze(req: VisionAnalyzeRequest):
         "content": content,
         "model": os.environ.get("OPENJARVIS_VISION_MODEL", "gpt-4o-mini"),
         "label": req.label or "",
+    }
+
+
+@vision_router.post("/analyze-multi")
+async def vision_analyze_multi(req: VisionAnalyzeMultiRequest):
+    api_key = os.environ.get("OPENAI_API_KEY", "").strip()
+    if not api_key:
+        raise HTTPException(status_code=503, detail="Vision analysis requires OPENAI_API_KEY")
+    if not req.images:
+        raise HTTPException(status_code=400, detail="At least one image is required for multi-screen analysis")
+    try:
+        from openai import OpenAI
+    except ImportError as exc:
+        raise HTTPException(status_code=503, detail=f"openai package unavailable: {exc}") from exc
+
+    prompt = (
+        "You are JARVIS multi-screen visual analysis. Reply in English only. "
+        "Analyze the provided images as parts of one desktop setup. "
+        "Produce a concise operator brief with these sections: "
+        "Overall Summary, Screen-by-Screen Notes, Cross-Screen Risks, Recommended Next Action. "
+        "Reference individual screens by their labels when useful. "
+        "If the user's note gives extra context, incorporate it."
+    )
+    if req.note:
+        prompt += f"\n\nUser context note: {req.note.strip()}"
+    if req.label:
+        prompt += f"\nSession label: {req.label.strip()}"
+
+    user_content: list[dict[str, Any]] = [
+        {"type": "text", "text": "Analyze this full desktop setup for my JARVIS HUD."}
+    ]
+    for index, image in enumerate(req.images, start=1):
+        label = (image.get("label") or f"Screen {index}").strip()
+        user_content.append({"type": "text", "text": f"{label}"})
+        user_content.append(
+            {
+                "type": "image_url",
+                "image_url": {"url": image.get("image_data_url", "")},
+            }
+        )
+
+    try:
+        client = OpenAI(api_key=api_key)
+        response = client.chat.completions.create(
+            model=os.environ.get("OPENJARVIS_VISION_MODEL", "gpt-4o-mini"),
+            messages=[
+                {"role": "system", "content": prompt},
+                {
+                    "role": "user",
+                    "content": user_content,
+                },
+            ],
+            temperature=0.2,
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"Vision analysis failed: {exc}") from exc
+
+    content = ""
+    choice = response.choices[0] if response.choices else None
+    if choice and choice.message:
+        content = (choice.message.content or "").strip()
+    return {
+        "content": content,
+        "model": os.environ.get("OPENJARVIS_VISION_MODEL", "gpt-4o-mini"),
+        "label": req.label or "",
+        "screen_count": len(req.images),
+    }
+
+
+@vision_router.post("/extract-text")
+async def vision_extract_text(req: VisionExtractRequest):
+    api_key = os.environ.get("OPENAI_API_KEY", "").strip()
+    if not api_key:
+        raise HTTPException(status_code=503, detail="Vision text extraction requires OPENAI_API_KEY")
+    try:
+        from openai import OpenAI
+    except ImportError as exc:
+        raise HTTPException(status_code=503, detail=f"openai package unavailable: {exc}") from exc
+
+    prompt = (
+        "You are JARVIS OCR extraction. Reply in English only. "
+        "Extract the visible text from the provided image as accurately as possible. "
+        "Format the response with these sections: Summary, Extracted Text, Actionable Highlights. "
+        "Preserve meaningful line breaks when useful. "
+        "If the user's note gives extra context, use it to prioritize what to extract."
+    )
+    if req.note:
+        prompt += f"\n\nUser context note: {req.note.strip()}"
+    if req.label:
+        prompt += f"\nVisual label: {req.label.strip()}"
+
+    try:
+        client = OpenAI(api_key=api_key)
+        response = client.chat.completions.create(
+            model=os.environ.get("OPENJARVIS_VISION_MODEL", "gpt-4o-mini"),
+            messages=[
+                {"role": "system", "content": prompt},
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": "Extract the visible text from this visual for my JARVIS HUD."},
+                        {"type": "image_url", "image_url": {"url": req.image_data_url}},
+                    ],
+                },
+            ],
+            temperature=0.1,
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"Vision text extraction failed: {exc}") from exc
+
+    content = ""
+    choice = response.choices[0] if response.choices else None
+    if choice and choice.message:
+        content = (choice.message.content or "").strip()
+    return {
+        "content": content,
+        "model": os.environ.get("OPENJARVIS_VISION_MODEL", "gpt-4o-mini"),
+        "label": req.label or "",
+    }
+
+
+@vision_router.post("/extract-text-multi")
+async def vision_extract_text_multi(req: VisionExtractMultiRequest):
+    api_key = os.environ.get("OPENAI_API_KEY", "").strip()
+    if not api_key:
+        raise HTTPException(status_code=503, detail="Vision text extraction requires OPENAI_API_KEY")
+    if not req.images:
+        raise HTTPException(status_code=400, detail="At least one image is required for multi-screen text extraction")
+    try:
+        from openai import OpenAI
+    except ImportError as exc:
+        raise HTTPException(status_code=503, detail=f"openai package unavailable: {exc}") from exc
+
+    prompt = (
+        "You are JARVIS multi-screen OCR extraction. Reply in English only. "
+        "Extract the visible text from the provided images as parts of one desktop setup. "
+        "Format the response with these sections: Overall Summary, Screen-by-Screen Text, Actionable Highlights. "
+        "Reference screens by label and preserve important line breaks when useful. "
+        "If the user's note gives extra context, use it to prioritize extraction."
+    )
+    if req.note:
+        prompt += f"\n\nUser context note: {req.note.strip()}"
+    if req.label:
+        prompt += f"\nSession label: {req.label.strip()}"
+
+    user_content: list[dict[str, Any]] = [
+        {"type": "text", "text": "Extract the visible text from this desktop setup for my JARVIS HUD."}
+    ]
+    for index, image in enumerate(req.images, start=1):
+        label = (image.get("label") or f"Screen {index}").strip()
+        user_content.append({"type": "text", "text": f"{label}"})
+        user_content.append({"type": "image_url", "image_url": {"url": image.get("image_data_url", "")}})
+
+    try:
+        client = OpenAI(api_key=api_key)
+        response = client.chat.completions.create(
+            model=os.environ.get("OPENJARVIS_VISION_MODEL", "gpt-4o-mini"),
+            messages=[
+                {"role": "system", "content": prompt},
+                {"role": "user", "content": user_content},
+            ],
+            temperature=0.1,
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"Vision text extraction failed: {exc}") from exc
+
+    content = ""
+    choice = response.choices[0] if response.choices else None
+    if choice and choice.message:
+        content = (choice.message.content or "").strip()
+    return {
+        "content": content,
+        "model": os.environ.get("OPENJARVIS_VISION_MODEL", "gpt-4o-mini"),
+        "label": req.label or "",
+        "screen_count": len(req.images),
+    }
+
+
+@vision_router.post("/suggest-actions")
+async def vision_suggest_actions(req: VisionSuggestActionsRequest):
+    api_key = os.environ.get("OPENAI_API_KEY", "").strip()
+    if not api_key:
+        raise HTTPException(status_code=503, detail="Vision action suggestions require OPENAI_API_KEY")
+    if not req.images:
+        raise HTTPException(status_code=400, detail="At least one image is required for vision action suggestions")
+    try:
+        from openai import OpenAI
+    except ImportError as exc:
+        raise HTTPException(status_code=503, detail=f"openai package unavailable: {exc}") from exc
+
+    prompt = (
+        "You are JARVIS visual action planning. Reply in JSON only. "
+        "Analyze the provided image or screen set and return an object with one key: actions. "
+        "actions must be an array of up to 3 objects with keys: title, detail, prompt, priority. "
+        "title should be short. detail should explain the observation. "
+        "prompt should be a concrete next-step command-deck prompt in English. "
+        "priority must be an integer from 1 to 100."
+    )
+    if req.note:
+        prompt += f"\n\nUser context note: {req.note.strip()}"
+    if req.label:
+        prompt += f"\nSession label: {req.label.strip()}"
+
+    user_content: list[dict[str, Any]] = [
+        {"type": "text", "text": "Suggest the next operator actions for this JARVIS visual context."}
+    ]
+    for index, image in enumerate(req.images, start=1):
+        label = (image.get("label") or f"Screen {index}").strip()
+        user_content.append({"type": "text", "text": f"{label}"})
+        user_content.append({"type": "image_url", "image_url": {"url": image.get("image_data_url", "")}})
+
+    try:
+        client = OpenAI(api_key=api_key)
+        response = client.chat.completions.create(
+            model=os.environ.get("OPENJARVIS_VISION_MODEL", "gpt-4o-mini"),
+            messages=[
+                {"role": "system", "content": prompt},
+                {"role": "user", "content": user_content},
+            ],
+            temperature=0.2,
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"Vision action suggestion failed: {exc}") from exc
+
+    content = ""
+    choice = response.choices[0] if response.choices else None
+    if choice and choice.message:
+        content = (choice.message.content or "").strip()
+
+    import json
+
+    actions: list[dict[str, Any]] = []
+    try:
+        parsed = json.loads(content)
+        raw_actions = parsed.get("actions", []) if isinstance(parsed, dict) else []
+        if isinstance(raw_actions, list):
+            for item in raw_actions[:3]:
+                if not isinstance(item, dict):
+                    continue
+                actions.append(
+                    {
+                        "title": str(item.get("title", "")).strip() or "Visual Action",
+                        "detail": str(item.get("detail", "")).strip(),
+                        "prompt": str(item.get("prompt", "")).strip(),
+                        "priority": int(item.get("priority", 50)),
+                    }
+                )
+    except Exception:
+        if content:
+            actions.append(
+                {
+                    "title": "Visual Follow-up",
+                    "detail": "JARVIS generated a freeform follow-up suggestion.",
+                    "prompt": content,
+                    "priority": 50,
+                }
+            )
+
+    return {
+        "actions": actions,
+        "model": os.environ.get("OPENJARVIS_VISION_MODEL", "gpt-4o-mini"),
+        "label": req.label or "",
+        "screen_count": len(req.images),
     }
 
 

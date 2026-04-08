@@ -1028,6 +1028,14 @@ def _parse_intent(text: str) -> ParsedIntent:
             risk="low",
         )
 
+    if re.match(r"^(what'?s on my screens|describe my screens|screen overview|analyze my screens|all screens)$", lowered):
+        return ParsedIntent(
+            type="vision",
+            action="capture_screens",
+            client_action="capture_screens",
+            risk="low",
+        )
+
     if re.match(
         r"^(analyze|describe|inspect)(?: this)? (image|photo|picture|screenshot)$",
         lowered,

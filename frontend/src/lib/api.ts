@@ -588,6 +588,26 @@ export interface VisionAnalysisResult {
   content: string;
   model: string;
   label: string;
+  screen_count?: number;
+}
+
+export interface VisionTextExtractionResult {
+  content: string;
+  model: string;
+  label: string;
+  screen_count?: number;
+}
+
+export interface VisionSuggestedActionsResult {
+  actions: Array<{
+    title: string;
+    detail: string;
+    prompt: string;
+    priority: number;
+  }>;
+  model: string;
+  label: string;
+  screen_count?: number;
 }
 
 export interface DesktopState {
@@ -1345,6 +1365,83 @@ export async function analyzeVision(body: {
   if (!res.ok) {
     const detail = await res.json().catch(() => ({ detail: res.statusText }));
     throw new Error(detail.detail || `Vision analysis failed: ${res.status}`);
+  }
+  return res.json();
+}
+
+export async function analyzeVisionMulti(body: {
+  images: Array<{
+    image_data_url: string;
+    label: string;
+  }>;
+  note?: string;
+  label?: string;
+}): Promise<VisionAnalysisResult> {
+  const res = await fetch(`${getBase()}/v1/vision/analyze-multi`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const detail = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(detail.detail || `Multi-screen vision analysis failed: ${res.status}`);
+  }
+  return res.json();
+}
+
+export async function extractVisionText(body: {
+  image_data_url: string;
+  note?: string;
+  label?: string;
+}): Promise<VisionTextExtractionResult> {
+  const res = await fetch(`${getBase()}/v1/vision/extract-text`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const detail = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(detail.detail || `Vision text extraction failed: ${res.status}`);
+  }
+  return res.json();
+}
+
+export async function extractVisionTextMulti(body: {
+  images: Array<{
+    image_data_url: string;
+    label: string;
+  }>;
+  note?: string;
+  label?: string;
+}): Promise<VisionTextExtractionResult> {
+  const res = await fetch(`${getBase()}/v1/vision/extract-text-multi`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const detail = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(detail.detail || `Multi-screen vision text extraction failed: ${res.status}`);
+  }
+  return res.json();
+}
+
+export async function suggestVisionActions(body: {
+  images: Array<{
+    image_data_url: string;
+    label: string;
+  }>;
+  note?: string;
+  label?: string;
+}): Promise<VisionSuggestedActionsResult> {
+  const res = await fetch(`${getBase()}/v1/vision/suggest-actions`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const detail = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(detail.detail || `Vision action suggestions failed: ${res.status}`);
   }
   return res.json();
 }
