@@ -30,6 +30,8 @@ import {
   approveActionCenterItem,
   analyzeVision,
   analyzeVisionMulti,
+  extractVisionSignals,
+  extractVisionUiTargets,
   extractVisionText,
   extractVisionTextMulti,
   suggestVisionActions,
@@ -54,6 +56,8 @@ import {
   fetchWorkspaceChecks,
   fetchWorkspaceRepos,
   fetchTaskSummary,
+  planVisionUiAction,
+  verifyVisionUiTarget,
   fetchWorkspaceSummary,
   fetchVoiceLoopStatus,
   fetchWorkbenchStatus,
@@ -97,8 +101,12 @@ import {
   type JarvisIntent,
   type JarvisIntentExecution,
   type VisionAnalysisResult,
+  type VisionSignalsResult,
   type VisionTextExtractionResult,
   type VisionSuggestedActionsResult,
+  type VisionUiActionPlanResult,
+  type VisionUiTargetsResult,
+  type VisionUiVerifyResult,
   type ReminderItem,
   type SpeechProfile,
   type TaskSummaryItem,
@@ -434,8 +442,12 @@ export default function JarvisHudDashboard() {
   const [intentPreview, setIntentPreview] = useState<JarvisIntent | null>(null);
   const [intentExecution, setIntentExecution] = useState<JarvisIntentExecution | null>(null);
   const [visionAnalysis, setVisionAnalysis] = useState<VisionAnalysisResult | null>(null);
+  const [visionSignals, setVisionSignals] = useState<VisionSignalsResult | null>(null);
   const [visionTextExtraction, setVisionTextExtraction] = useState<VisionTextExtractionResult | null>(null);
   const [visionSuggestedActions, setVisionSuggestedActions] = useState<VisionSuggestedActionsResult | null>(null);
+  const [visionUiTargets, setVisionUiTargets] = useState<VisionUiTargetsResult | null>(null);
+  const [visionUiPlan, setVisionUiPlan] = useState<VisionUiActionPlanResult | null>(null);
+  const [visionUiVerify, setVisionUiVerify] = useState<VisionUiVerifyResult | null>(null);
   const [visionBusy, setVisionBusy] = useState(false);
   const [screenSnapshot, setScreenSnapshot] = useState<{
     dataUrl: string;
@@ -1175,6 +1187,105 @@ export default function JarvisHudDashboard() {
       });
     }
 
+    if (visionTextExtraction?.content.trim()) {
+      const firstLine = visionTextExtraction.content.split('\n').find((line) => line.trim()) || 'Visible text extracted.';
+      items.push({
+        id: `vision-text-${screenSnapshot?.capturedAt || 'current'}`,
+        priority: 53,
+        label: 'Visible Text',
+        title: screenSnapshot?.label || 'Visual text',
+        detail: firstLine,
+        actionLabel: 'Load Text',
+        action: () =>
+          injectCommand(
+            `I extracted visible text from "${screenSnapshot?.label || 'this visual'}".\n${visionTextExtraction.content}\nSummarize what matters and turn it into the next concrete action.`,
+          ),
+      });
+    }
+
+    if (visionSignals && (visionSignals.blockers.length || visionSignals.deadlines.length || visionSignals.attention_items.length)) {
+      const topSignal =
+        visionSignals.blockers[0] || visionSignals.deadlines[0] || visionSignals.attention_items[0] || visionSignals.summary;
+      items.push({
+        id: `vision-signals-${screenSnapshot?.capturedAt || 'current'}`,
+        priority: visionSignals.blockers.length ? 58 : visionSignals.deadlines.length ? 57 : 52,
+        label: 'Visual Signals',
+        title: screenSnapshot?.label || 'Screen signals',
+        detail: topSignal || 'Visual signals ready.',
+        actionLabel: 'Load Signals',
+        action: () =>
+          injectCommand(
+            `I extracted structured visual signals from "${screenSnapshot?.label || 'this visual'}".\nSummary: ${visionSignals.summary || 'No summary.'}\nBlockers: ${visionSignals.blockers.join(' | ') || 'None'}\nDeadlines: ${visionSignals.deadlines.join(' | ') || 'None'}\nAttention items: ${visionSignals.attention_items.join(' | ') || 'None'}\nTurn this into the next concrete action.`,
+          ),
+      });
+    }
+
+    if (visionSuggestedActions?.actions?.length) {
+      const topVisualAction = [...visionSuggestedActions.actions].sort((left, right) => right.priority - left.priority)[0];
+      if (topVisualAction) {
+        items.push({
+          id: `vision-action-${topVisualAction.title}-${screenSnapshot?.capturedAt || 'current'}`,
+          priority: 56,
+          label: 'Visual Action',
+          title: topVisualAction.title,
+          detail: topVisualAction.detail,
+          actionLabel: topVisualAction.desktop_intent ? 'Stage Desktop' : 'Load Prompt',
+          action: () =>
+            topVisualAction.desktop_intent
+              ? stageVisualDesktopIntent(topVisualAction.desktop_intent)
+              : injectCommand(topVisualAction.prompt),
+        });
+      }
+    }
+
+    if (visionUiTargets?.targets?.length) {
+      const topVisualTarget = [...visionUiTargets.targets].sort((left, right) => right.confidence - left.confidence)[0];
+      if (topVisualTarget) {
+        items.push({
+          id: `vision-target-${topVisualTarget.label}-${screenSnapshot?.capturedAt || 'current'}`,
+          priority: topVisualTarget.control_type === 'alert' ? 57 : 55,
+          label: 'UI Target',
+          title: topVisualTarget.label,
+          detail: topVisualTarget.detail || `${topVisualTarget.control_type} detected on screen.`,
+          actionLabel: topVisualTarget.desktop_intent ? 'Stage Desktop' : 'Load Target',
+          action: () =>
+            topVisualTarget.desktop_intent
+              ? stageVisualDesktopIntent(topVisualTarget.desktop_intent)
+              : injectCommand(topVisualTarget.prompt),
+        });
+      }
+    }
+
+    if (visionUiPlan?.summary.trim()) {
+      items.push({
+        id: `vision-plan-${visionUiPlan.target_label}-${screenSnapshot?.capturedAt || 'current'}`,
+        priority: 56,
+        label: 'UI Plan',
+        title: visionUiPlan.target_label,
+        detail: visionUiPlan.summary,
+        actionLabel: visionUiPlan.desktop_intent ? 'Stage Desktop' : 'Load Plan',
+        action: () =>
+          visionUiPlan.desktop_intent
+            ? stageVisualDesktopIntent(visionUiPlan.desktop_intent)
+            : injectCommand(visionUiPlan.prompt || visionUiPlan.steps.join('\n')),
+      });
+    }
+
+    if (visionUiVerify?.summary.trim()) {
+      items.push({
+        id: `vision-verify-${visionUiVerify.target_label}-${screenSnapshot?.capturedAt || 'current'}`,
+        priority: visionUiVerify.risk_level === 'high' ? 58 : 55,
+        label: 'UI Verify',
+        title: visionUiVerify.target_label,
+        detail: visionUiVerify.summary,
+        actionLabel: 'Load Verify',
+        action: () =>
+          injectCommand(
+            `I verified the visual UI target "${visionUiVerify.target_label}".\nSummary: ${visionUiVerify.summary}\nConfidence: ${visionUiVerify.confidence}\nRisk: ${visionUiVerify.risk_level}\nChecks: ${visionUiVerify.verification_checks.join(' | ') || 'None'}\nEvidence: ${visionUiVerify.evidence.join(' | ') || 'None'}\nTurn this into the safest next action.`,
+          ),
+      });
+    }
+
     if (nextCodingTask) {
       items.push({
         id: `coding-task-${nextCodingTask.id}`,
@@ -1200,7 +1311,7 @@ export default function JarvisHudDashboard() {
     }
 
     return items.sort((left, right) => right.priority - left.priority).slice(0, 6);
-  }, [activeAutomationAlerts, editorFilePath, gitCommitMessage, inboxFocusQueue, latestCodeResult?.file_path, latestValidationFailure, latestValidationSuccess, nextCodingTask, nextReviewQueueItem, pendingAction, pendingCodeEdit, pendingWorkbench, prepQueue, screenSnapshot?.capturedAt, screenSnapshot?.label, visionAnalysis?.content]);
+  }, [activeAutomationAlerts, editorFilePath, gitCommitMessage, inboxFocusQueue, latestCodeResult?.file_path, latestValidationFailure, latestValidationSuccess, nextCodingTask, nextReviewQueueItem, pendingAction, pendingCodeEdit, pendingWorkbench, prepQueue, screenSnapshot?.capturedAt, screenSnapshot?.label, visionAnalysis?.content, visionSignals, visionSuggestedActions?.actions, visionTextExtraction?.content, visionUiPlan?.summary, visionUiPlan?.target_label, visionUiTargets?.targets, visionUiVerify?.summary, visionUiVerify?.risk_level, visionUiVerify?.target_label]);
   const connectorCapabilities = useMemo(() => {
     const ids = new Set(connectedConnectorIds);
     const gmailConnected = ids.has('gmail') || ids.has('gmail_imap');
@@ -1538,8 +1649,12 @@ export default function JarvisHudDashboard() {
       setScreenSnapshot(nextSnapshot);
       setScreenDeck((current) => (append ? [...current, nextSnapshot] : [nextSnapshot]));
       setVisionAnalysis(null);
+      setVisionSignals(null);
       setVisionTextExtraction(null);
       setVisionSuggestedActions(null);
+      setVisionUiTargets(null);
+      setVisionUiPlan(null);
+      setVisionUiVerify(null);
       setScreenContextNote('');
       setWorkbenchNotice('Screen snapshot captured. Review it in the HUD and load a screen-help prompt when needed.');
       return dataUrl;
@@ -1589,8 +1704,12 @@ export default function JarvisHudDashboard() {
       setScreenSnapshot(nextSnapshot);
       setScreenDeck([nextSnapshot]);
       setVisionAnalysis(null);
+      setVisionSignals(null);
       setVisionTextExtraction(null);
       setVisionSuggestedActions(null);
+      setVisionUiTargets(null);
+      setVisionUiPlan(null);
+      setVisionUiVerify(null);
       setScreenContextNote('');
       setWorkbenchNotice('Image uploaded into the visual console. Add context or load an analysis prompt.');
       return dataUrl;
@@ -1634,12 +1753,30 @@ export default function JarvisHudDashboard() {
           setWorkbenchNotice('First screen captured. Use Add Screen to capture the rest of your setup, then run Analyze All.');
         }
       }
+      if (next.status === 'client_action_required' || next.intent.client_action === 'capture_screen_targets') {
+        const captured = await captureScreenSnapshot();
+        if (captured) {
+          await extractVisualUiTargets();
+        }
+      }
+      if (next.status === 'client_action_required' || next.intent.client_action === 'capture_screens_targets') {
+        const first = await captureScreenSnapshot('Screen 1');
+        if (first) {
+          setWorkbenchNotice('First screen captured. Use Add Screen for the rest of your setup, then click Find UI Targets.');
+        }
+      }
       if (next.status === 'client_action_required' || next.intent.client_action === 'upload_image') {
         const uploaded = await uploadVisualSnapshot();
         if (uploaded) {
           injectCommand(
             'I uploaded an image into the HUD. Help me understand what matters in it, then ask one clarifying question before giving step-by-step guidance.',
           );
+        }
+      }
+      if (next.status === 'client_action_required' || next.intent.client_action === 'upload_image_targets') {
+        const uploaded = await uploadVisualSnapshot();
+        if (uploaded) {
+          await extractVisualUiTargets();
         }
       }
       if (
@@ -1764,8 +1901,12 @@ export default function JarvisHudDashboard() {
         },
       ]);
       setVisionAnalysis(null);
+      setVisionSignals(null);
       setVisionTextExtraction(null);
       setVisionSuggestedActions(null);
+      setVisionUiTargets(null);
+      setVisionUiPlan(null);
+      setVisionUiVerify(null);
       setScreenContextNote(observation.note || '');
       setWorkbenchNotice('Visual memory restored into the HUD.');
     } catch (error) {
@@ -1786,8 +1927,12 @@ export default function JarvisHudDashboard() {
         label: screenSnapshot.label,
       });
       setVisionAnalysis(result);
+      setVisionSignals(null);
       setVisionTextExtraction(null);
       setVisionSuggestedActions(null);
+      setVisionUiTargets(null);
+      setVisionUiPlan(null);
+      setVisionUiVerify(null);
       setWorkbenchNotice('Vision analysis complete.');
     } catch (error) {
       setWorkbenchNotice(error instanceof Error ? error.message : 'Vision analysis failed.');
@@ -1819,8 +1964,12 @@ export default function JarvisHudDashboard() {
               label: 'Multi-Screen Session',
             });
       setVisionAnalysis(result);
+      setVisionSignals(null);
       setVisionTextExtraction(null);
       setVisionSuggestedActions(null);
+      setVisionUiTargets(null);
+      setVisionUiPlan(null);
+      setVisionUiVerify(null);
       setWorkbenchNotice(
         screenDeck.length === 1 ? 'Vision analysis complete.' : `Multi-screen analysis complete for ${screenDeck.length} screens.`,
       );
@@ -1845,7 +1994,11 @@ export default function JarvisHudDashboard() {
       });
       setVisionTextExtraction(result);
       setVisionAnalysis(null);
+      setVisionSignals(null);
       setVisionSuggestedActions(null);
+      setVisionUiTargets(null);
+      setVisionUiPlan(null);
+      setVisionUiVerify(null);
       setWorkbenchNotice('Visual text extraction complete.');
     } catch (error) {
       setWorkbenchNotice(error instanceof Error ? error.message : 'Vision text extraction failed.');
@@ -1878,7 +2031,11 @@ export default function JarvisHudDashboard() {
             });
       setVisionTextExtraction(result);
       setVisionAnalysis(null);
+      setVisionSignals(null);
       setVisionSuggestedActions(null);
+      setVisionUiTargets(null);
+      setVisionUiPlan(null);
+      setVisionUiVerify(null);
       setWorkbenchNotice(
         screenDeck.length === 1
           ? 'Visual text extraction complete.'
@@ -1912,6 +2069,28 @@ export default function JarvisHudDashboard() {
     }
   }
 
+  async function rememberVisionResult() {
+    const source = visionAnalysis?.content?.trim() || visionTextExtraction?.content?.trim() || '';
+    if (!source) {
+      setWorkbenchNotice('Run analysis or text extraction first.');
+      return;
+    }
+    setIntentBusy('run');
+    try {
+      const label = screenSnapshot?.label || 'visual result';
+      const next = await executeJarvisIntent(`Remember ${label}: ${source}`);
+      setIntentPreview(next.intent);
+      setIntentExecution(next);
+      const memory = await fetchOperatorMemory().catch(() => null);
+      if (memory) setDurableOperatorMemory(memory);
+      setWorkbenchNotice('Vision result saved to memory.');
+    } catch (error) {
+      setWorkbenchNotice(error instanceof Error ? error.message : 'Unable to remember vision result.');
+    } finally {
+      setIntentBusy(null);
+    }
+  }
+
   async function suggestVisualActions() {
     if (!screenDeck.length) {
       setWorkbenchNotice('Capture at least one screen first.');
@@ -1928,11 +2107,155 @@ export default function JarvisHudDashboard() {
         label: screenDeck.length > 1 ? 'Multi-Screen Session' : screenDeck[0].label,
       });
       setVisionSuggestedActions(result);
+      setVisionSignals(null);
+      setVisionUiTargets(null);
+      setVisionUiPlan(null);
+      setVisionUiVerify(null);
       setWorkbenchNotice(`Visual action suggestions ready${result.actions.length ? ` (${result.actions.length})` : ''}.`);
     } catch (error) {
       setWorkbenchNotice(error instanceof Error ? error.message : 'Vision action suggestions failed.');
     } finally {
       setVisionBusy(false);
+    }
+  }
+
+  async function extractVisualSignals() {
+    if (!screenDeck.length) {
+      setWorkbenchNotice('Capture at least one screen first.');
+      return;
+    }
+    setVisionBusy(true);
+    try {
+      const result = await extractVisionSignals({
+        images: screenDeck.map((item) => ({
+          image_data_url: item.dataUrl,
+          label: item.label,
+        })),
+        note: screenContextNote.trim() || undefined,
+        label: screenDeck.length > 1 ? 'Multi-Screen Session' : screenDeck[0].label,
+      });
+      setVisionSignals(result);
+      setVisionAnalysis(null);
+      setVisionTextExtraction(null);
+      setVisionSuggestedActions(null);
+      setVisionUiTargets(null);
+      setVisionUiPlan(null);
+      setVisionUiVerify(null);
+      setWorkbenchNotice('Visual signals extracted.');
+    } catch (error) {
+      setWorkbenchNotice(error instanceof Error ? error.message : 'Vision signal extraction failed.');
+    } finally {
+      setVisionBusy(false);
+    }
+  }
+
+  async function extractVisualUiTargets() {
+    if (!screenDeck.length) {
+      setWorkbenchNotice('Capture at least one screen first.');
+      return;
+    }
+    setVisionBusy(true);
+    try {
+      const result = await extractVisionUiTargets({
+        images: screenDeck.map((item) => ({
+          image_data_url: item.dataUrl,
+          label: item.label,
+        })),
+        note: screenContextNote.trim() || undefined,
+        label: screenDeck.length > 1 ? 'Multi-Screen Session' : screenDeck[0].label,
+      });
+      setVisionUiTargets(result);
+      setVisionAnalysis(null);
+      setVisionSignals(null);
+      setVisionTextExtraction(null);
+      setVisionSuggestedActions(null);
+      setVisionUiPlan(null);
+      setVisionUiVerify(null);
+      setWorkbenchNotice(`UI targets extracted${result.targets.length ? ` (${result.targets.length})` : ''}.`);
+    } catch (error) {
+      setWorkbenchNotice(error instanceof Error ? error.message : 'Vision UI target extraction failed.');
+    } finally {
+      setVisionBusy(false);
+    }
+  }
+
+  async function planVisualUiTarget(target: VisionUiTargetsResult['targets'][number]) {
+    if (!screenDeck.length) {
+      setWorkbenchNotice('Capture at least one screen first.');
+      return;
+    }
+    setVisionBusy(true);
+    try {
+      const result = await planVisionUiAction({
+        images: screenDeck.map((item) => ({
+          image_data_url: item.dataUrl,
+          label: item.label,
+        })),
+        target_label: target.label,
+        target_detail: target.detail,
+        control_type: target.control_type,
+        note: screenContextNote.trim() || undefined,
+        label: screenDeck.length > 1 ? 'Multi-Screen Session' : screenDeck[0].label,
+      });
+      setVisionUiPlan(result);
+      setWorkbenchNotice(`Interaction plan ready for ${target.label}.`);
+    } catch (error) {
+      setWorkbenchNotice(error instanceof Error ? error.message : 'Vision UI planning failed.');
+    } finally {
+      setVisionBusy(false);
+    }
+  }
+
+  async function verifyVisualUiTarget(target: VisionUiTargetsResult['targets'][number]) {
+    if (!screenDeck.length) {
+      setWorkbenchNotice('Capture at least one screen first.');
+      return;
+    }
+    setVisionBusy(true);
+    try {
+      const result = await verifyVisionUiTarget({
+        images: screenDeck.map((item) => ({
+          image_data_url: item.dataUrl,
+          label: item.label,
+        })),
+        target_label: target.label,
+        target_detail: target.detail,
+        control_type: target.control_type,
+        desktop_intent: target.desktop_intent,
+        note: screenContextNote.trim() || undefined,
+        label: screenDeck.length > 1 ? 'Multi-Screen Session' : screenDeck[0].label,
+      });
+      setVisionUiVerify(result);
+      setWorkbenchNotice(`Verification ready for ${target.label}.`);
+    } catch (error) {
+      setWorkbenchNotice(error instanceof Error ? error.message : 'Vision UI verification failed.');
+    } finally {
+      setVisionBusy(false);
+    }
+  }
+
+  async function stageVisualDesktopIntent(command: string) {
+    if (!command.trim()) {
+      setWorkbenchNotice('This visual action does not include a direct desktop command.');
+      return;
+    }
+    setIntentBusy('run');
+    try {
+      const next = await executeJarvisIntent(command);
+      setIntentPreview(next.intent);
+      setIntentExecution(next);
+      if (next.result.pending || next.result.history) {
+        setWorkbench((current) => ({
+          pending: next.result.pending ?? current?.pending ?? null,
+          history: next.result.history ?? current?.history ?? [],
+          default_working_dir: next.result.default_working_dir ?? current?.default_working_dir ?? workbenchDirectory,
+        }));
+      }
+      setWorkbenchNotice(next.message);
+    } catch (error) {
+      setWorkbenchNotice(error instanceof Error ? error.message : 'Unable to stage visual desktop action.');
+    } finally {
+      setIntentBusy(null);
     }
   }
 
@@ -3545,6 +3868,10 @@ export default function JarvisHudDashboard() {
                       { label: 'Find PDFs', text: 'Find all PDFs in downloads', icon: Folder },
                       { label: 'Screen Brief', text: 'What is on my screen?', icon: Monitor },
                       { label: 'All Screens', text: 'What is on my screens?', icon: Monitor },
+                      { label: 'UI Targets', text: 'Find UI targets', icon: Monitor },
+                      { label: 'Screen Controls', text: 'What can I click here?', icon: Monitor },
+                      { label: 'All Screen Targets', text: 'Find UI targets on my screens', icon: Monitor },
+                      { label: 'Image Targets', text: 'Find UI targets in this image', icon: Sparkles },
                       { label: 'Upload Image', text: 'Analyze this image', icon: Sparkles },
                     ] as const).map(({ label, text, icon: Icon }) => (
                       <button
@@ -3775,6 +4102,13 @@ export default function JarvisHudDashboard() {
                           Task From Vision
                         </button>
                         <button
+                          onClick={rememberVisionResult}
+                          disabled={intentBusy !== null || (!visionAnalysis?.content && !visionTextExtraction?.content)}
+                          className="rounded-[0.85rem] border border-cyan-400/12 bg-slate-950/70 px-3 py-2 text-[10px] uppercase tracking-[0.22em] text-cyan-100 transition hover:bg-cyan-400/[0.08] disabled:cursor-not-allowed disabled:opacity-50"
+                        >
+                          Remember Result
+                        </button>
+                        <button
                           onClick={suggestVisualActions}
                           disabled={visionBusy || !screenDeck.length}
                           className="rounded-[0.85rem] border border-cyan-400/12 bg-slate-950/70 px-3 py-2 text-[10px] uppercase tracking-[0.22em] text-cyan-100 transition hover:bg-cyan-400/[0.08] disabled:cursor-not-allowed disabled:opacity-50"
@@ -3782,13 +4116,31 @@ export default function JarvisHudDashboard() {
                           {visionBusy ? 'Planning' : 'Suggest Actions'}
                         </button>
                         <button
+                          onClick={extractVisualSignals}
+                          disabled={visionBusy || !screenDeck.length}
+                          className="rounded-[0.85rem] border border-cyan-400/12 bg-slate-950/70 px-3 py-2 text-[10px] uppercase tracking-[0.22em] text-cyan-100 transition hover:bg-cyan-400/[0.08] disabled:cursor-not-allowed disabled:opacity-50"
+                        >
+                          {visionBusy ? 'Scanning' : 'Extract Signals'}
+                        </button>
+                        <button
+                          onClick={extractVisualUiTargets}
+                          disabled={visionBusy || !screenDeck.length}
+                          className="rounded-[0.85rem] border border-cyan-400/12 bg-slate-950/70 px-3 py-2 text-[10px] uppercase tracking-[0.22em] text-cyan-100 transition hover:bg-cyan-400/[0.08] disabled:cursor-not-allowed disabled:opacity-50"
+                        >
+                          {visionBusy ? 'Scanning' : 'Find UI Targets'}
+                        </button>
+                        <button
                           onClick={() => {
                             setScreenSnapshot(null);
                             setScreenDeck([]);
                             setScreenContextNote('');
                             setVisionAnalysis(null);
+                            setVisionSignals(null);
                             setVisionTextExtraction(null);
                             setVisionSuggestedActions(null);
+                            setVisionUiTargets(null);
+                            setVisionUiPlan(null);
+                            setVisionUiVerify(null);
                           }}
                           className="rounded-[0.85rem] border border-cyan-400/12 bg-slate-950/70 px-3 py-2 text-[10px] uppercase tracking-[0.22em] text-cyan-100 transition hover:bg-cyan-400/[0.08]"
                         >
@@ -3823,6 +4175,236 @@ export default function JarvisHudDashboard() {
                           </pre>
                         </div>
                       ) : null}
+                      {visionSignals ? (
+                        <div className="mt-3 rounded-[0.9rem] border border-cyan-400/10 bg-slate-950/55 px-3 py-3">
+                          <div className="flex items-center justify-between gap-3">
+                            <div className="text-[10px] uppercase tracking-[0.22em] text-cyan-300/55">Visual Signals</div>
+                            <div className="text-[10px] uppercase tracking-[0.22em] text-cyan-300/45">
+                              {visionSignals.model}
+                              {visionSignals.screen_count ? ` · ${visionSignals.screen_count} screens` : ''}
+                            </div>
+                          </div>
+                          <div className="mt-2 text-sm text-slate-200/76">
+                            {visionSignals.summary || 'No major signals extracted.'}
+                          </div>
+                          {visionSignals.blockers.length ? (
+                            <div className="mt-3">
+                              <div className="text-[10px] uppercase tracking-[0.22em] text-rose-300/70">Blockers</div>
+                              <div className="mt-2 grid gap-2">
+                                {visionSignals.blockers.map((item: string, index: number) => (
+                                  <div key={`${item}-${index}`} className="rounded-[0.85rem] border border-rose-300/12 bg-rose-400/[0.06] px-3 py-2 text-sm text-slate-100/80">
+                                    {item}
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          ) : null}
+                          {visionSignals.deadlines.length ? (
+                            <div className="mt-3">
+                              <div className="text-[10px] uppercase tracking-[0.22em] text-amber-300/70">Deadlines</div>
+                              <div className="mt-2 grid gap-2">
+                                {visionSignals.deadlines.map((item: string, index: number) => (
+                                  <div key={`${item}-${index}`} className="rounded-[0.85rem] border border-amber-300/12 bg-amber-400/[0.06] px-3 py-2 text-sm text-slate-100/80">
+                                    {item}
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          ) : null}
+                          {visionSignals.attention_items.length ? (
+                            <div className="mt-3">
+                              <div className="text-[10px] uppercase tracking-[0.22em] text-cyan-300/55">Attention Items</div>
+                              <div className="mt-2 grid gap-2">
+                                {visionSignals.attention_items.map((item: string, index: number) => (
+                                  <div key={`${item}-${index}`} className="rounded-[0.85rem] border border-cyan-400/10 bg-black/20 px-3 py-2 text-sm text-slate-100/80">
+                                    {item}
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          ) : null}
+                        </div>
+                      ) : null}
+                      {visionUiTargets?.targets?.length ? (
+                        <div className="mt-3 rounded-[0.9rem] border border-cyan-400/10 bg-slate-950/55 px-3 py-3">
+                          <div className="flex items-center justify-between gap-3">
+                            <div className="text-[10px] uppercase tracking-[0.22em] text-cyan-300/55">UI Targets</div>
+                            <div className="text-[10px] uppercase tracking-[0.22em] text-cyan-300/45">
+                              {visionUiTargets.model}
+                              {visionUiTargets.screen_count ? ` · ${visionUiTargets.screen_count} screens` : ''}
+                            </div>
+                          </div>
+                          <div className="mt-3 grid gap-2">
+                            {visionUiTargets.targets.map((item, index) => (
+                              <div
+                                key={`${item.label}-${item.control_type}-${index}`}
+                                className="rounded-[0.9rem] border border-cyan-400/10 bg-black/20 px-3 py-3"
+                              >
+                                <div className="flex items-center justify-between gap-3">
+                                  <div className="text-xs uppercase tracking-[0.2em] text-cyan-100/85">{item.label}</div>
+                                  <div className="text-[10px] uppercase tracking-[0.2em] text-cyan-300/55">
+                                    {item.control_type} · {item.confidence}%
+                                  </div>
+                                </div>
+                                <div className="mt-2 text-sm text-slate-200/76">{item.detail}</div>
+                                <div className="mt-3 flex gap-2">
+                                  <button
+                                    onClick={() => verifyVisualUiTarget(item)}
+                                    className="rounded-[0.85rem] border border-amber-300/16 bg-amber-400/[0.08] px-3 py-2 text-[10px] uppercase tracking-[0.22em] text-amber-100 transition hover:bg-amber-400/[0.14]"
+                                  >
+                                    Verify Target
+                                  </button>
+                                  <button
+                                    onClick={() => planVisualUiTarget(item)}
+                                    className="rounded-[0.85rem] border border-cyan-400/12 bg-cyan-400/[0.08] px-3 py-2 text-[10px] uppercase tracking-[0.22em] text-cyan-100 transition hover:bg-cyan-400/[0.14]"
+                                  >
+                                    Plan Interaction
+                                  </button>
+                                  <button
+                                    onClick={() => injectCommand(item.prompt)}
+                                    className="rounded-[0.85rem] border border-cyan-400/12 bg-slate-950/70 px-3 py-2 text-[10px] uppercase tracking-[0.22em] text-cyan-100 transition hover:bg-cyan-400/[0.08]"
+                                  >
+                                    Load Target
+                                  </button>
+                                  <button
+                                    onClick={() => stageVisualDesktopIntent(item.desktop_intent)}
+                                    disabled={!item.desktop_intent}
+                                    className="rounded-[0.85rem] border border-cyan-400/12 bg-slate-950/70 px-3 py-2 text-[10px] uppercase tracking-[0.22em] text-cyan-100 transition hover:bg-cyan-400/[0.08] disabled:cursor-not-allowed disabled:opacity-40"
+                                  >
+                                    Stage Desktop
+                                  </button>
+                                  <button
+                                    onClick={async () => {
+                                      setActionBusy('stage');
+                                      try {
+                                        const next = await stageTask({
+                                          title: `UI target · ${item.label}`,
+                                          notes: `${item.detail}\n\n${item.prompt}`,
+                                        });
+                                        setActionCenter(next);
+                                        setActionNotice('UI target staged as a task.');
+                                      } catch (error) {
+                                        setActionNotice(error instanceof Error ? error.message : 'Unable to stage UI target.');
+                                      } finally {
+                                        setActionBusy(null);
+                                      }
+                                    }}
+                                    className="rounded-[0.85rem] border border-emerald-300/18 bg-emerald-400/[0.08] px-3 py-2 text-[10px] uppercase tracking-[0.22em] text-emerald-100 transition hover:bg-emerald-400/[0.14]"
+                                  >
+                                    Stage Task
+                                  </button>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      ) : null}
+                      {visionUiVerify ? (
+                        <div className="mt-3 rounded-[0.9rem] border border-cyan-400/10 bg-slate-950/55 px-3 py-3">
+                          <div className="flex items-center justify-between gap-3">
+                            <div className="text-[10px] uppercase tracking-[0.22em] text-cyan-300/55">UI Verification</div>
+                            <div className="text-[10px] uppercase tracking-[0.22em] text-cyan-300/45">
+                              {visionUiVerify.model}
+                              {visionUiVerify.screen_count ? ` · ${visionUiVerify.screen_count} screens` : ''}
+                            </div>
+                          </div>
+                          <div className="mt-2 flex items-center justify-between gap-3">
+                            <div className="text-xs uppercase tracking-[0.2em] text-cyan-100/85">
+                              {visionUiVerify.target_label}
+                            </div>
+                            <div className="text-[10px] uppercase tracking-[0.2em] text-cyan-300/55">
+                              {visionUiVerify.risk_level} · {visionUiVerify.confidence}%
+                            </div>
+                          </div>
+                          <div className="mt-2 text-sm text-slate-200/76">{visionUiVerify.summary}</div>
+                          {visionUiVerify.verification_checks.length ? (
+                            <div className="mt-3">
+                              <div className="text-[10px] uppercase tracking-[0.22em] text-amber-300/70">Verify Before Acting</div>
+                              <div className="mt-2 grid gap-2">
+                                {visionUiVerify.verification_checks.map((item, index) => (
+                                  <div key={`${item}-${index}`} className="rounded-[0.85rem] border border-amber-300/12 bg-amber-400/[0.06] px-3 py-2 text-sm text-slate-100/80">
+                                    {item}
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          ) : null}
+                          {visionUiVerify.evidence.length ? (
+                            <div className="mt-3">
+                              <div className="text-[10px] uppercase tracking-[0.22em] text-cyan-300/55">Evidence</div>
+                              <div className="mt-2 grid gap-2">
+                                {visionUiVerify.evidence.map((item, index) => (
+                                  <div key={`${item}-${index}`} className="rounded-[0.85rem] border border-cyan-400/10 bg-black/20 px-3 py-2 text-sm text-slate-100/80">
+                                    {item}
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          ) : null}
+                        </div>
+                      ) : null}
+                      {visionUiPlan ? (
+                        <div className="mt-3 rounded-[0.9rem] border border-cyan-400/10 bg-slate-950/55 px-3 py-3">
+                          <div className="flex items-center justify-between gap-3">
+                            <div className="text-[10px] uppercase tracking-[0.22em] text-cyan-300/55">UI Interaction Plan</div>
+                            <div className="text-[10px] uppercase tracking-[0.22em] text-cyan-300/45">
+                              {visionUiPlan.model}
+                              {visionUiPlan.screen_count ? ` · ${visionUiPlan.screen_count} screens` : ''}
+                            </div>
+                          </div>
+                          <div className="mt-2 text-xs uppercase tracking-[0.2em] text-cyan-100/85">
+                            {visionUiPlan.target_label}
+                          </div>
+                          <div className="mt-2 text-sm text-slate-200/76">{visionUiPlan.summary}</div>
+                          {visionUiPlan.steps.length ? (
+                            <div className="mt-3 grid gap-2">
+                              {visionUiPlan.steps.map((step, index) => (
+                                <div
+                                  key={`${visionUiPlan.target_label}-${index}`}
+                                  className="rounded-[0.85rem] border border-cyan-400/10 bg-black/20 px-3 py-2 text-sm text-slate-100/80"
+                                >
+                                  {index + 1}. {step}
+                                </div>
+                              ))}
+                            </div>
+                          ) : null}
+                          <div className="mt-3 flex gap-2">
+                            <button
+                              onClick={() => injectCommand(visionUiPlan.prompt || visionUiPlan.steps.join('\n'))}
+                              className="rounded-[0.85rem] border border-cyan-400/12 bg-cyan-400/[0.08] px-3 py-2 text-[10px] uppercase tracking-[0.22em] text-cyan-100 transition hover:bg-cyan-400/[0.14]"
+                            >
+                              Load Plan
+                            </button>
+                            <button
+                              onClick={() => stageVisualDesktopIntent(visionUiPlan.desktop_intent)}
+                              disabled={!visionUiPlan.desktop_intent}
+                              className="rounded-[0.85rem] border border-cyan-400/12 bg-slate-950/70 px-3 py-2 text-[10px] uppercase tracking-[0.22em] text-cyan-100 transition hover:bg-cyan-400/[0.08] disabled:cursor-not-allowed disabled:opacity-40"
+                            >
+                              Stage Desktop
+                            </button>
+                            <button
+                              onClick={async () => {
+                                setActionBusy('stage');
+                                try {
+                                  const next = await stageTask({
+                                    title: `UI plan · ${visionUiPlan.target_label}`,
+                                    notes: `${visionUiPlan.summary}\n\n${visionUiPlan.steps.join('\n')}\n\n${visionUiPlan.prompt}`,
+                                  });
+                                  setActionCenter(next);
+                                  setActionNotice('UI interaction plan staged as a task.');
+                                } catch (error) {
+                                  setActionNotice(error instanceof Error ? error.message : 'Unable to stage UI plan.');
+                                } finally {
+                                  setActionBusy(null);
+                                }
+                              }}
+                              className="rounded-[0.85rem] border border-emerald-300/18 bg-emerald-400/[0.08] px-3 py-2 text-[10px] uppercase tracking-[0.22em] text-emerald-100 transition hover:bg-emerald-400/[0.14]"
+                            >
+                              Stage Task
+                            </button>
+                          </div>
+                        </div>
+                      ) : null}
                       {visionSuggestedActions?.actions?.length ? (
                         <div className="mt-3 rounded-[0.9rem] border border-cyan-400/10 bg-slate-950/55 px-3 py-3">
                           <div className="flex items-center justify-between gap-3">
@@ -3851,6 +4433,13 @@ export default function JarvisHudDashboard() {
                                     className="rounded-[0.85rem] border border-cyan-400/12 bg-cyan-400/[0.08] px-3 py-2 text-[10px] uppercase tracking-[0.22em] text-cyan-100 transition hover:bg-cyan-400/[0.14]"
                                   >
                                     Load Prompt
+                                  </button>
+                                  <button
+                                    onClick={() => stageVisualDesktopIntent(item.desktop_intent)}
+                                    disabled={!item.desktop_intent}
+                                    className="rounded-[0.85rem] border border-cyan-400/12 bg-slate-950/70 px-3 py-2 text-[10px] uppercase tracking-[0.22em] text-cyan-100 transition hover:bg-cyan-400/[0.08] disabled:cursor-not-allowed disabled:opacity-40"
+                                  >
+                                    Stage Desktop
                                   </button>
                                   <button
                                     onClick={async () => {

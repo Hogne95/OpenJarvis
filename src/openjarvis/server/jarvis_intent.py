@@ -1037,6 +1037,28 @@ def _parse_intent(text: str) -> ParsedIntent:
         )
 
     if re.match(
+        r"^(find ui targets|find controls|what can i click(?: here)?|what can i interact with(?: here)?|identify ui targets)$",
+        lowered,
+    ):
+        return ParsedIntent(
+            type="vision",
+            action="capture_screen_targets",
+            client_action="capture_screen_targets",
+            risk="low",
+        )
+
+    if re.match(
+        r"^(find ui targets on my screens|find controls on my screens|what can i click on my screens|identify ui targets on my screens)$",
+        lowered,
+    ):
+        return ParsedIntent(
+            type="vision",
+            action="capture_screens_targets",
+            client_action="capture_screens_targets",
+            risk="low",
+        )
+
+    if re.match(
         r"^(analyze|describe|inspect)(?: this)? (image|photo|picture|screenshot)$",
         lowered,
     ) or lowered in {"upload image", "analyze image", "describe image"}:
@@ -1044,6 +1066,14 @@ def _parse_intent(text: str) -> ParsedIntent:
             type="vision",
             action="upload_image",
             client_action="upload_image",
+            risk="low",
+        )
+
+    if lowered in {"find ui targets in this image", "find controls in this image", "identify ui targets in this image"}:
+        return ParsedIntent(
+            type="vision",
+            action="upload_image_targets",
+            client_action="upload_image_targets",
             risk="low",
         )
 
@@ -1957,12 +1987,44 @@ def create_jarvis_intent_router() -> APIRouter:
                 "result": {"client_action": "capture_screen"},
             }
 
+        if intent.type == "vision" and intent.action == "capture_screens":
+            return {
+                "intent": payload,
+                "status": "client_action_required",
+                "message": "Multi-screen capture must be completed by the HUD client.",
+                "result": {"client_action": "capture_screens"},
+            }
+
+        if intent.type == "vision" and intent.action == "capture_screen_targets":
+            return {
+                "intent": payload,
+                "status": "client_action_required",
+                "message": "Screen capture is required before JARVIS can identify UI targets.",
+                "result": {"client_action": "capture_screen_targets"},
+            }
+
+        if intent.type == "vision" and intent.action == "capture_screens_targets":
+            return {
+                "intent": payload,
+                "status": "client_action_required",
+                "message": "Multi-screen capture is required before JARVIS can identify UI targets.",
+                "result": {"client_action": "capture_screens_targets"},
+            }
+
         if intent.type == "vision" and intent.action == "upload_image":
             return {
                 "intent": payload,
                 "status": "client_action_required",
                 "message": "Image upload must be completed by the HUD client.",
                 "result": {"client_action": "upload_image"},
+            }
+
+        if intent.type == "vision" and intent.action == "upload_image_targets":
+            return {
+                "intent": payload,
+                "status": "client_action_required",
+                "message": "Image upload is required before JARVIS can identify UI targets.",
+                "result": {"client_action": "upload_image_targets"},
             }
 
         if intent.requires_approval:

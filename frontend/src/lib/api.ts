@@ -604,9 +604,57 @@ export interface VisionSuggestedActionsResult {
     detail: string;
     prompt: string;
     priority: number;
+    desktop_intent: string;
   }>;
   model: string;
   label: string;
+  screen_count?: number;
+}
+
+export interface VisionSignalsResult {
+  summary: string;
+  blockers: string[];
+  deadlines: string[];
+  attention_items: string[];
+  model: string;
+  label: string;
+  screen_count?: number;
+}
+
+export interface VisionUiTargetsResult {
+  targets: Array<{
+    label: string;
+    detail: string;
+    control_type: 'button' | 'field' | 'menu' | 'panel' | 'tab' | 'link' | 'alert' | 'editor' | 'window' | 'other';
+    confidence: number;
+    prompt: string;
+    desktop_intent: string;
+  }>;
+  model: string;
+  label: string;
+  screen_count?: number;
+}
+
+export interface VisionUiActionPlanResult {
+  summary: string;
+  steps: string[];
+  prompt: string;
+  desktop_intent: string;
+  model: string;
+  label: string;
+  target_label: string;
+  screen_count?: number;
+}
+
+export interface VisionUiVerifyResult {
+  summary: string;
+  confidence: number;
+  verification_checks: string[];
+  evidence: string[];
+  risk_level: 'low' | 'medium' | 'high';
+  model: string;
+  label: string;
+  target_label: string;
   screen_count?: number;
 }
 
@@ -1442,6 +1490,93 @@ export async function suggestVisionActions(body: {
   if (!res.ok) {
     const detail = await res.json().catch(() => ({ detail: res.statusText }));
     throw new Error(detail.detail || `Vision action suggestions failed: ${res.status}`);
+  }
+  return res.json();
+}
+
+export async function extractVisionSignals(body: {
+  images: Array<{
+    image_data_url: string;
+    label: string;
+  }>;
+  note?: string;
+  label?: string;
+}): Promise<VisionSignalsResult> {
+  const res = await fetch(`${getBase()}/v1/vision/extract-signals`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const detail = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(detail.detail || `Vision signal extraction failed: ${res.status}`);
+  }
+  return res.json();
+}
+
+export async function extractVisionUiTargets(body: {
+  images: Array<{
+    image_data_url: string;
+    label: string;
+  }>;
+  note?: string;
+  label?: string;
+}): Promise<VisionUiTargetsResult> {
+  const res = await fetch(`${getBase()}/v1/vision/ui-targets`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const detail = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(detail.detail || `Vision UI target extraction failed: ${res.status}`);
+  }
+  return res.json();
+}
+
+export async function planVisionUiAction(body: {
+  images: Array<{
+    image_data_url: string;
+    label: string;
+  }>;
+  target_label: string;
+  target_detail?: string;
+  control_type?: string;
+  note?: string;
+  label?: string;
+}): Promise<VisionUiActionPlanResult> {
+  const res = await fetch(`${getBase()}/v1/vision/ui-action-plan`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const detail = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(detail.detail || `Vision UI action planning failed: ${res.status}`);
+  }
+  return res.json();
+}
+
+export async function verifyVisionUiTarget(body: {
+  images: Array<{
+    image_data_url: string;
+    label: string;
+  }>;
+  target_label: string;
+  target_detail?: string;
+  control_type?: string;
+  desktop_intent?: string;
+  note?: string;
+  label?: string;
+}): Promise<VisionUiVerifyResult> {
+  const res = await fetch(`${getBase()}/v1/vision/ui-verify`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const detail = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(detail.detail || `Vision UI verification failed: ${res.status}`);
   }
   return res.json();
 }

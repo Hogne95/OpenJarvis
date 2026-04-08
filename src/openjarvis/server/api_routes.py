@@ -243,6 +243,31 @@ class VisionSuggestActionsRequest(BaseModel):
     label: Optional[str] = None
 
 
+class VisionUiTargetsRequest(BaseModel):
+    images: list[dict[str, str]]
+    note: Optional[str] = None
+    label: Optional[str] = None
+
+
+class VisionUiActionPlanRequest(BaseModel):
+    images: list[dict[str, str]]
+    target_label: str
+    target_detail: Optional[str] = None
+    control_type: Optional[str] = None
+    note: Optional[str] = None
+    label: Optional[str] = None
+
+
+class VisionUiVerifyRequest(BaseModel):
+    images: list[dict[str, str]]
+    target_label: str
+    target_detail: Optional[str] = None
+    control_type: Optional[str] = None
+    desktop_intent: Optional[str] = None
+    note: Optional[str] = None
+    label: Optional[str] = None
+
+
 # ---- Agent routes ----
 
 agents_router = APIRouter(prefix="/v1/agents", tags=["agents"])
@@ -1717,10 +1742,11 @@ async def vision_suggest_actions(req: VisionSuggestActionsRequest):
     prompt = (
         "You are JARVIS visual action planning. Reply in JSON only. "
         "Analyze the provided image or screen set and return an object with one key: actions. "
-        "actions must be an array of up to 3 objects with keys: title, detail, prompt, priority. "
+        "actions must be an array of up to 3 objects with keys: title, detail, prompt, priority, desktop_intent. "
         "title should be short. detail should explain the observation. "
         "prompt should be a concrete next-step command-deck prompt in English. "
-        "priority must be an integer from 1 to 100."
+        "priority must be an integer from 1 to 100. "
+        "desktop_intent should be a short, safe desktop-control command only when there is a clear next computer action; otherwise return an empty string."
     )
     if req.note:
         prompt += f"\n\nUser context note: {req.note.strip()}"
@@ -1769,6 +1795,7 @@ async def vision_suggest_actions(req: VisionSuggestActionsRequest):
                         "detail": str(item.get("detail", "")).strip(),
                         "prompt": str(item.get("prompt", "")).strip(),
                         "priority": int(item.get("priority", 50)),
+                        "desktop_intent": str(item.get("desktop_intent", "")).strip(),
                     }
                 )
     except Exception:
@@ -1779,6 +1806,7 @@ async def vision_suggest_actions(req: VisionSuggestActionsRequest):
                     "detail": "JARVIS generated a freeform follow-up suggestion.",
                     "prompt": content,
                     "priority": 50,
+                    "desktop_intent": "",
                 }
             )
 
@@ -1786,6 +1814,306 @@ async def vision_suggest_actions(req: VisionSuggestActionsRequest):
         "actions": actions,
         "model": os.environ.get("OPENJARVIS_VISION_MODEL", "gpt-4o-mini"),
         "label": req.label or "",
+        "screen_count": len(req.images),
+    }
+
+
+@vision_router.post("/ui-targets")
+async def vision_extract_ui_targets(req: VisionUiTargetsRequest):
+    api_key = os.environ.get("OPENAI_API_KEY", "").strip()
+    if not api_key:
+        raise HTTPException(status_code=503, detail="Vision UI target extraction requires OPENAI_API_KEY")
+    if not req.images:
+        raise HTTPException(status_code=400, detail="At least one image is required for UI target extraction")
+    try:
+        from openai import OpenAI
+    except ImportError as exc:
+        raise HTTPException(status_code=503, detail=f"openai package unavailable: {exc}") from exc
+
+    prompt = (
+        "You are JARVIS UI target extraction. Reply in JSON only. "
+        "Analyze the provided image or screen set and return an object with one key: targets. "
+        "targets must be an array of up to 5 objects with keys: label, detail, control_type, confidence, prompt, desktop_intent. "
+        "label should be a short human-readable name for the likely control or interface target. "
+        "detail should explain what the target appears to do or why it matters. "
+        "control_type must be one of button, field, menu, panel, tab, link, alert, editor, window, or other. "
+        "confidence must be an integer from 1 to 100. "
+        "prompt should be a concrete next-step command-deck prompt in English. "
+        "desktop_intent should be a short, safe desktop-control command only when there is a clear next computer action; otherwise return an empty string. "
+        "Do not invent pixel coordinates or overstate certainty when the target is ambiguous."
+    )
+    if req.note:
+        prompt += f"\n\nUser context note: {req.note.strip()}"
+    if req.label:
+        prompt += f"\nSession label: {req.label.strip()}"
+
+    user_content: list[dict[str, Any]] = [
+        {"type": "text", "text": "Identify the most relevant UI targets in this JARVIS visual context."}
+    ]
+    for index, image in enumerate(req.images, start=1):
+        label = (image.get("label") or f"Screen {index}").strip()
+        user_content.append({"type": "text", "text": f"{label}"})
+        user_content.append({"type": "image_url", "image_url": {"url": image.get("image_data_url", "")}})
+
+    try:
+        client = OpenAI(api_key=api_key)
+        response = client.chat.completions.create(
+            model=os.environ.get("OPENJARVIS_VISION_MODEL", "gpt-4o-mini"),
+            messages=[
+                {"role": "system", "content": prompt},
+                {"role": "user", "content": user_content},
+            ],
+            temperature=0.15,
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"Vision UI target extraction failed: {exc}") from exc
+
+    content = ""
+    choice = response.choices[0] if response.choices else None
+    if choice and choice.message:
+        content = (choice.message.content or "").strip()
+
+    targets: list[dict[str, Any]] = []
+    try:
+        parsed = json.loads(content)
+        raw_targets = parsed.get("targets", []) if isinstance(parsed, dict) else []
+        if isinstance(raw_targets, list):
+            for item in raw_targets[:5]:
+                if not isinstance(item, dict):
+                    continue
+                control_type = str(item.get("control_type", "other")).strip().lower() or "other"
+                if control_type not in {"button", "field", "menu", "panel", "tab", "link", "alert", "editor", "window", "other"}:
+                    control_type = "other"
+                try:
+                    confidence = max(1, min(int(item.get("confidence", 50)), 100))
+                except Exception:
+                    confidence = 50
+                targets.append(
+                    {
+                        "label": str(item.get("label", "")).strip() or "UI Target",
+                        "detail": str(item.get("detail", "")).strip(),
+                        "control_type": control_type,
+                        "confidence": confidence,
+                        "prompt": str(item.get("prompt", "")).strip(),
+                        "desktop_intent": str(item.get("desktop_intent", "")).strip(),
+                    }
+                )
+    except Exception:
+        if content:
+            targets.append(
+                {
+                    "label": "Visual Target",
+                    "detail": content,
+                    "control_type": "other",
+                    "confidence": 40,
+                    "prompt": content,
+                    "desktop_intent": "",
+                }
+            )
+
+    return {
+        "targets": targets,
+        "model": os.environ.get("OPENJARVIS_VISION_MODEL", "gpt-4o-mini"),
+        "label": req.label or "",
+        "screen_count": len(req.images),
+    }
+
+
+@vision_router.post("/ui-action-plan")
+async def vision_plan_ui_action(req: VisionUiActionPlanRequest):
+    api_key = os.environ.get("OPENAI_API_KEY", "").strip()
+    if not api_key:
+        raise HTTPException(status_code=503, detail="Vision UI planning requires OPENAI_API_KEY")
+    if not req.images:
+        raise HTTPException(status_code=400, detail="At least one image is required for UI planning")
+    if not req.target_label.strip():
+        raise HTTPException(status_code=400, detail="target_label is required for UI planning")
+    try:
+        from openai import OpenAI
+    except ImportError as exc:
+        raise HTTPException(status_code=503, detail=f"openai package unavailable: {exc}") from exc
+
+    prompt = (
+        "You are JARVIS UI interaction planning. Reply in JSON only. "
+        "Analyze the provided image or screen set and create a safe operator plan for the requested UI target. "
+        "Return an object with keys: summary, steps, prompt, desktop_intent. "
+        "summary should be one short sentence. "
+        "steps must be an array of 2 to 5 concise English strings describing the safest likely interaction sequence. "
+        "prompt should be a concrete next-step command-deck prompt in English. "
+        "desktop_intent should be a short, safe desktop-control command only when there is a clear first action; otherwise return an empty string. "
+        "Do not invent coordinates, hidden controls, or certainty you do not have."
+    )
+    if req.note:
+        prompt += f"\n\nUser context note: {req.note.strip()}"
+    if req.label:
+        prompt += f"\nSession label: {req.label.strip()}"
+
+    target_detail = (req.target_detail or "").strip()
+    control_type = (req.control_type or "other").strip()
+    user_content: list[dict[str, Any]] = [
+        {
+            "type": "text",
+            "text": (
+                f"Plan the safest likely interaction for this UI target.\n"
+                f"Target: {req.target_label.strip()}\n"
+                f"Control type: {control_type}\n"
+                f"Detail: {target_detail or 'No extra detail provided.'}"
+            ),
+        }
+    ]
+    for index, image in enumerate(req.images, start=1):
+        label = (image.get("label") or f"Screen {index}").strip()
+        user_content.append({"type": "text", "text": f"{label}"})
+        user_content.append({"type": "image_url", "image_url": {"url": image.get("image_data_url", "")}})
+
+    try:
+        client = OpenAI(api_key=api_key)
+        response = client.chat.completions.create(
+            model=os.environ.get("OPENJARVIS_VISION_MODEL", "gpt-4o-mini"),
+            messages=[
+                {"role": "system", "content": prompt},
+                {"role": "user", "content": user_content},
+            ],
+            temperature=0.15,
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"Vision UI planning failed: {exc}") from exc
+
+    content = ""
+    choice = response.choices[0] if response.choices else None
+    if choice and choice.message:
+        content = (choice.message.content or "").strip()
+
+    summary = ""
+    steps: list[str] = []
+    plan_prompt = ""
+    desktop_intent = ""
+    try:
+        parsed = json.loads(content)
+        if isinstance(parsed, dict):
+            summary = str(parsed.get("summary", "")).strip()
+            raw_steps = parsed.get("steps", [])
+            if isinstance(raw_steps, list):
+                steps = [str(item).strip() for item in raw_steps[:5] if str(item).strip()]
+            plan_prompt = str(parsed.get("prompt", "")).strip()
+            desktop_intent = str(parsed.get("desktop_intent", "")).strip()
+    except Exception:
+        if content:
+            summary = "JARVIS generated a freeform UI interaction plan."
+            steps = [content]
+            plan_prompt = content
+
+    return {
+        "summary": summary or f"Interaction plan ready for {req.target_label.strip()}.",
+        "steps": steps,
+        "prompt": plan_prompt,
+        "desktop_intent": desktop_intent,
+        "model": os.environ.get("OPENJARVIS_VISION_MODEL", "gpt-4o-mini"),
+        "label": req.label or "",
+        "target_label": req.target_label.strip(),
+        "screen_count": len(req.images),
+    }
+
+
+@vision_router.post("/ui-verify")
+async def vision_verify_ui_target(req: VisionUiVerifyRequest):
+    api_key = os.environ.get("OPENAI_API_KEY", "").strip()
+    if not api_key:
+        raise HTTPException(status_code=503, detail="Vision UI verification requires OPENAI_API_KEY")
+    if not req.images:
+        raise HTTPException(status_code=400, detail="At least one image is required for UI verification")
+    if not req.target_label.strip():
+        raise HTTPException(status_code=400, detail="target_label is required for UI verification")
+    try:
+        from openai import OpenAI
+    except ImportError as exc:
+        raise HTTPException(status_code=503, detail=f"openai package unavailable: {exc}") from exc
+
+    prompt = (
+        "You are JARVIS UI verification. Reply in JSON only. "
+        "Analyze the provided image or screen set and verify how safe it is to interact with the requested UI target. "
+        "Return an object with keys: summary, confidence, verification_checks, evidence, risk_level. "
+        "confidence must be an integer from 1 to 100. "
+        "verification_checks must be an array of 2 to 5 concise checks the operator should confirm before acting. "
+        "evidence must be an array of 1 to 4 short observations explaining what in the image supports the target guess. "
+        "risk_level must be low, medium, or high. "
+        "Do not invent coordinates, hidden controls, or certainty you do not have."
+    )
+    if req.note:
+        prompt += f"\n\nUser context note: {req.note.strip()}"
+    if req.label:
+        prompt += f"\nSession label: {req.label.strip()}"
+
+    user_content: list[dict[str, Any]] = [
+        {
+            "type": "text",
+            "text": (
+                f"Verify this UI target before action.\n"
+                f"Target: {req.target_label.strip()}\n"
+                f"Control type: {(req.control_type or 'other').strip()}\n"
+                f"Detail: {(req.target_detail or '').strip() or 'No extra detail provided.'}\n"
+                f"Planned desktop action: {(req.desktop_intent or '').strip() or 'None'}"
+            ),
+        }
+    ]
+    for index, image in enumerate(req.images, start=1):
+        label = (image.get('label') or f'Screen {index}').strip()
+        user_content.append({"type": "text", "text": f"{label}"})
+        user_content.append({"type": "image_url", "image_url": {"url": image.get("image_data_url", "")}})
+
+    try:
+        client = OpenAI(api_key=api_key)
+        response = client.chat.completions.create(
+            model=os.environ.get("OPENJARVIS_VISION_MODEL", "gpt-4o-mini"),
+            messages=[
+                {"role": "system", "content": prompt},
+                {"role": "user", "content": user_content},
+            ],
+            temperature=0.1,
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"Vision UI verification failed: {exc}") from exc
+
+    content = ""
+    choice = response.choices[0] if response.choices else None
+    if choice and choice.message:
+        content = (choice.message.content or "").strip()
+
+    summary = ""
+    confidence = 50
+    verification_checks: list[str] = []
+    evidence: list[str] = []
+    risk_level = "medium"
+    try:
+        parsed = json.loads(content)
+        if isinstance(parsed, dict):
+            summary = str(parsed.get("summary", "")).strip()
+            try:
+                confidence = max(1, min(int(parsed.get("confidence", 50)), 100))
+            except Exception:
+                confidence = 50
+            raw_checks = parsed.get("verification_checks", [])
+            if isinstance(raw_checks, list):
+                verification_checks = [str(item).strip() for item in raw_checks[:5] if str(item).strip()]
+            raw_evidence = parsed.get("evidence", [])
+            if isinstance(raw_evidence, list):
+                evidence = [str(item).strip() for item in raw_evidence[:4] if str(item).strip()]
+            risk_value = str(parsed.get("risk_level", "medium")).strip().lower()
+            if risk_value in {"low", "medium", "high"}:
+                risk_level = risk_value
+    except Exception:
+        if content:
+            summary = content
+
+    return {
+        "summary": summary or f"Verification ready for {req.target_label.strip()}.",
+        "confidence": confidence,
+        "verification_checks": verification_checks,
+        "evidence": evidence,
+        "risk_level": risk_level,
+        "model": os.environ.get("OPENJARVIS_VISION_MODEL", "gpt-4o-mini"),
+        "label": req.label or "",
+        "target_label": req.target_label.strip(),
         "screen_count": len(req.images),
     }
 
