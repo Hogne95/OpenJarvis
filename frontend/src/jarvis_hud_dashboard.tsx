@@ -136,6 +136,10 @@ import { listConnectors } from './lib/connectors-api';
 import { useAppStore } from './lib/store';
 import type { ChatMessage, ToolCallInfo } from './types';
 import { InputArea } from './components/Chat/InputArea';
+import { CommanderQueue } from './components/Dashboard/CommanderQueue';
+import { DesignIntelligence } from './components/Dashboard/DesignIntelligence';
+import { DocumentIntel } from './components/Dashboard/DocumentIntel';
+import { MissionMatrix, type MissionMatrixItem } from './components/Dashboard/MissionMatrix';
 import { useSpeech } from './hooks/useSpeech';
 
 function getApiBase() {
@@ -1486,19 +1490,7 @@ export default function JarvisHudDashboard() {
       };
     }, [durableOperatorMemory?.missions]);
   const autonomyMissions = useMemo(() => {
-      const missions: Array<{
-        id: string;
-        title: string;
-        domain: 'self-improve' | 'planner' | 'visual' | 'document';
-        status: MissionStatus;
-        phase: MissionPhase;
-        summary: string;
-      nextStep: string;
-      result: string;
-      retryHint?: string;
-      actionLabel: string;
-      action: () => void;
-    }> = [];
+      const missions: Array<MissionMatrixItem & { action: () => void }> = [];
 
       if (selfImproveBrief || activeSelfImproveTask || selfImproveRuns[0]) {
         const latestRun = selfImproveRuns[0] || null;
@@ -4998,52 +4990,7 @@ export default function JarvisHudDashboard() {
             </Panel>
 
             <Panel title="Mission Matrix" kicker="Shared autonomy loop">
-              <div className="rounded-[1.15rem] border border-cyan-400/10 bg-slate-950/50 px-4 py-3">
-                <div className="text-sm uppercase tracking-[0.18em] text-cyan-50/92">
-                  {autonomyMissions.length ? `${autonomyMissions.length} active mission lane${autonomyMissions.length === 1 ? '' : 's'}` : 'Mission loop standing by'}
-                </div>
-                <div className="mt-1 text-[10px] uppercase tracking-[0.28em] text-cyan-300/55">
-                  Detect · Plan · Act · Verify · Retry
-                </div>
-              </div>
-              {autonomyMissions.length ? (
-                <div className="mt-3 space-y-3">
-                  {autonomyMissions.slice(0, 4).map((mission) => (
-                    <div key={mission.id} className="rounded-[1rem] border border-cyan-400/10 bg-black/20 px-4 py-3">
-                      <div className="flex items-start justify-between gap-3">
-                        <div>
-                          <div className="text-sm text-cyan-50/92">{mission.title}</div>
-                          <div className="mt-1 text-[10px] uppercase tracking-[0.22em] text-cyan-300/55">
-                            {mission.domain} · {mission.status} · {missionPhaseLabel(mission.phase)}
-                          </div>
-                        </div>
-                          <button
-                            onClick={() => void runMissionAction(mission)}
-                            className="rounded-[0.85rem] border border-cyan-400/12 bg-cyan-400/[0.08] px-3 py-2 text-[10px] uppercase tracking-[0.22em] text-cyan-100 transition hover:bg-cyan-400/[0.14]"
-                          >
-                            {mission.actionLabel}
-                          </button>
-                      </div>
-                      <div className="mt-2 text-sm text-slate-200/78">{mission.summary}</div>
-                      <div className="mt-2 text-xs leading-6 text-slate-300/72">
-                        Next: {mission.nextStep}
-                      </div>
-                      <div className="mt-1 text-xs leading-6 text-slate-300/60">
-                        Result: {mission.result}
-                      </div>
-                      {mission.retryHint ? (
-                        <div className="mt-1 text-xs leading-6 text-amber-200/78">
-                          Retry: {mission.retryHint}
-                        </div>
-                      ) : null}
-                    </div>
-                  ))}
-                </div>
-              ) : (
-                <div className="mt-3 text-sm leading-6 text-slate-200/76">
-                  Once JARVIS has a self-improvement mission, delegated brief, or active visual workflow, it will show up here with a shared mission lifecycle.
-                </div>
-              )}
+              <MissionMatrix missions={autonomyMissions} onRunMission={runMissionAction} />
             </Panel>
           </div> : null}
 
@@ -5284,362 +5231,64 @@ export default function JarvisHudDashboard() {
                       </div>
                     </div>
                   </div>
-                  {desktopState ? (
-                    <div className="mt-3 rounded-[0.95rem] border border-cyan-400/10 bg-black/20 px-3 py-3">
-                      <div className="flex items-center justify-between gap-3">
-                        <div className="text-[10px] uppercase tracking-[0.22em] text-cyan-300/55">Desktop State</div>
-                        <div className="text-[10px] uppercase tracking-[0.22em] text-cyan-300/45">
-                          {desktopState.active_process_name || 'No active process'}
-                        </div>
-                      </div>
-                      <div className="mt-2 text-sm text-cyan-50/90">
-                        {desktopState.active_window_title || 'No active window detected.'}
-                      </div>
-                      {desktopState.open_windows.length ? (
-                        <div className="mt-3 grid gap-2">
-                          {desktopState.open_windows.slice(0, 4).map((item) => (
-                            <div
-                              key={`${item.process}-${item.title}`}
-                              className="rounded-[0.85rem] border border-cyan-400/10 bg-slate-950/55 px-3 py-2"
-                            >
-                              <div className="text-[10px] uppercase tracking-[0.22em] text-cyan-300/55">
-                                {item.process}
-                              </div>
-                              <div className="mt-1 text-sm text-slate-200/78">{item.title}</div>
-                            </div>
-                          ))}
-                        </div>
-                      ) : null}
-                    </div>
-                  ) : null}
-                  {intentExecution?.result?.metadata &&
-                  'page_title' in intentExecution.result.metadata &&
-                  intentExecution.intent.type === 'desktop' ? (
-                    <div className="mt-3 rounded-[0.95rem] border border-cyan-400/10 bg-black/20 px-3 py-3">
-                      <div className="flex items-center justify-between gap-3">
-                        <div className="text-[10px] uppercase tracking-[0.22em] text-cyan-300/55">Active Page</div>
-                        <div className="text-[10px] uppercase tracking-[0.22em] text-cyan-300/45">
-                          {String(intentExecution.result.metadata.browser || 'desktop')}
-                        </div>
-                      </div>
-                      <div className="mt-2 text-sm text-cyan-50/90">
-                        {String(intentExecution.result.metadata.page_title || intentExecution.result.metadata.window_title || 'No page detected.')}
-                      </div>
-                      {'page_url' in intentExecution.result.metadata && intentExecution.result.metadata.page_url ? (
-                        <div className="mt-2 break-all text-xs text-cyan-200/65">
-                          {String(intentExecution.result.metadata.page_url)}
-                        </div>
-                      ) : null}
-                    </div>
-                  ) : null}
-                  {intentExecution?.result?.metadata &&
-                  'document_title' in intentExecution.result.metadata &&
-                  intentExecution.intent.type === 'desktop' ? (
-                    <div className="mt-3 rounded-[0.95rem] border border-cyan-400/10 bg-black/20 px-3 py-3">
-                      <div className="flex items-center justify-between gap-3">
-                        <div className="text-[10px] uppercase tracking-[0.22em] text-cyan-300/55">Active Document</div>
-                        <div className="text-[10px] uppercase tracking-[0.22em] text-cyan-300/45">
-                          {String(intentExecution.result.metadata.app || 'desktop')}
-                        </div>
-                      </div>
-                      <div className="mt-2 text-sm text-cyan-50/90">
-                        {String(intentExecution.result.metadata.document_title || intentExecution.result.metadata.window_title || 'No document detected.')}
-                      </div>
-                    </div>
-                  ) : null}
-                  {desktopDraft ? (
-                    <div className="mt-3 rounded-[0.95rem] border border-cyan-400/10 bg-black/20 px-3 py-3">
-                      <div className="flex items-center justify-between gap-3">
-                        <div className="text-[10px] uppercase tracking-[0.22em] text-cyan-300/55">Desktop Draft Deck</div>
-                        <div className="text-[10px] uppercase tracking-[0.22em] text-cyan-300/45">
-                          {new Date(desktopDraft.createdAt).toLocaleTimeString()}
-                        </div>
-                      </div>
-                      <div className="mt-2 text-xs uppercase tracking-[0.18em] text-cyan-200/65">
-                        Target: {desktopDraft.target || 'active target'}
-                      </div>
-                      <div className="mt-2 text-sm text-slate-200/78">{desktopDraft.content}</div>
-                      <div className="mt-3 flex gap-2">
-                        <button
-                          onClick={() => loadIntentPreset(`Draft ${desktopDraft.content} into ${desktopDraft.target}`)}
-                          className="rounded-[0.85rem] border border-cyan-400/12 bg-cyan-400/[0.08] px-3 py-2 text-[10px] uppercase tracking-[0.22em] text-cyan-100 transition hover:bg-cyan-400/[0.14]"
-                        >
-                          Reload Draft
-                        </button>
-                        <button
-                          onClick={() =>
-                            loadIntentPreset(
-                              desktopDraft.target ? `Submit message in ${desktopDraft.target}` : 'Submit message',
-                            )
-                          }
-                          className="rounded-[0.85rem] border border-emerald-300/18 bg-emerald-400/[0.08] px-3 py-2 text-[10px] uppercase tracking-[0.22em] text-emerald-100 transition hover:bg-emerald-400/[0.14]"
-                        >
-                          Prepare Submit
-                        </button>
-                        <button
-                          onClick={() => setDesktopDraft(null)}
-                          className="rounded-[0.85rem] border border-cyan-400/12 bg-slate-950/70 px-3 py-2 text-[10px] uppercase tracking-[0.22em] text-cyan-100 transition hover:bg-cyan-400/[0.08]"
-                        >
-                          Clear Draft
-                        </button>
-                      </div>
-                    </div>
-                  ) : null}
-                  <div className="mt-3 grid gap-3 md:grid-cols-[1fr_140px_140px]">
-                    <input
-                      value={intentCommand}
-                      onChange={(event) => setIntentCommand(event.target.value)}
-                      placeholder="Switch to Chrome"
-                      className="rounded-[0.9rem] border border-cyan-400/10 bg-slate-950/70 px-4 py-3 text-sm text-slate-100 outline-none placeholder:text-slate-500"
+                  <DocumentIntel
+                      title={documentAnalysisTitle}
+                      onTitleChange={setDocumentAnalysisTitle}
+                      mode={documentAnalysisMode}
+                      onModeChange={setDocumentAnalysisMode}
+                      onSelectFiles={() => void selectDocumentFiles()}
+                      onAnalyze={() => void analyzeCurrentDocuments()}
+                      files={documentFiles}
+                      busy={documentBusy}
+                      analysis={documentAnalysis}
+                      brief={documentBrief}
+                      architectureBusy={architectureBusy}
+                      onLoadAnalysis={() =>
+                        injectCommand(
+                          documentBrief?.prompt ||
+                            `I analyzed these documents: ${documentAnalysis?.files.join(', ') || ''}.
+Mode: ${documentAnalysis?.mode || ''}
+
+${documentAnalysis?.content || ''}
+
+Turn this into the next best action, decisions, and risks.`,
+                        )
+                      }
+                      onRouteToPlanner={() => void handoffWithBrief(documentBrief?.prompt || documentAnalysis?.content || '', 'document-intel')}
+                      onPrepareMemo={() => injectCommand(documentBrief?.memoPrompt || documentAnalysis?.content || '')}
+                      onSaveBrief={() => void saveDocumentBrief()}
+                      onExportDocx={() => void exportCurrentDocumentAnalysis('docx')}
+                      onExportSecondary={() => void exportCurrentDocumentAnalysis(documentAnalysis?.mode === 'kpi_extract' ? 'xlsx' : 'txt')}
+                      secondaryExportLabel={documentAnalysis?.mode === 'kpi_extract' ? 'Export XLSX' : 'Export TXT'}
+                      onMakeTask={() =>
+                        createFollowUpTask(
+                          `Document review / ${documentAnalysisTitle.trim() || documentAnalysis?.files[0] || 'analysis'}`,
+                          documentAnalysis?.content || '',
+                        )
+                      }
+                      recentBriefs={durableOperatorMemory?.document_briefs || []}
+                      onLoadSavedBrief={(item) =>
+                        injectCommand(
+                          `I saved a document brief.
+Label: ${item.label}
+Mode: ${item.mode}
+Summary: ${item.summary}
+Details:
+${item.details}
+Continue from this document context and suggest the next best action.`,
+                        )
+                      }
+                      onMemoSavedBrief={(item) =>
+                        injectCommand(
+                          `Create a concise executive memo from this saved document brief.
+Label: ${item.label}
+Mode: ${item.mode}
+Summary: ${item.summary}
+Details:
+${item.details}`,
+                        )
+                      }
                     />
-                    <button
-                      onClick={classifyIntentCommand}
-                      disabled={intentBusy !== null}
-                      className="rounded-[0.9rem] border border-cyan-400/12 bg-slate-950/70 px-4 py-3 text-xs uppercase tracking-[0.24em] text-cyan-100 transition hover:bg-cyan-400/[0.08] disabled:cursor-not-allowed disabled:opacity-50"
-                    >
-                      {intentBusy === 'classify' ? 'Reading' : 'Classify'}
-                    </button>
-                    <button
-                      onClick={runIntentCommand}
-                      disabled={intentBusy !== null}
-                      className="rounded-[0.9rem] border border-cyan-300/20 bg-cyan-400/[0.08] px-4 py-3 text-xs uppercase tracking-[0.24em] text-cyan-100 transition hover:bg-cyan-400/[0.14] disabled:cursor-not-allowed disabled:opacity-50"
-                    >
-                      {intentBusy === 'run' ? 'Running' : 'Run Intent'}
-                    </button>
-                  </div>
-                  <div className="mt-3 grid gap-2 sm:grid-cols-3">
-                    {([
-                      { label: 'Remember', text: 'Remember my gym is at 18:00 on weekdays', icon: BookOpen },
-                      { label: 'Recall', text: 'What do you know about my workday?', icon: Sparkles },
-                      { label: 'List Memory', text: 'List my memories', icon: Brain },
-                      { label: 'Forget', text: 'Forget gym', icon: XCircle },
-                      { label: 'Web Search', text: 'Search the web for the latest Ollama models', icon: Globe },
-                      { label: 'Open YouTube', text: 'Open YouTube', icon: Radio },
-                      { label: 'Switch App', text: 'Switch to Chrome', icon: Monitor },
-                      { label: 'Active Window', text: 'What window is active', icon: Activity },
-                      { label: 'Active Page', text: 'What page is active', icon: Globe },
-                      { label: 'Active Doc', text: 'What document is active', icon: Folder },
-                      { label: 'Active URL', text: 'What URL is active', icon: Globe },
-                      { label: 'Remember Page', text: 'Remember active page', icon: BookOpen },
-                      { label: 'Remember Doc', text: 'Remember active document', icon: BookOpen },
-                      { label: 'Lock Active', text: 'Use active window as target', icon: Shield },
-                      { label: 'Open Apps', text: 'List open apps', icon: Cpu },
-                      { label: 'Lock Browser', text: 'Set edge as browser target', icon: Shield },
-                      { label: 'Clear Target', text: 'Clear target', icon: XCircle },
-                      { label: 'Clipboard', text: 'What is on my clipboard', icon: BookOpen },
-                      { label: 'Selection', text: 'What text is selected', icon: BookOpen },
-                      { label: 'Remember Clipboard', text: 'Remember clipboard', icon: Brain },
-                      { label: 'Remember Selection', text: 'Remember selected text', icon: Brain },
-                      { label: 'Search Clipboard', text: 'Search clipboard in browser', icon: Globe },
-                      { label: 'Search Selection', text: 'Search selected text in browser', icon: Globe },
-                      { label: 'Clipboard URL', text: 'Open clipboard as URL', icon: Monitor },
-                      { label: 'Selection URL', text: 'Open selected text as URL', icon: Monitor },
-                      { label: 'Copy Page URL', text: 'Copy active URL', icon: Reply },
-                      { label: 'Copy Text', text: 'Copy deployment checklist to clipboard', icon: Reply },
-                      { label: 'Type In App', text: 'Type hello from Jarvis into Notepad', icon: Terminal },
-                      { label: 'Shortcut', text: 'Press ctrl shift esc', icon: Cpu },
-                      { label: 'Minimize', text: 'Minimize window', icon: ChevronRight },
-                      { label: 'Show Desktop', text: 'Show desktop', icon: Monitor },
-                      { label: 'Refresh', text: 'Refresh page', icon: Activity },
-                      { label: 'New Tab', text: 'New tab', icon: Globe },
-                      { label: 'Browser Search', text: 'Search browser for latest ollama models', icon: Globe },
-                      { label: 'Go To URL', text: 'Go to github.com', icon: Monitor },
-                      { label: 'Open In Code', text: 'Open C:\\Users\\hogne\\OpenJarvis in VS Code', icon: Terminal },
-                      { label: 'DevTools', text: 'Open devtools', icon: Wrench },
-                      { label: 'Back', text: 'Go back', icon: ChevronRight },
-                      { label: 'Play/Pause', text: 'Play pause', icon: AudioLines },
-                      { label: 'Next Track', text: 'Next track', icon: Radio },
-                      { label: 'Volume Up', text: 'Volume up', icon: Activity },
-                      { label: 'Draft Message', text: 'Draft hello team, standup starts in five minutes into Slack', icon: Mail },
-                      { label: 'Draft Clipboard', text: 'Draft clipboard into Slack', icon: Mail },
-                      { label: 'Draft Selection', text: 'Draft selected text into Slack', icon: Mail },
-                      { label: 'Submit Message', text: 'Submit message in Slack', icon: CheckCircle2 },
-                      { label: 'Project Search', text: 'Search project for voice loop', icon: Folder },
-                      { label: 'Clipboard Search', text: 'Search project for clipboard', icon: Folder },
-                      { label: 'Selection Search', text: 'Search project for selected text', icon: Folder },
-                      { label: 'Palette', text: 'Open command palette', icon: Sparkles },
-                      { label: 'Reveal Path', text: 'Reveal C:\\Users\\hogne\\OpenJarvis in Explorer', icon: Folder },
-                      { label: 'Find PDFs', text: 'Find all PDFs in downloads', icon: Folder },
-                      { label: 'Screen Brief', text: 'What is on my screen?', icon: Monitor },
-                      { label: 'All Screens', text: 'What is on my screens?', icon: Monitor },
-                      { label: 'UI Targets', text: 'Find UI targets', icon: Monitor },
-                      { label: 'Screen Controls', text: 'What can I click here?', icon: Monitor },
-                      { label: 'All Screen Targets', text: 'Find UI targets on my screens', icon: Monitor },
-                      { label: 'Image Targets', text: 'Find UI targets in this image', icon: Sparkles },
-                      { label: 'Upload Image', text: 'Analyze this image', icon: Sparkles },
-                    ] as const).map(({ label, text, icon: Icon }) => (
-                      <button
-                        key={label}
-                        onClick={() => loadIntentPreset(text)}
-                        className="rounded-[0.95rem] border border-cyan-400/12 bg-black/20 px-3 py-3 text-left transition hover:bg-cyan-400/[0.08]"
-                      >
-                        <div className="flex items-center gap-2">
-                          <Icon className="h-4 w-4 text-cyan-200" />
-                          <div className="text-xs uppercase tracking-[0.22em] text-cyan-50/92">{label}</div>
-                        </div>
-                        <div className="mt-2 text-xs text-slate-300/72">{text}</div>
-                      </button>
-                    ))}
-                    </div>
-                    <div className="mt-3 rounded-[0.95rem] border border-cyan-400/10 bg-black/20 px-3 py-3">
-                      <div className="flex items-center justify-between gap-3">
-                        <div className="text-[10px] uppercase tracking-[0.22em] text-cyan-300/55">Document Intel</div>
-                        <div className="text-[10px] uppercase tracking-[0.22em] text-cyan-300/45">
-                          pdf · word · excel · powerpoint
-                        </div>
-                      </div>
-                      <div className="mt-2 text-sm text-slate-200/76">
-                        Upload business and finance documents for direct analysis in the HUD.
-                      </div>
-                      <input
-                        value={documentAnalysisTitle}
-                        onChange={(event) => setDocumentAnalysisTitle(event.target.value)}
-                        placeholder="Optional document set title"
-                        className="mt-3 w-full rounded-[0.85rem] border border-cyan-400/12 bg-slate-950/70 px-3 py-2 text-sm text-cyan-50 outline-none transition placeholder:text-slate-500 focus:border-cyan-300/40"
-                      />
-                      <div className="mt-3 grid gap-2 sm:grid-cols-[1fr_auto_auto]">
-                        <select
-                          value={documentAnalysisMode}
-                          onChange={(event) =>
-                              setDocumentAnalysisMode(
-                                event.target.value as 'summary' | 'business_review' | 'finance_review' | 'investment_memo' | 'kpi_extract',
-                              )
-                            }
-                          className="rounded-[0.85rem] border border-cyan-400/12 bg-slate-950/70 px-3 py-2 text-sm text-cyan-50 outline-none transition focus:border-cyan-300/40"
-                        >
-                          <option value="summary">Summary</option>
-                          <option value="business_review">Business Review</option>
-                          <option value="finance_review">Finance Review</option>
-                          <option value="investment_memo">Investment Memo</option>
-                          <option value="kpi_extract">KPI Extract</option>
-                        </select>
-                        <button
-                          onClick={() => void selectDocumentFiles()}
-                          className="rounded-[0.85rem] border border-cyan-400/12 bg-slate-950/70 px-3 py-2 text-[10px] uppercase tracking-[0.22em] text-cyan-100 transition hover:bg-cyan-400/[0.08]"
-                        >
-                          Upload Docs
-                        </button>
-                        <button
-                          onClick={() => void analyzeCurrentDocuments()}
-                          disabled={!documentFiles.length || documentBusy}
-                          className="rounded-[0.85rem] border border-cyan-400/12 bg-cyan-400/[0.08] px-3 py-2 text-[10px] uppercase tracking-[0.22em] text-cyan-100 transition hover:bg-cyan-400/[0.14] disabled:cursor-not-allowed disabled:opacity-40"
-                        >
-                          {documentBusy ? 'Analyzing' : 'Analyze Docs'}
-                        </button>
-                      </div>
-                      {documentFiles.length ? (
-                        <div className="mt-3 rounded-[0.85rem] border border-cyan-400/10 bg-slate-950/55 px-3 py-2 text-xs text-slate-200/76">
-                          {documentFiles.map((file) => file.name).join(', ')}
-                        </div>
-                      ) : null}
-                      {documentAnalysis ? (
-                        <div className="mt-3 rounded-[0.9rem] border border-cyan-400/10 bg-slate-950/55 px-3 py-3">
-                          <div className="flex items-center justify-between gap-3">
-                            <div className="text-[10px] uppercase tracking-[0.22em] text-cyan-300/55">Document Analysis</div>
-                            <div className="text-[10px] uppercase tracking-[0.22em] text-cyan-300/45">
-                              {documentAnalysis.mode.replace('_', ' ')} · {documentAnalysis.model}
-                            </div>
-                          </div>
-                          <pre className="mt-2 max-h-56 overflow-auto whitespace-pre-wrap break-words text-sm text-slate-200/76">
-                            {documentAnalysis.content}
-                          </pre>
-                            <div className="mt-3 flex gap-2">
-                              <button
-                                onClick={() =>
-                                  injectCommand(documentBrief?.prompt || `I analyzed these documents: ${documentAnalysis.files.join(', ')}.\nMode: ${documentAnalysis.mode}\n\n${documentAnalysis.content}\n\nTurn this into the next best action, decisions, and risks.`)
-                                }
-                                className="rounded-[0.85rem] border border-cyan-400/12 bg-cyan-400/[0.08] px-3 py-2 text-[10px] uppercase tracking-[0.22em] text-cyan-100 transition hover:bg-cyan-400/[0.14]"
-                              >
-                                Load Analysis
-                              </button>
-                              <button
-                                onClick={() => handoffWithBrief(documentBrief?.prompt || documentAnalysis.content, 'document-intel')}
-                                disabled={architectureBusy}
-                                className="rounded-[0.85rem] border border-cyan-400/12 bg-slate-950/70 px-3 py-2 text-[10px] uppercase tracking-[0.22em] text-cyan-100 transition hover:bg-cyan-400/[0.08] disabled:cursor-not-allowed disabled:opacity-40"
-                              >
-                                {architectureBusy ? 'Routing' : 'Route To Planner'}
-                              </button>
-                              <button
-                                onClick={() => injectCommand(documentBrief?.memoPrompt || documentAnalysis.content)}
-                                className="rounded-[0.85rem] border border-cyan-400/12 bg-slate-950/70 px-3 py-2 text-[10px] uppercase tracking-[0.22em] text-cyan-100 transition hover:bg-cyan-400/[0.08]"
-                              >
-                                Prepare Memo
-                              </button>
-                              <button
-                                onClick={() => void saveDocumentBrief()}
-                                className="rounded-[0.85rem] border border-cyan-400/12 bg-slate-950/70 px-3 py-2 text-[10px] uppercase tracking-[0.22em] text-cyan-100 transition hover:bg-cyan-400/[0.08]"
-                              >
-                                Save Brief
-                              </button>
-                              <button
-                                onClick={() => void exportCurrentDocumentAnalysis('docx')}
-                                className="rounded-[0.85rem] border border-cyan-400/12 bg-slate-950/70 px-3 py-2 text-[10px] uppercase tracking-[0.22em] text-cyan-100 transition hover:bg-cyan-400/[0.08]"
-                              >
-                                Export DOCX
-                              </button>
-                              <button
-                                onClick={() => void exportCurrentDocumentAnalysis(documentAnalysis.mode === 'kpi_extract' ? 'xlsx' : 'txt')}
-                                className="rounded-[0.85rem] border border-cyan-400/12 bg-slate-950/70 px-3 py-2 text-[10px] uppercase tracking-[0.22em] text-cyan-100 transition hover:bg-cyan-400/[0.08]"
-                              >
-                                {documentAnalysis.mode === 'kpi_extract' ? 'Export XLSX' : 'Export TXT'}
-                              </button>
-                              <button
-                                onClick={() =>
-                                  createFollowUpTask(
-                                  `Document review · ${documentAnalysisTitle.trim() || documentAnalysis.files[0] || 'analysis'}`,
-                                  documentAnalysis.content,
-                                )
-                              }
-                              className="rounded-[0.85rem] border border-emerald-300/18 bg-emerald-400/[0.08] px-3 py-2 text-[10px] uppercase tracking-[0.22em] text-emerald-100 transition hover:bg-emerald-400/[0.14]"
-                            >
-                              Make Task
-                            </button>
-                          </div>
-                        </div>
-                        ) : null}
-                        {durableOperatorMemory?.document_briefs?.length ? (
-                          <div className="mt-3 rounded-[0.9rem] border border-cyan-400/10 bg-slate-950/55 px-3 py-3">
-                            <div className="text-[10px] uppercase tracking-[0.22em] text-cyan-300/55">Recent Document Briefs</div>
-                            <div className="mt-3 space-y-3">
-                              {durableOperatorMemory.document_briefs.slice(0, 4).map((item) => (
-                                <div key={item.id} className="rounded-[0.85rem] border border-cyan-400/10 bg-black/20 px-3 py-3">
-                                  <div className="flex items-start justify-between gap-3">
-                                    <div>
-                                      <div className="text-sm text-cyan-50/92">{item.label}</div>
-                                      <div className="mt-1 text-[10px] uppercase tracking-[0.22em] text-cyan-300/55">
-                                        {item.mode.replace(/_/g, ' ')} · {item.created_at || 'saved'}
-                                      </div>
-                                    </div>
-                                  </div>
-                                  <div className="mt-2 text-sm text-slate-200/76">{item.summary}</div>
-                                  <div className="mt-3 flex gap-2">
-                                    <button
-                                      onClick={() =>
-                                        injectCommand(
-                                          `I saved a document brief.\nLabel: ${item.label}\nMode: ${item.mode}\nSummary: ${item.summary}\nDetails:\n${item.details}\nContinue from this document context and suggest the next best action.`,
-                                        )
-                                      }
-                                      className="rounded-[0.85rem] border border-cyan-400/12 bg-cyan-400/[0.08] px-3 py-2 text-[10px] uppercase tracking-[0.22em] text-cyan-100 transition hover:bg-cyan-400/[0.14]"
-                                    >
-                                      Load Brief
-                                    </button>
-                                    <button
-                                      onClick={() =>
-                                        injectCommand(
-                                          `Create a concise executive memo from this saved document brief.\nLabel: ${item.label}\nMode: ${item.mode}\nSummary: ${item.summary}\nDetails:\n${item.details}`,
-                                        )
-                                      }
-                                      className="rounded-[0.85rem] border border-cyan-400/12 bg-slate-950/70 px-3 py-2 text-[10px] uppercase tracking-[0.22em] text-cyan-100 transition hover:bg-cyan-400/[0.08]"
-                                    >
-                                      Memo
-                                    </button>
-                                  </div>
-                                </div>
-                              ))}
-                            </div>
-                          </div>
-                        ) : null}
-                      </div>
                     {intentPreview ? (
                       <div className="mt-3 rounded-[0.95rem] border border-cyan-400/10 bg-black/20 px-3 py-3">
                       <div className="text-[10px] uppercase tracking-[0.22em] text-cyan-300/55">Intent Preview</div>
@@ -6948,50 +6597,12 @@ export default function JarvisHudDashboard() {
                       </button>
                     ))}
                   </div>
-                  <div className="mt-4 rounded-[1rem] border border-cyan-400/10 bg-slate-950/55 p-3">
-                    <div className="text-[10px] uppercase tracking-[0.32em] text-cyan-300/55">Design Intelligence</div>
-                    <div className="mt-2 text-sm leading-7 text-slate-200/75">
-                      Turn visual, product, and project context into stronger creative direction and implementation guidance.
-                    </div>
-                    <div className="mt-3 grid gap-2 sm:grid-cols-2">
-                      {([
-                        ['Design Critique', () => loadDesignPrompt('critique')],
-                        ['Design System', () => loadDesignPrompt('system')],
-                        ['Creative Direction', () => loadDesignPrompt('creative')],
-                        ['Design To Code', () => loadDesignPrompt('implementation')],
-                      ] as const).map(([label, action]) => (
-                        <button
-                          key={label}
-                          onClick={action}
-                          className="rounded-[0.95rem] border border-cyan-400/12 bg-cyan-400/[0.08] px-3 py-3 text-xs uppercase tracking-[0.22em] text-cyan-100 transition hover:bg-cyan-400/[0.14]"
-                        >
-                          {label}
-                        </button>
-                      ))}
-                    </div>
-                    {designBrief ? (
-                      <div className="mt-3 rounded-[0.95rem] border border-cyan-400/10 bg-black/20 px-3 py-3">
-                        <div className="text-[10px] uppercase tracking-[0.22em] text-cyan-300/55">Design Brief</div>
-                        <div className="mt-2 text-sm leading-6 text-cyan-50/88">{designBrief.summary}</div>
-                        <div className="mt-3 flex flex-wrap gap-2">
-                          <button
-                            type="button"
-                            onClick={() => injectCommand(designBrief.creativePrompt)}
-                            className="rounded-full border border-cyan-400/20 bg-cyan-500/10 px-3 py-1.5 text-[10px] uppercase tracking-[0.3em] text-cyan-100 transition hover:border-cyan-300/40 hover:bg-cyan-500/20"
-                          >
-                            Load Brief
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => handoffWithBrief(designBrief.implementationPrompt, 'design-intel')}
-                            className="rounded-full border border-cyan-400/20 bg-cyan-500/10 px-3 py-1.5 text-[10px] uppercase tracking-[0.3em] text-cyan-100 transition hover:border-cyan-300/40 hover:bg-cyan-500/20"
-                          >
-                            Route To Planner
-                          </button>
-                        </div>
-                      </div>
-                    ) : null}
-                  </div>
+                  <DesignIntelligence
+                    designBrief={designBrief}
+                    onLoadPrompt={loadDesignPrompt}
+                    onLoadBrief={() => injectCommand(designBrief?.creativePrompt || '')}
+                    onRouteToPlanner={() => void handoffWithBrief(designBrief?.implementationPrompt || '', 'design-intel')}
+                  />
                   <div className="mt-3 grid gap-2 sm:grid-cols-2">
                     {([
                       ['Git Status', () => loadWorkbenchPreset('status')],
@@ -7324,34 +6935,7 @@ export default function JarvisHudDashboard() {
             </Panel>
 
             <Panel title="Commander Queue" kicker="Next best actions">
-              <div className="space-y-3">
-                {commanderQueue.length ? (
-                  commanderQueue.map((item) => (
-                    <div
-                      key={item.id}
-                      className="rounded-[1.15rem] border border-cyan-400/10 bg-slate-950/50 px-4 py-3"
-                    >
-                      <div className="flex items-start justify-between gap-3">
-                        <div>
-                          <div className="text-[10px] uppercase tracking-[0.28em] text-cyan-300/55">{item.label}</div>
-                          <div className="mt-1 text-sm uppercase tracking-[0.14em] text-cyan-50/92">{item.title}</div>
-                        </div>
-                        <button
-                          onClick={item.action}
-                          className="rounded-[0.85rem] border border-cyan-300/20 bg-cyan-400/[0.08] px-3 py-2 text-[10px] uppercase tracking-[0.22em] text-cyan-100 transition hover:bg-cyan-400/[0.14]"
-                        >
-                          {item.actionLabel}
-                        </button>
-                      </div>
-                      <div className="mt-2 text-sm leading-6 text-slate-200/72">{item.detail}</div>
-                    </div>
-                  ))
-                ) : (
-                  <div className="rounded-[1.15rem] border border-cyan-400/10 bg-slate-950/50 px-4 py-3 text-sm text-slate-200/72">
-                    No urgent work in queue. JARVIS is clear to listen, monitor, and prepare the next routine.
-                  </div>
-                )}
-              </div>
+              <CommanderQueue items={commanderQueue} />
             </Panel>
           </div>
 
