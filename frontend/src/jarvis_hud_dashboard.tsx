@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { Suspense, lazy, useEffect, useMemo, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import {
   Activity,
@@ -136,11 +136,33 @@ import { listConnectors } from './lib/connectors-api';
 import { useAppStore } from './lib/store';
 import type { ChatMessage, ToolCallInfo } from './types';
 import { InputArea } from './components/Chat/InputArea';
-import { CommanderQueue } from './components/Dashboard/CommanderQueue';
-import { DesignIntelligence } from './components/Dashboard/DesignIntelligence';
-import { DocumentIntel } from './components/Dashboard/DocumentIntel';
-import { MissionMatrix, type MissionMatrixItem } from './components/Dashboard/MissionMatrix';
+import type { MissionMatrixItem } from './components/Dashboard/MissionMatrix';
 import { useSpeech } from './hooks/useSpeech';
+
+const CommanderQueue = lazy(() =>
+  import('./components/Dashboard/CommanderQueue').then((module) => ({ default: module.CommanderQueue })),
+);
+const ActionCenterPanel = lazy(() =>
+  import('./components/Dashboard/ActionCenterPanel').then((module) => ({ default: module.ActionCenterPanel })),
+);
+const CoreAgentsPanel = lazy(() =>
+  import('./components/Dashboard/CoreAgentsPanel').then((module) => ({ default: module.CoreAgentsPanel })),
+);
+const DesignIntelligence = lazy(() =>
+  import('./components/Dashboard/DesignIntelligence').then((module) => ({ default: module.DesignIntelligence })),
+);
+const DocumentIntel = lazy(() =>
+  import('./components/Dashboard/DocumentIntel').then((module) => ({ default: module.DocumentIntel })),
+);
+const IntentConsoleFeedback = lazy(() =>
+  import('./components/Dashboard/IntentConsoleFeedback').then((module) => ({ default: module.IntentConsoleFeedback })),
+);
+const MissionMatrix = lazy(() =>
+  import('./components/Dashboard/MissionMatrix').then((module) => ({ default: module.MissionMatrix })),
+);
+const VisualIntelPanel = lazy(() =>
+  import('./components/Dashboard/VisualIntelPanel').then((module) => ({ default: module.VisualIntelPanel })),
+);
 
 function getApiBase() {
   const envBase = (import.meta.env.VITE_API_BASE_URL as string | undefined)?.trim();
@@ -262,6 +284,10 @@ function formatReminderMoment(value: string) {
   const parsed = new Date(value);
   if (Number.isNaN(parsed.getTime())) return value;
   return parsed.toLocaleString();
+}
+
+function DashboardSectionFallback({ label = 'Loading panel...' }: { label?: string }) {
+  return <div className="text-sm text-slate-200/72">{label}</div>;
 }
 
 function normalizeContactKey(value: string) {
@@ -4873,124 +4899,24 @@ export default function JarvisHudDashboard() {
             </Panel>
 
             <Panel title="Core Agents" kicker="Explicit architecture">
-              <div className="rounded-[1.15rem] border border-cyan-400/10 bg-slate-950/50 px-4 py-3">
-                <div className="flex items-center justify-between gap-3">
-                  <div>
-                    <div className="text-sm uppercase tracking-[0.18em] text-cyan-50/92">
-                      {agentArchitecture
-                        ? `${agentArchitecture.summary.ready_roles}/${agentArchitecture.summary.total_roles} roles ready`
-                        : 'Role status pending'}
-                    </div>
-                    <div className="mt-1 text-[10px] uppercase tracking-[0.28em] text-cyan-300/55">
-                      Voice, planner, executor, vision, and memory
-                    </div>
-                  </div>
-                  <button
-                    onClick={ensureCoreArchitecture}
-                    disabled={architectureBusy}
-                    className="rounded-[0.95rem] border border-cyan-400/12 bg-cyan-400/[0.08] px-3 py-2 text-[10px] uppercase tracking-[0.22em] text-cyan-100 transition hover:bg-cyan-400/[0.14] disabled:cursor-not-allowed disabled:opacity-40"
-                  >
-                    {architectureBusy ? 'Provisioning' : 'Ensure Core Team'}
-                  </button>
-                </div>
-                <div className="mt-3 flex gap-2">
-                  <button
-                    onClick={handoffToArchitecture}
-                    disabled={architectureBusy}
-                    className="rounded-[0.95rem] border border-cyan-400/12 bg-slate-950/70 px-3 py-2 text-[10px] uppercase tracking-[0.22em] text-cyan-100 transition hover:bg-cyan-400/[0.08] disabled:cursor-not-allowed disabled:opacity-40"
-                  >
-                    {architectureBusy ? 'Routing' : 'Planner Handoff'}
-                  </button>
-                </div>
-                {agentArchitecture?.handoff ? (
-                  <div className="mt-3 rounded-[0.95rem] border border-cyan-400/10 bg-black/20 px-3 py-3">
-                    <div className="text-[10px] uppercase tracking-[0.22em] text-cyan-300/55">Latest Handoff</div>
-                    <div className="mt-2 text-sm text-slate-200/76 whitespace-pre-wrap break-words">
-                      {agentArchitecture.handoff.brief}
-                    </div>
-                    <div className="mt-2 text-[10px] uppercase tracking-[0.22em] text-cyan-300/45">
-                      Planner {agentArchitecture.handoff.planner?.task_id || 'queued'} - Executor {agentArchitecture.handoff.executor?.task_id || 'queued'}
-                    </div>
-                  </div>
-                ) : null}
-                {architectureTaskOutcome ? (
-                  <div className="mt-3 rounded-[0.95rem] border border-cyan-400/10 bg-black/20 px-3 py-3">
-                    <div className="flex items-center justify-between gap-3">
-                      <div className="text-[10px] uppercase tracking-[0.22em] text-cyan-300/55">
-                        {architectureTaskOutcome.kind === 'failed' ? 'Latest Agent Blocker' : 'Latest Agent Outcome'}
-                      </div>
-                      <div
-                        className={`text-[10px] uppercase tracking-[0.22em] ${
-                          architectureTaskOutcome.kind === 'failed' ? 'text-amber-300/75' : 'text-emerald-300/75'
-                        }`}
-                      >
-                        {architectureTaskOutcome.label}
-                      </div>
-                    </div>
-                    <div className="mt-2 text-sm text-slate-200/76">{architectureTaskOutcome.summary}</div>
-                  </div>
-                ) : null}
-                <div className="mt-3 grid gap-2">
-                  {(agentArchitecture?.roles || []).map((role) => (
-                    <div
-                      key={role.role}
-                      className="rounded-[0.95rem] border border-cyan-400/10 bg-black/20 px-3 py-3"
-                    >
-                      <div className="flex items-start justify-between gap-3">
-                        <div>
-                          <div className="text-xs uppercase tracking-[0.18em] text-cyan-50/92">{role.title}</div>
-                          <div className="mt-1 text-[10px] uppercase tracking-[0.22em] text-cyan-300/55">
-                            {role.status} - {role.source}
-                          </div>
-                        </div>
-                        {role.agent_id ? (
-                          <button
-                            onClick={() => runArchitectureRole(role.role)}
-                            disabled={architectureBusy || role.status === 'running'}
-                            className="rounded-[0.85rem] border border-cyan-400/12 bg-slate-950/70 px-3 py-2 text-[10px] uppercase tracking-[0.22em] text-cyan-100 transition hover:bg-cyan-400/[0.08] disabled:cursor-not-allowed disabled:opacity-40"
-                          >
-                            {role.status === 'running' ? 'Running' : 'Run'}
-                          </button>
-                        ) : (
-                          <div className={`text-[10px] uppercase tracking-[0.22em] ${role.ready ? 'text-emerald-300/75' : 'text-amber-300/75'}`}>
-                            {role.ready ? 'Ready' : 'Needs role'}
-                          </div>
-                        )}
-                      </div>
-                      <div className="mt-2 text-sm text-slate-200/76">{role.detail}</div>
-                      {agentRoleTasks[role.role]?.length ? (
-                        <div className="mt-3 grid gap-2">
-                          {agentRoleTasks[role.role].slice(0, 2).map((task) => (
-                            <div
-                              key={task.id}
-                              className="rounded-[0.85rem] border border-cyan-400/10 bg-slate-950/55 px-3 py-2"
-                            >
-                              <div className="flex items-center justify-between gap-3">
-                                <div className="text-[10px] uppercase tracking-[0.22em] text-cyan-300/55">
-                                  {task.status}
-                                </div>
-                                <div className="text-[10px] uppercase tracking-[0.22em] text-cyan-300/45">
-                                  {new Date(task.created_at * 1000).toLocaleTimeString()}
-                                </div>
-                              </div>
-                              <div className="mt-1 text-sm text-slate-200/72 line-clamp-3">{task.description}</div>
-                            </div>
-                          ))}
-                        </div>
-                      ) : null}
-                    </div>
-                  ))}
-                  {!agentArchitecture?.roles?.length ? (
-                    <div className="rounded-[0.95rem] border border-cyan-400/10 bg-black/20 px-3 py-3 text-sm text-slate-200/72">
-                      Agent architecture status will appear once the backend reports the core roles.
-                    </div>
-                  ) : null}
-                </div>
-              </div>
+              <Suspense fallback={<DashboardSectionFallback label="Loading core agents..." />}>
+                <CoreAgentsPanel
+                  architecture={agentArchitecture}
+                  architectureBusy={architectureBusy}
+                  agentNotice={agentNotice}
+                  architectureTaskOutcome={architectureTaskOutcome}
+                  roleTasks={agentRoleTasks}
+                  onEnsureCoreTeam={ensureCoreArchitecture}
+                  onPlannerHandoff={handoffToArchitecture}
+                  onRunRole={runArchitectureRole}
+                />
+              </Suspense>
             </Panel>
 
             <Panel title="Mission Matrix" kicker="Shared autonomy loop">
-              <MissionMatrix missions={autonomyMissions} onRunMission={runMissionAction} />
+              <Suspense fallback={<DashboardSectionFallback label="Loading mission matrix..." />}>
+                <MissionMatrix missions={autonomyMissions} onRunMission={runMissionAction} />
+              </Suspense>
             </Panel>
           </div> : null}
 
@@ -5231,968 +5157,159 @@ export default function JarvisHudDashboard() {
                       </div>
                     </div>
                   </div>
-                  <DocumentIntel
-                      title={documentAnalysisTitle}
-                      onTitleChange={setDocumentAnalysisTitle}
-                      mode={documentAnalysisMode}
-                      onModeChange={setDocumentAnalysisMode}
-                      onSelectFiles={() => void selectDocumentFiles()}
-                      onAnalyze={() => void analyzeCurrentDocuments()}
-                      files={documentFiles}
-                      busy={documentBusy}
-                      analysis={documentAnalysis}
-                      brief={documentBrief}
-                      architectureBusy={architectureBusy}
-                      onLoadAnalysis={() =>
-                        injectCommand(
-                          documentBrief?.prompt ||
-                            `I analyzed these documents: ${documentAnalysis?.files.join(', ') || ''}.
+                  <Suspense fallback={<DashboardSectionFallback label="Loading document intelligence..." />}>
+                    <DocumentIntel
+                        title={documentAnalysisTitle}
+                        onTitleChange={setDocumentAnalysisTitle}
+                        mode={documentAnalysisMode}
+                        onModeChange={setDocumentAnalysisMode}
+                        onSelectFiles={() => void selectDocumentFiles()}
+                        onAnalyze={() => void analyzeCurrentDocuments()}
+                        files={documentFiles}
+                        busy={documentBusy}
+                        analysis={documentAnalysis}
+                        brief={documentBrief}
+                        architectureBusy={architectureBusy}
+                        onLoadAnalysis={() =>
+                          injectCommand(
+                            documentBrief?.prompt ||
+                              `I analyzed these documents: ${documentAnalysis?.files.join(', ') || ''}.
 Mode: ${documentAnalysis?.mode || ''}
 
 ${documentAnalysis?.content || ''}
 
 Turn this into the next best action, decisions, and risks.`,
-                        )
-                      }
-                      onRouteToPlanner={() => void handoffWithBrief(documentBrief?.prompt || documentAnalysis?.content || '', 'document-intel')}
-                      onPrepareMemo={() => injectCommand(documentBrief?.memoPrompt || documentAnalysis?.content || '')}
-                      onSaveBrief={() => void saveDocumentBrief()}
-                      onExportDocx={() => void exportCurrentDocumentAnalysis('docx')}
-                      onExportSecondary={() => void exportCurrentDocumentAnalysis(documentAnalysis?.mode === 'kpi_extract' ? 'xlsx' : 'txt')}
-                      secondaryExportLabel={documentAnalysis?.mode === 'kpi_extract' ? 'Export XLSX' : 'Export TXT'}
-                      onMakeTask={() =>
-                        createFollowUpTask(
-                          `Document review / ${documentAnalysisTitle.trim() || documentAnalysis?.files[0] || 'analysis'}`,
-                          documentAnalysis?.content || '',
-                        )
-                      }
-                      recentBriefs={durableOperatorMemory?.document_briefs || []}
-                      onLoadSavedBrief={(item) =>
-                        injectCommand(
-                          `I saved a document brief.
+                          )
+                        }
+                        onRouteToPlanner={() => void handoffWithBrief(documentBrief?.prompt || documentAnalysis?.content || '', 'document-intel')}
+                        onPrepareMemo={() => injectCommand(documentBrief?.memoPrompt || documentAnalysis?.content || '')}
+                        onSaveBrief={() => void saveDocumentBrief()}
+                        onExportDocx={() => void exportCurrentDocumentAnalysis('docx')}
+                        onExportSecondary={() => void exportCurrentDocumentAnalysis(documentAnalysis?.mode === 'kpi_extract' ? 'xlsx' : 'txt')}
+                        secondaryExportLabel={documentAnalysis?.mode === 'kpi_extract' ? 'Export XLSX' : 'Export TXT'}
+                        onMakeTask={() =>
+                          createFollowUpTask(
+                            `Document review / ${documentAnalysisTitle.trim() || documentAnalysis?.files[0] || 'analysis'}`,
+                            documentAnalysis?.content || '',
+                          )
+                        }
+                        recentBriefs={durableOperatorMemory?.document_briefs || []}
+                        onLoadSavedBrief={(item) =>
+                          injectCommand(
+                            `I saved a document brief.
 Label: ${item.label}
 Mode: ${item.mode}
 Summary: ${item.summary}
 Details:
 ${item.details}
 Continue from this document context and suggest the next best action.`,
-                        )
-                      }
-                      onMemoSavedBrief={(item) =>
-                        injectCommand(
-                          `Create a concise executive memo from this saved document brief.
+                          )
+                        }
+                        onMemoSavedBrief={(item) =>
+                          injectCommand(
+                            `Create a concise executive memo from this saved document brief.
 Label: ${item.label}
 Mode: ${item.mode}
 Summary: ${item.summary}
 Details:
 ${item.details}`,
-                        )
-                      }
+                          )
+                        }
+                      />
+                  </Suspense>
+                  <Suspense fallback={<DashboardSectionFallback label="Loading intent feedback..." />}>
+                    <IntentConsoleFeedback intentPreview={intentPreview} intentExecution={intentExecution} />
+                  </Suspense>
+                  <Suspense fallback={<DashboardSectionFallback label="Loading visual intel..." />}>
+                    <VisualIntelPanel
+                      screenSnapshot={screenSnapshot}
+                      screenDeck={screenDeck}
+                      screenContextNote={screenContextNote}
+                      setScreenContextNote={setScreenContextNote}
+                      setScreenSnapshot={setScreenSnapshot}
+                      setScreenDeck={setScreenDeck}
+                      captureScreenSnapshot={captureScreenSnapshot}
+                      injectCommand={injectCommand}
+                      analyzeCurrentVisual={analyzeCurrentVisual}
+                      visionBusy={visionBusy}
+                      extractCurrentVisualText={extractCurrentVisualText}
+                      analyzeAllScreens={analyzeAllScreens}
+                      extractAllScreensText={extractAllScreensText}
+                      createTaskFromScreenContext={createTaskFromScreenContext}
+                      actionBusy={actionBusy}
+                      rememberScreenContext={rememberScreenContext}
+                      intentBusy={intentBusy}
+                      visionAnalysis={visionAnalysis}
+                      visionTextExtraction={visionTextExtraction}
+                      createTaskFromVisionResult={createTaskFromVisionResult}
+                      rememberVisionResult={rememberVisionResult}
+                      suggestVisualActions={suggestVisualActions}
+                      extractVisualSignals={extractVisualSignals}
+                      extractVisualUiTargets={extractVisualUiTargets}
+                      setVisionAnalysis={setVisionAnalysis}
+                      setVisionSignals={setVisionSignals}
+                      setVisionTextExtraction={setVisionTextExtraction}
+                      setVisionSuggestedActions={setVisionSuggestedActions}
+                      setVisionUiTargets={setVisionUiTargets}
+                      setVisionUiPlan={setVisionUiPlan}
+                      setVisionUiVerify={setVisionUiVerify}
+                      setVisionQuery={setVisionQuery}
+                      setVisionQuestion={setVisionQuestion}
+                      visionQuestion={visionQuestion}
+                      askVisualQuestion={askVisualQuestion}
+                      visualBrief={visualBrief}
+                      architectureBusy={architectureBusy}
+                      handoffWithBrief={handoffWithBrief}
+                      buildDailyOpsPrompt={buildDailyOpsPrompt}
+                      saveVisualBrief={saveVisualBrief}
+                      visionSignals={visionSignals}
+                      visionQuery={visionQuery}
+                      visionUiTargets={visionUiTargets}
+                      visionUiVerify={visionUiVerify}
+                      verifyVisualUiTarget={verifyVisualUiTarget}
+                      visionUiPlan={visionUiPlan}
+                      planVisualUiTarget={planVisualUiTarget}
+                      visionSuggestedActions={visionSuggestedActions}
+                      stageVisualDesktopIntent={stageVisualDesktopIntent}
+                      stageTask={stageTask}
+                      setActionBusy={setActionBusy}
+                      setActionCenter={setActionCenter}
+                      setActionNotice={setActionNotice}
+                      durableOperatorMemory={durableOperatorMemory}
+                      apiBase={apiBase}
+                      restoreVisualObservation={restoreVisualObservation}
+                      setWorkbenchNotice={setWorkbenchNotice}
                     />
-                    {intentPreview ? (
-                      <div className="mt-3 rounded-[0.95rem] border border-cyan-400/10 bg-black/20 px-3 py-3">
-                      <div className="text-[10px] uppercase tracking-[0.22em] text-cyan-300/55">Intent Preview</div>
-                      <div className="mt-1 text-sm text-cyan-50/92">
-                        {intentPreview.type} · {intentPreview.action}
-                      </div>
-                      <div className="mt-1 text-xs uppercase tracking-[0.22em] text-cyan-300/55">
-                        Risk: {intentPreview.risk} {intentPreview.requires_approval ? '· approval required' : ''}
-                      </div>
-                      <div className="mt-2 text-sm text-slate-200/76">
-                        {intentPreview.content || intentPreview.query || intentPreview.target || intentPreview.command || 'No extra detail.'}
-                      </div>
-                    </div>
-                  ) : null}
-                  {intentExecution?.result?.content ? (
-                    <div className="mt-3 rounded-[0.95rem] border border-cyan-400/10 bg-black/20 px-3 py-3">
-                      <div className="text-[10px] uppercase tracking-[0.22em] text-cyan-300/55">Intent Result</div>
-                      <pre className="mt-2 max-h-48 overflow-auto whitespace-pre-wrap break-words text-sm text-slate-200/76">
-                        {intentExecution.result.content}
-                      </pre>
-                    </div>
-                  ) : null}
-                  {intentExecution?.result?.metadata &&
-                  ('target_ready' in intentExecution.result.metadata ||
-                    'active_window_title' in intentExecution.result.metadata) ? (
-                    <div className="mt-3 rounded-[0.95rem] border border-cyan-400/10 bg-black/20 px-3 py-3">
-                      {(() => {
-                        const targetReady = Boolean(intentExecution.result.metadata?.target_ready);
-                        const targetReason = String(intentExecution.result.metadata?.target_reason || 'No readiness note available.');
-                        const activeWindowTitle = String(intentExecution.result.metadata?.active_window_title || '');
-                        const submitMode = String(intentExecution.result.metadata?.submit_mode || '');
-                        return (
-                          <>
-                      <div className="flex items-center justify-between gap-3">
-                        <div className="text-[10px] uppercase tracking-[0.22em] text-cyan-300/55">Target Readiness</div>
-                        <div
-                          className={`text-[10px] uppercase tracking-[0.22em] ${targetReady ? 'text-emerald-300/80' : 'text-amber-300/80'}`}
-                        >
-                          {targetReady ? 'ready' : 'verify first'}
-                        </div>
-                      </div>
-                      <div className="mt-2 text-sm text-slate-200/76">
-                        {targetReason}
-                      </div>
-                      {activeWindowTitle ? (
-                        <div className="mt-2 text-xs text-cyan-200/65">
-                          Active window: {activeWindowTitle}
-                        </div>
-                      ) : null}
-                      {submitMode ? (
-                        <div className="mt-1 text-xs uppercase tracking-[0.18em] text-cyan-200/65">
-                          Submit mode: {submitMode}
-                        </div>
-                      ) : null}
-                          </>
-                        );
-                      })()}
-                    </div>
-                  ) : null}
-                  {intentExecution?.result?.items?.length ? (
-                    <div className="mt-3 space-y-2">
-                      {intentExecution.result.items.slice(0, 3).map((item, index) => (
-                        <div
-                          key={`${item.content}-${index}`}
-                          className="rounded-[0.95rem] border border-cyan-400/10 bg-black/20 px-3 py-3"
-                        >
-                          <div className="text-[10px] uppercase tracking-[0.22em] text-cyan-300/55">
-                            Memory Match · {item.score.toFixed(2)}
-                          </div>
-                          <div className="mt-2 text-sm text-slate-200/76">{item.content}</div>
-                        </div>
-                      ))}
-                    </div>
-                  ) : null}
-                  {intentExecution?.result?.sources?.length ? (
-                    <div className="mt-3 grid gap-2">
-                      {intentExecution.result.sources.slice(0, 4).map((item) => (
-                        <div
-                          key={`${item.url}-${item.title}`}
-                          className="rounded-[0.95rem] border border-cyan-400/10 bg-black/20 px-3 py-3"
-                        >
-                          <div className="text-[10px] uppercase tracking-[0.22em] text-cyan-300/55">Web Source</div>
-                          <div className="mt-1 text-sm text-cyan-50/92">{item.title}</div>
-                          <a
-                            href={item.url}
-                            target="_blank"
-                            rel="noreferrer"
-                            className="mt-1 block text-xs text-cyan-300/80 underline-offset-4 hover:underline"
-                          >
-                            {item.url}
-                          </a>
-                          <div className="mt-2 text-sm text-slate-200/76">{item.snippet}</div>
-                        </div>
-                      ))}
-                    </div>
-                  ) : null}
-                  {screenSnapshot ? (
-                    <div className="mt-3 rounded-[0.95rem] border border-cyan-400/10 bg-black/20 px-3 py-3">
-                      <div className="flex items-center justify-between gap-3">
-                        <div className="text-[10px] uppercase tracking-[0.22em] text-cyan-300/55">
-                          {screenSnapshot.source === 'upload' ? 'Visual Upload' : 'Screen Snapshot'}
-                        </div>
-                        <div className="text-[10px] uppercase tracking-[0.22em] text-cyan-300/45">
-                          {new Date(screenSnapshot.capturedAt).toLocaleTimeString()}
-                        </div>
-                      </div>
-                      <div className="mt-1 text-xs text-slate-300/65">{screenSnapshot.label}</div>
-                      <img
-                        src={screenSnapshot.dataUrl}
-                        alt={screenSnapshot.label}
-                        className="mt-3 max-h-48 w-full rounded-[0.95rem] border border-cyan-400/10 object-cover"
-                      />
-                      <textarea
-                        value={screenContextNote}
-                        onChange={(event) => setScreenContextNote(event.target.value)}
-                        placeholder="What matters in this visual? Add a short note so JARVIS can turn it into a task or memory."
-                        className="mt-3 min-h-[84px] w-full rounded-[0.95rem] border border-cyan-400/10 bg-slate-950/70 px-3 py-3 text-sm text-slate-100 outline-none placeholder:text-slate-500"
-                      />
-                      {screenDeck.length > 1 ? (
-                        <div className="mt-3">
-                          <div className="text-[10px] uppercase tracking-[0.22em] text-cyan-300/55">
-                            Screen Deck · {screenDeck.length}
-                          </div>
-                          <div className="mt-2 grid gap-2 sm:grid-cols-2">
-                            {screenDeck.map((item) => (
-                              <button
-                                key={`${item.label}-${item.capturedAt}`}
-                                onClick={() => {
-                                  setScreenSnapshot(item);
-                                  setVisionAnalysis(null);
-                                }}
-                                className={`rounded-[0.9rem] border px-3 py-3 text-left transition ${
-                                  screenSnapshot?.capturedAt === item.capturedAt
-                                    ? 'border-cyan-300/30 bg-cyan-400/[0.1]'
-                                    : 'border-cyan-400/10 bg-slate-950/55 hover:bg-cyan-400/[0.08]'
-                                }`}
-                              >
-                                <div className="text-xs uppercase tracking-[0.2em] text-cyan-100/85">{item.label}</div>
-                                <div className="mt-1 text-[10px] uppercase tracking-[0.2em] text-cyan-300/55">
-                                  {new Date(item.capturedAt).toLocaleTimeString()}
-                                </div>
-                              </button>
-                            ))}
-                          </div>
-                        </div>
-                      ) : null}
-                      <div className="mt-3 flex gap-2">
-                        <button
-                          onClick={() => captureScreenSnapshot(`Screen ${screenDeck.length + 1}`, true)}
-                          className="rounded-[0.85rem] border border-cyan-400/12 bg-slate-950/70 px-3 py-2 text-[10px] uppercase tracking-[0.22em] text-cyan-100 transition hover:bg-cyan-400/[0.08]"
-                        >
-                          Add Screen
-                        </button>
-                        <button
-                          onClick={() =>
-                            injectCommand(
-                              screenSnapshot.source === 'upload'
-                                ? 'I uploaded an image into the HUD. Help me figure out what the most important visible detail is, then ask one clarifying question before you suggest the next action.'
-                                : 'I captured a screen snapshot in the HUD. Help me figure out what the most important visible task is, then ask one clarifying question before you suggest the next action.',
-                            )
-                          }
-                          className="rounded-[0.85rem] border border-cyan-400/12 bg-cyan-400/[0.08] px-3 py-2 text-[10px] uppercase tracking-[0.22em] text-cyan-100 transition hover:bg-cyan-400/[0.14]"
-                        >
-                          Load Visual Prompt
-                        </button>
-                        <button
-                          onClick={analyzeCurrentVisual}
-                          disabled={visionBusy}
-                          className="rounded-[0.85rem] border border-cyan-400/12 bg-cyan-400/[0.08] px-3 py-2 text-[10px] uppercase tracking-[0.22em] text-cyan-100 transition hover:bg-cyan-400/[0.14] disabled:cursor-not-allowed disabled:opacity-50"
-                        >
-                          {visionBusy ? 'Analyzing' : 'Analyze'}
-                        </button>
-                        <button
-                          onClick={extractCurrentVisualText}
-                          disabled={visionBusy}
-                          className="rounded-[0.85rem] border border-cyan-400/12 bg-cyan-400/[0.08] px-3 py-2 text-[10px] uppercase tracking-[0.22em] text-cyan-100 transition hover:bg-cyan-400/[0.14] disabled:cursor-not-allowed disabled:opacity-50"
-                        >
-                          {visionBusy ? 'Extracting' : 'Extract Text'}
-                        </button>
-                        <button
-                          onClick={analyzeAllScreens}
-                          disabled={visionBusy || !screenDeck.length}
-                          className="rounded-[0.85rem] border border-cyan-400/12 bg-cyan-400/[0.08] px-3 py-2 text-[10px] uppercase tracking-[0.22em] text-cyan-100 transition hover:bg-cyan-400/[0.14] disabled:cursor-not-allowed disabled:opacity-50"
-                        >
-                          {visionBusy ? 'Analyzing' : `Analyze All${screenDeck.length > 1 ? ` (${screenDeck.length})` : ''}`}
-                        </button>
-                        <button
-                          onClick={extractAllScreensText}
-                          disabled={visionBusy || !screenDeck.length}
-                          className="rounded-[0.85rem] border border-cyan-400/12 bg-cyan-400/[0.08] px-3 py-2 text-[10px] uppercase tracking-[0.22em] text-cyan-100 transition hover:bg-cyan-400/[0.14] disabled:cursor-not-allowed disabled:opacity-50"
-                        >
-                          {visionBusy ? 'Extracting' : `Extract All${screenDeck.length > 1 ? ` (${screenDeck.length})` : ''}`}
-                        </button>
-                        <button
-                          onClick={createTaskFromScreenContext}
-                          disabled={actionBusy !== null || !screenContextNote.trim()}
-                          className="rounded-[0.85rem] border border-cyan-400/12 bg-cyan-400/[0.08] px-3 py-2 text-[10px] uppercase tracking-[0.22em] text-cyan-100 transition hover:bg-cyan-400/[0.14] disabled:cursor-not-allowed disabled:opacity-50"
-                        >
-                          Make Task
-                        </button>
-                        <button
-                          onClick={rememberScreenContext}
-                          disabled={intentBusy !== null || !screenContextNote.trim()}
-                          className="rounded-[0.85rem] border border-cyan-400/12 bg-slate-950/70 px-3 py-2 text-[10px] uppercase tracking-[0.22em] text-cyan-100 transition hover:bg-cyan-400/[0.08] disabled:cursor-not-allowed disabled:opacity-50"
-                        >
-                          Remember
-                        </button>
-                        <button
-                          onClick={createTaskFromVisionResult}
-                          disabled={actionBusy !== null || (!visionAnalysis?.content && !visionTextExtraction?.content)}
-                          className="rounded-[0.85rem] border border-emerald-300/18 bg-emerald-400/[0.08] px-3 py-2 text-[10px] uppercase tracking-[0.22em] text-emerald-100 transition hover:bg-emerald-400/[0.14] disabled:cursor-not-allowed disabled:opacity-50"
-                        >
-                          Task From Vision
-                        </button>
-                        <button
-                          onClick={rememberVisionResult}
-                          disabled={intentBusy !== null || (!visionAnalysis?.content && !visionTextExtraction?.content)}
-                          className="rounded-[0.85rem] border border-cyan-400/12 bg-slate-950/70 px-3 py-2 text-[10px] uppercase tracking-[0.22em] text-cyan-100 transition hover:bg-cyan-400/[0.08] disabled:cursor-not-allowed disabled:opacity-50"
-                        >
-                          Remember Result
-                        </button>
-                        <button
-                          onClick={suggestVisualActions}
-                          disabled={visionBusy || !screenDeck.length}
-                          className="rounded-[0.85rem] border border-cyan-400/12 bg-slate-950/70 px-3 py-2 text-[10px] uppercase tracking-[0.22em] text-cyan-100 transition hover:bg-cyan-400/[0.08] disabled:cursor-not-allowed disabled:opacity-50"
-                        >
-                          {visionBusy ? 'Planning' : 'Suggest Actions'}
-                        </button>
-                        <button
-                          onClick={extractVisualSignals}
-                          disabled={visionBusy || !screenDeck.length}
-                          className="rounded-[0.85rem] border border-cyan-400/12 bg-slate-950/70 px-3 py-2 text-[10px] uppercase tracking-[0.22em] text-cyan-100 transition hover:bg-cyan-400/[0.08] disabled:cursor-not-allowed disabled:opacity-50"
-                        >
-                          {visionBusy ? 'Scanning' : 'Extract Signals'}
-                        </button>
-                        <button
-                          onClick={extractVisualUiTargets}
-                          disabled={visionBusy || !screenDeck.length}
-                          className="rounded-[0.85rem] border border-cyan-400/12 bg-slate-950/70 px-3 py-2 text-[10px] uppercase tracking-[0.22em] text-cyan-100 transition hover:bg-cyan-400/[0.08] disabled:cursor-not-allowed disabled:opacity-50"
-                        >
-                          {visionBusy ? 'Scanning' : 'Find UI Targets'}
-                        </button>
-                        <button
-                          onClick={() => {
-                            setScreenSnapshot(null);
-                            setScreenDeck([]);
-                            setScreenContextNote('');
-                            setVisionAnalysis(null);
-                            setVisionSignals(null);
-                            setVisionTextExtraction(null);
-                            setVisionSuggestedActions(null);
-                            setVisionUiTargets(null);
-                            setVisionUiPlan(null);
-                            setVisionUiVerify(null);
-                            setVisionQuery(null);
-                            setVisionQuestion('');
-                          }}
-                          className="rounded-[0.85rem] border border-cyan-400/12 bg-slate-950/70 px-3 py-2 text-[10px] uppercase tracking-[0.22em] text-cyan-100 transition hover:bg-cyan-400/[0.08]"
-                        >
-                          Clear Visual
-                        </button>
-                      </div>
-                      <div className="mt-3 grid gap-3 md:grid-cols-[1fr_160px]">
-                        <input
-                          value={visionQuestion}
-                          onChange={(event) => setVisionQuestion(event.target.value)}
-                          placeholder="What matters most on these screens?"
-                          className="rounded-[0.9rem] border border-cyan-400/10 bg-slate-950/70 px-4 py-3 text-sm text-slate-100 outline-none placeholder:text-slate-500"
-                        />
-                        <button
-                          onClick={askVisualQuestion}
-                          disabled={visionBusy || !screenDeck.length || !visionQuestion.trim()}
-                          className="rounded-[0.9rem] border border-cyan-300/20 bg-cyan-400/[0.08] px-4 py-3 text-xs uppercase tracking-[0.24em] text-cyan-100 transition hover:bg-cyan-400/[0.14] disabled:cursor-not-allowed disabled:opacity-50"
-                        >
-                          {visionBusy ? 'Querying' : 'Ask Vision'}
-                        </button>
-                      </div>
-                      {visualBrief ? (
-                        <div className="mt-3 rounded-[0.9rem] border border-cyan-400/10 bg-slate-950/55 px-3 py-3">
-                          <div className="flex items-center justify-between gap-3">
-                            <div className="text-[10px] uppercase tracking-[0.22em] text-cyan-300/55">Visual Brief</div>
-                            <div className="text-[10px] uppercase tracking-[0.22em] text-cyan-300/45">{visualBrief.title}</div>
-                          </div>
-                          <div className="mt-2 text-sm text-slate-200/76">{visualBrief.summary}</div>
-                          <div className="mt-3 flex gap-2">
-                            <button
-                              onClick={() => injectCommand(visualBrief.prompt)}
-                              className="rounded-[0.85rem] border border-cyan-400/12 bg-cyan-400/[0.08] px-3 py-2 text-[10px] uppercase tracking-[0.22em] text-cyan-100 transition hover:bg-cyan-400/[0.14]"
-                            >
-                              Load Brief
-                            </button>
-                            <button
-                              onClick={() => handoffWithBrief(visualBrief.prompt, 'visual-brief')}
-                              disabled={architectureBusy}
-                              className="rounded-[0.85rem] border border-cyan-400/12 bg-slate-950/70 px-3 py-2 text-[10px] uppercase tracking-[0.22em] text-cyan-100 transition hover:bg-cyan-400/[0.08] disabled:cursor-not-allowed disabled:opacity-40"
-                            >
-                              {architectureBusy ? 'Routing' : 'Route To Planner'}
-                            </button>
-                            <button
-                              onClick={() => injectCommand(buildDailyOpsPrompt())}
-                              className="rounded-[0.85rem] border border-cyan-400/12 bg-slate-950/70 px-3 py-2 text-[10px] uppercase tracking-[0.22em] text-cyan-100 transition hover:bg-cyan-400/[0.08]"
-                            >
-                              Blend Into Daily Ops
-                            </button>
-                            <button
-                              onClick={saveVisualBrief}
-                              className="rounded-[0.85rem] border border-cyan-400/12 bg-slate-950/70 px-3 py-2 text-[10px] uppercase tracking-[0.22em] text-cyan-100 transition hover:bg-cyan-400/[0.08]"
-                            >
-                              Save Brief
-                            </button>
-                          </div>
-                        </div>
-                      ) : null}
-                      {visionAnalysis?.content ? (
-                        <div className="mt-3 rounded-[0.9rem] border border-cyan-400/10 bg-slate-950/55 px-3 py-3">
-                          <div className="flex items-center justify-between gap-3">
-                            <div className="text-[10px] uppercase tracking-[0.22em] text-cyan-300/55">Vision Analysis</div>
-                            <div className="text-[10px] uppercase tracking-[0.22em] text-cyan-300/45">
-                              {visionAnalysis.model}
-                              {visionAnalysis.screen_count ? ` · ${visionAnalysis.screen_count} screens` : ''}
-                            </div>
-                          </div>
-                          <pre className="mt-2 whitespace-pre-wrap break-words text-sm text-slate-200/76">
-                            {visionAnalysis.content}
-                          </pre>
-                        </div>
-                      ) : null}
-                      {visionTextExtraction?.content ? (
-                        <div className="mt-3 rounded-[0.9rem] border border-cyan-400/10 bg-slate-950/55 px-3 py-3">
-                          <div className="flex items-center justify-between gap-3">
-                            <div className="text-[10px] uppercase tracking-[0.22em] text-cyan-300/55">Visible Text</div>
-                            <div className="text-[10px] uppercase tracking-[0.22em] text-cyan-300/45">
-                              {visionTextExtraction.model}
-                              {visionTextExtraction.screen_count ? ` · ${visionTextExtraction.screen_count} screens` : ''}
-                            </div>
-                          </div>
-                          <pre className="mt-2 whitespace-pre-wrap break-words text-sm text-slate-200/76">
-                            {visionTextExtraction.content}
-                          </pre>
-                        </div>
-                      ) : null}
-                      {visionSignals ? (
-                        <div className="mt-3 rounded-[0.9rem] border border-cyan-400/10 bg-slate-950/55 px-3 py-3">
-                          <div className="flex items-center justify-between gap-3">
-                            <div className="text-[10px] uppercase tracking-[0.22em] text-cyan-300/55">Visual Signals</div>
-                            <div className="text-[10px] uppercase tracking-[0.22em] text-cyan-300/45">
-                              {visionSignals.model}
-                              {visionSignals.screen_count ? ` · ${visionSignals.screen_count} screens` : ''}
-                            </div>
-                          </div>
-                          <div className="mt-2 text-sm text-slate-200/76">
-                            {visionSignals.summary || 'No major signals extracted.'}
-                          </div>
-                          {visionSignals.blockers.length ? (
-                            <div className="mt-3">
-                              <div className="text-[10px] uppercase tracking-[0.22em] text-rose-300/70">Blockers</div>
-                              <div className="mt-2 grid gap-2">
-                                {visionSignals.blockers.map((item: string, index: number) => (
-                                  <div key={`${item}-${index}`} className="rounded-[0.85rem] border border-rose-300/12 bg-rose-400/[0.06] px-3 py-2 text-sm text-slate-100/80">
-                                    {item}
-                                  </div>
-                                ))}
-                              </div>
-                            </div>
-                          ) : null}
-                          {visionSignals.deadlines.length ? (
-                            <div className="mt-3">
-                              <div className="text-[10px] uppercase tracking-[0.22em] text-amber-300/70">Deadlines</div>
-                              <div className="mt-2 grid gap-2">
-                                {visionSignals.deadlines.map((item: string, index: number) => (
-                                  <div key={`${item}-${index}`} className="rounded-[0.85rem] border border-amber-300/12 bg-amber-400/[0.06] px-3 py-2 text-sm text-slate-100/80">
-                                    {item}
-                                  </div>
-                                ))}
-                              </div>
-                            </div>
-                          ) : null}
-                          {visionSignals.attention_items.length ? (
-                            <div className="mt-3">
-                              <div className="text-[10px] uppercase tracking-[0.22em] text-cyan-300/55">Attention Items</div>
-                              <div className="mt-2 grid gap-2">
-                                {visionSignals.attention_items.map((item: string, index: number) => (
-                                  <div key={`${item}-${index}`} className="rounded-[0.85rem] border border-cyan-400/10 bg-black/20 px-3 py-2 text-sm text-slate-100/80">
-                                    {item}
-                                  </div>
-                                ))}
-                              </div>
-                            </div>
-                          ) : null}
-                        </div>
-                      ) : null}
-                      {visionQuery?.answer ? (
-                        <div className="mt-3 rounded-[0.9rem] border border-cyan-400/10 bg-slate-950/55 px-3 py-3">
-                          <div className="flex items-center justify-between gap-3">
-                            <div className="text-[10px] uppercase tracking-[0.22em] text-cyan-300/55">Visual Q&amp;A</div>
-                            <div className="text-[10px] uppercase tracking-[0.22em] text-cyan-300/45">
-                              {visionQuery.model}
-                              {visionQuery.screen_count ? ` - ${visionQuery.screen_count} screens` : ''}
-                            </div>
-                          </div>
-                          <div className="mt-2 text-xs uppercase tracking-[0.2em] text-cyan-100/85">
-                            {visionQuery.question}
-                          </div>
-                          {visionQuery.history_used ? (
-                            <div className="mt-2 text-[10px] uppercase tracking-[0.2em] text-cyan-300/50">
-                              Using {visionQuery.history_used} recent visual memory item{visionQuery.history_used === 1 ? '' : 's'}
-                            </div>
-                          ) : null}
-                          <pre className="mt-2 whitespace-pre-wrap break-words text-sm text-slate-200/76">
-                            {visionQuery.answer}
-                          </pre>
-                        </div>
-                      ) : null}
-                      {visionUiTargets?.targets?.length ? (
-                        <div className="mt-3 rounded-[0.9rem] border border-cyan-400/10 bg-slate-950/55 px-3 py-3">
-                          <div className="flex items-center justify-between gap-3">
-                            <div className="text-[10px] uppercase tracking-[0.22em] text-cyan-300/55">UI Targets</div>
-                            <div className="text-[10px] uppercase tracking-[0.22em] text-cyan-300/45">
-                              {visionUiTargets.model}
-                              {visionUiTargets.screen_count ? ` · ${visionUiTargets.screen_count} screens` : ''}
-                            </div>
-                          </div>
-                          <div className="mt-3 grid gap-2">
-                            {visionUiTargets.targets.map((item, index) => (
-                              <div
-                                key={`${item.label}-${item.control_type}-${index}`}
-                                className="rounded-[0.9rem] border border-cyan-400/10 bg-black/20 px-3 py-3"
-                              >
-                                <div className="flex items-center justify-between gap-3">
-                                  <div className="text-xs uppercase tracking-[0.2em] text-cyan-100/85">{item.label}</div>
-                                  <div className="text-[10px] uppercase tracking-[0.2em] text-cyan-300/55">
-                                    {item.control_type} · {item.confidence}%
-                                  </div>
-                                </div>
-                                <div className="mt-2 text-sm text-slate-200/76">{item.detail}</div>
-                                <div className="mt-3 flex gap-2">
-                                  <button
-                                    onClick={() => verifyVisualUiTarget(item)}
-                                    className="rounded-[0.85rem] border border-amber-300/16 bg-amber-400/[0.08] px-3 py-2 text-[10px] uppercase tracking-[0.22em] text-amber-100 transition hover:bg-amber-400/[0.14]"
-                                  >
-                                    Verify Target
-                                  </button>
-                                  <button
-                                    onClick={() => planVisualUiTarget(item)}
-                                    className="rounded-[0.85rem] border border-cyan-400/12 bg-cyan-400/[0.08] px-3 py-2 text-[10px] uppercase tracking-[0.22em] text-cyan-100 transition hover:bg-cyan-400/[0.14]"
-                                  >
-                                    Plan Interaction
-                                  </button>
-                                  <button
-                                    onClick={() => injectCommand(item.prompt)}
-                                    className="rounded-[0.85rem] border border-cyan-400/12 bg-slate-950/70 px-3 py-2 text-[10px] uppercase tracking-[0.22em] text-cyan-100 transition hover:bg-cyan-400/[0.08]"
-                                  >
-                                    Load Target
-                                  </button>
-                                  <button
-                                    onClick={() => stageVisualDesktopIntent(item.desktop_intent)}
-                                    disabled={!item.desktop_intent}
-                                    className="rounded-[0.85rem] border border-cyan-400/12 bg-slate-950/70 px-3 py-2 text-[10px] uppercase tracking-[0.22em] text-cyan-100 transition hover:bg-cyan-400/[0.08] disabled:cursor-not-allowed disabled:opacity-40"
-                                  >
-                                    Stage Desktop
-                                  </button>
-                                  <button
-                                    onClick={async () => {
-                                      setActionBusy('stage');
-                                      try {
-                                        const next = await stageTask({
-                                          title: `UI target · ${item.label}`,
-                                          notes: `${item.detail}\n\n${item.prompt}`,
-                                        });
-                                        setActionCenter(next);
-                                        setActionNotice('UI target staged as a task.');
-                                      } catch (error) {
-                                        setActionNotice(error instanceof Error ? error.message : 'Unable to stage UI target.');
-                                      } finally {
-                                        setActionBusy(null);
-                                      }
-                                    }}
-                                    className="rounded-[0.85rem] border border-emerald-300/18 bg-emerald-400/[0.08] px-3 py-2 text-[10px] uppercase tracking-[0.22em] text-emerald-100 transition hover:bg-emerald-400/[0.14]"
-                                  >
-                                    Stage Task
-                                  </button>
-                                </div>
-                              </div>
-                            ))}
-                          </div>
-                        </div>
-                      ) : null}
-                      {visionUiVerify ? (
-                        <div className="mt-3 rounded-[0.9rem] border border-cyan-400/10 bg-slate-950/55 px-3 py-3">
-                          <div className="flex items-center justify-between gap-3">
-                            <div className="text-[10px] uppercase tracking-[0.22em] text-cyan-300/55">UI Verification</div>
-                            <div className="text-[10px] uppercase tracking-[0.22em] text-cyan-300/45">
-                              {visionUiVerify.model}
-                              {visionUiVerify.screen_count ? ` · ${visionUiVerify.screen_count} screens` : ''}
-                            </div>
-                          </div>
-                          <div className="mt-2 flex items-center justify-between gap-3">
-                            <div className="text-xs uppercase tracking-[0.2em] text-cyan-100/85">
-                              {visionUiVerify.target_label}
-                            </div>
-                            <div className="text-[10px] uppercase tracking-[0.2em] text-cyan-300/55">
-                              {visionUiVerify.risk_level} · {visionUiVerify.confidence}%
-                            </div>
-                          </div>
-                          <div className="mt-2 text-sm text-slate-200/76">{visionUiVerify.summary}</div>
-                          {visionUiVerify.verification_checks.length ? (
-                            <div className="mt-3">
-                              <div className="text-[10px] uppercase tracking-[0.22em] text-amber-300/70">Verify Before Acting</div>
-                              <div className="mt-2 grid gap-2">
-                                {visionUiVerify.verification_checks.map((item, index) => (
-                                  <div key={`${item}-${index}`} className="rounded-[0.85rem] border border-amber-300/12 bg-amber-400/[0.06] px-3 py-2 text-sm text-slate-100/80">
-                                    {item}
-                                  </div>
-                                ))}
-                              </div>
-                            </div>
-                          ) : null}
-                          {visionUiVerify.evidence.length ? (
-                            <div className="mt-3">
-                              <div className="text-[10px] uppercase tracking-[0.22em] text-cyan-300/55">Evidence</div>
-                              <div className="mt-2 grid gap-2">
-                                {visionUiVerify.evidence.map((item, index) => (
-                                  <div key={`${item}-${index}`} className="rounded-[0.85rem] border border-cyan-400/10 bg-black/20 px-3 py-2 text-sm text-slate-100/80">
-                                    {item}
-                                  </div>
-                                ))}
-                              </div>
-                            </div>
-                          ) : null}
-                        </div>
-                      ) : null}
-                      {visionUiPlan ? (
-                        <div className="mt-3 rounded-[0.9rem] border border-cyan-400/10 bg-slate-950/55 px-3 py-3">
-                          <div className="flex items-center justify-between gap-3">
-                            <div className="text-[10px] uppercase tracking-[0.22em] text-cyan-300/55">UI Interaction Plan</div>
-                            <div className="text-[10px] uppercase tracking-[0.22em] text-cyan-300/45">
-                              {visionUiPlan.model}
-                              {visionUiPlan.screen_count ? ` · ${visionUiPlan.screen_count} screens` : ''}
-                            </div>
-                          </div>
-                          <div className="mt-2 text-xs uppercase tracking-[0.2em] text-cyan-100/85">
-                            {visionUiPlan.target_label}
-                          </div>
-                          <div className="mt-2 text-sm text-slate-200/76">{visionUiPlan.summary}</div>
-                          {visionUiPlan.steps.length ? (
-                            <div className="mt-3 grid gap-2">
-                              {visionUiPlan.steps.map((step, index) => (
-                                <div
-                                  key={`${visionUiPlan.target_label}-${index}`}
-                                  className="rounded-[0.85rem] border border-cyan-400/10 bg-black/20 px-3 py-2 text-sm text-slate-100/80"
-                                >
-                                  {index + 1}. {step}
-                                </div>
-                              ))}
-                            </div>
-                          ) : null}
-                          <div className="mt-3 flex gap-2">
-                            <button
-                              onClick={() => injectCommand(visionUiPlan.prompt || visionUiPlan.steps.join('\n'))}
-                              className="rounded-[0.85rem] border border-cyan-400/12 bg-cyan-400/[0.08] px-3 py-2 text-[10px] uppercase tracking-[0.22em] text-cyan-100 transition hover:bg-cyan-400/[0.14]"
-                            >
-                              Load Plan
-                            </button>
-                            <button
-                              onClick={() => stageVisualDesktopIntent(visionUiPlan.desktop_intent)}
-                              disabled={!visionUiPlan.desktop_intent}
-                              className="rounded-[0.85rem] border border-cyan-400/12 bg-slate-950/70 px-3 py-2 text-[10px] uppercase tracking-[0.22em] text-cyan-100 transition hover:bg-cyan-400/[0.08] disabled:cursor-not-allowed disabled:opacity-40"
-                            >
-                              Stage Desktop
-                            </button>
-                            <button
-                              onClick={async () => {
-                                setActionBusy('stage');
-                                try {
-                                  const next = await stageTask({
-                                    title: `UI plan · ${visionUiPlan.target_label}`,
-                                    notes: `${visionUiPlan.summary}\n\n${visionUiPlan.steps.join('\n')}\n\n${visionUiPlan.prompt}`,
-                                  });
-                                  setActionCenter(next);
-                                  setActionNotice('UI interaction plan staged as a task.');
-                                } catch (error) {
-                                  setActionNotice(error instanceof Error ? error.message : 'Unable to stage UI plan.');
-                                } finally {
-                                  setActionBusy(null);
-                                }
-                              }}
-                              className="rounded-[0.85rem] border border-emerald-300/18 bg-emerald-400/[0.08] px-3 py-2 text-[10px] uppercase tracking-[0.22em] text-emerald-100 transition hover:bg-emerald-400/[0.14]"
-                            >
-                              Stage Task
-                            </button>
-                          </div>
-                        </div>
-                      ) : null}
-                      {visionSuggestedActions?.actions?.length ? (
-                        <div className="mt-3 rounded-[0.9rem] border border-cyan-400/10 bg-slate-950/55 px-3 py-3">
-                          <div className="flex items-center justify-between gap-3">
-                            <div className="text-[10px] uppercase tracking-[0.22em] text-cyan-300/55">Visual Next Actions</div>
-                            <div className="text-[10px] uppercase tracking-[0.22em] text-cyan-300/45">
-                              {visionSuggestedActions.model}
-                              {visionSuggestedActions.screen_count ? ` · ${visionSuggestedActions.screen_count} screens` : ''}
-                            </div>
-                          </div>
-                          <div className="mt-3 grid gap-2">
-                            {visionSuggestedActions.actions.map((item, index) => (
-                              <div
-                                key={`${item.title}-${index}`}
-                                className="rounded-[0.9rem] border border-cyan-400/10 bg-black/20 px-3 py-3"
-                              >
-                                <div className="flex items-center justify-between gap-3">
-                                  <div className="text-xs uppercase tracking-[0.2em] text-cyan-100/85">{item.title}</div>
-                                  <div className="text-[10px] uppercase tracking-[0.2em] text-cyan-300/55">
-                                    priority {item.priority}
-                                  </div>
-                                </div>
-                                <div className="mt-2 text-sm text-slate-200/76">{item.detail}</div>
-                                <div className="mt-3 flex gap-2">
-                                  <button
-                                    onClick={() => injectCommand(item.prompt)}
-                                    className="rounded-[0.85rem] border border-cyan-400/12 bg-cyan-400/[0.08] px-3 py-2 text-[10px] uppercase tracking-[0.22em] text-cyan-100 transition hover:bg-cyan-400/[0.14]"
-                                  >
-                                    Load Prompt
-                                  </button>
-                                  <button
-                                    onClick={() => stageVisualDesktopIntent(item.desktop_intent)}
-                                    disabled={!item.desktop_intent}
-                                    className="rounded-[0.85rem] border border-cyan-400/12 bg-slate-950/70 px-3 py-2 text-[10px] uppercase tracking-[0.22em] text-cyan-100 transition hover:bg-cyan-400/[0.08] disabled:cursor-not-allowed disabled:opacity-40"
-                                  >
-                                    Stage Desktop
-                                  </button>
-                                  <button
-                                    onClick={async () => {
-                                      setActionBusy('stage');
-                                      try {
-                                        const next = await stageTask({
-                                          title: item.title,
-                                          notes: `${item.detail}\n\n${item.prompt}`,
-                                        });
-                                        setActionCenter(next);
-                                        setActionNotice('Visual action staged as a task.');
-                                      } catch (error) {
-                                        setActionNotice(error instanceof Error ? error.message : 'Unable to stage visual action.');
-                                      } finally {
-                                        setActionBusy(null);
-                                      }
-                                    }}
-                                    className="rounded-[0.85rem] border border-emerald-300/18 bg-emerald-400/[0.08] px-3 py-2 text-[10px] uppercase tracking-[0.22em] text-emerald-100 transition hover:bg-emerald-400/[0.14]"
-                                  >
-                                    Stage Task
-                                  </button>
-                                </div>
-                              </div>
-                            ))}
-                          </div>
-                        </div>
-                      ) : null}
-                    </div>
-                  ) : null}
-                  {durableOperatorMemory?.visual_observations?.length ? (
-                    <div className="mt-3 rounded-[0.95rem] border border-cyan-400/10 bg-black/20 px-3 py-3">
-                      <div className="text-[10px] uppercase tracking-[0.22em] text-cyan-300/55">Recent Visual Memory</div>
-                      <div className="mt-3 grid gap-2">
-                        {durableOperatorMemory.visual_observations.slice(0, 3).map((item) => (
-                          <div
-                            key={item.id}
-                            className="rounded-[0.9rem] border border-cyan-400/10 bg-slate-950/55 px-3 py-3"
-                          >
-                            {item.image_path ? (
-                              <img
-                                src={`${apiBase}/v1/operator-memory/visual/${encodeURIComponent(item.id)}/asset`}
-                                alt={item.label}
-                                className="mb-3 max-h-32 w-full rounded-[0.85rem] border border-cyan-400/10 object-cover"
-                              />
-                            ) : null}
-                            <div className="flex items-center justify-between gap-3">
-                              <div className="text-xs uppercase tracking-[0.2em] text-cyan-100/85">{item.label}</div>
-                              <div className="text-[10px] uppercase tracking-[0.22em] text-cyan-300/45">
-                                {item.source}
-                              </div>
-                            </div>
-                            <div className="mt-2 text-sm text-slate-200/76">{item.note}</div>
-                            <div className="mt-3 flex gap-2">
-                              <button
-                                onClick={() => restoreVisualObservation(item)}
-                                className="rounded-[0.85rem] border border-cyan-400/12 bg-cyan-400/[0.08] px-3 py-2 text-[10px] uppercase tracking-[0.22em] text-cyan-100 transition hover:bg-cyan-400/[0.14]"
-                              >
-                                Reload
-                              </button>
-                              <button
-                                onClick={() =>
-                                  injectCommand(
-                                    `I restored a saved visual memory called "${item.label}". Help me continue from this context: ${item.note}`,
-                                  )
-                                }
-                                className="rounded-[0.85rem] border border-cyan-400/12 bg-slate-950/70 px-3 py-2 text-[10px] uppercase tracking-[0.22em] text-cyan-100 transition hover:bg-cyan-400/[0.08]"
-                              >
-                                Load Prompt
-                              </button>
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  ) : null}
-                  {durableOperatorMemory?.visual_insights?.length ? (
-                    <div className="mt-3 rounded-[0.95rem] border border-cyan-400/10 bg-black/20 px-3 py-3">
-                      <div className="text-[10px] uppercase tracking-[0.22em] text-cyan-300/55">Recent Visual Answers</div>
-                      <div className="mt-3 grid gap-2">
-                        {durableOperatorMemory.visual_insights.slice(0, 4).map((item) => (
-                          <div
-                            key={item.id}
-                            className="rounded-[0.9rem] border border-cyan-400/10 bg-slate-950/55 px-3 py-3"
-                          >
-                            <div className="text-[10px] uppercase tracking-[0.2em] text-cyan-300/55">
-                              {item.label} - {item.created_at ? new Date(item.created_at).toLocaleString() : 'saved'}
-                            </div>
-                            <div className="mt-2 text-xs uppercase tracking-[0.18em] text-cyan-100/85">
-                              {item.question}
-                            </div>
-                            <div className="mt-2 text-sm text-slate-200/76">{item.answer}</div>
-                            <div className="mt-3 flex gap-2">
-                              <button
-                                onClick={() => {
-                                  setVisionQuestion(item.question);
-                                  setVisionQuery({
-                                    question: item.question,
-                                    answer: item.answer,
-                                    model: 'memory',
-                                    label: item.label,
-                                  });
-                                  setWorkbenchNotice('Visual answer restored from memory.');
-                                }}
-                                className="rounded-[0.85rem] border border-cyan-400/12 bg-cyan-400/[0.08] px-3 py-2 text-[10px] uppercase tracking-[0.22em] text-cyan-100 transition hover:bg-cyan-400/[0.14]"
-                              >
-                                Reload Answer
-                              </button>
-                              <button
-                                onClick={() =>
-                                  injectCommand(
-                                    `I previously asked a visual question.\nLabel: ${item.label}\nQuestion: ${item.question}\nAnswer:\n${item.answer}\nContinue from this visual context and suggest the next best action.`,
-                                  )
-                                }
-                                className="rounded-[0.85rem] border border-cyan-400/12 bg-slate-950/70 px-3 py-2 text-[10px] uppercase tracking-[0.22em] text-cyan-100 transition hover:bg-cyan-400/[0.08]"
-                              >
-                                Load Into Core
-                              </button>
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  ) : null}
-                  {durableOperatorMemory?.visual_briefs?.length ? (
-                    <div className="mt-3 rounded-[0.95rem] border border-cyan-400/10 bg-black/20 px-3 py-3">
-                      <div className="text-[10px] uppercase tracking-[0.22em] text-cyan-300/55">Recent Visual Briefs</div>
-                      <div className="mt-3 grid gap-2">
-                        {durableOperatorMemory.visual_briefs.slice(0, 4).map((item) => (
-                          <div
-                            key={item.id}
-                            className="rounded-[0.9rem] border border-cyan-400/10 bg-slate-950/55 px-3 py-3"
-                          >
-                            <div className="text-[10px] uppercase tracking-[0.2em] text-cyan-300/55">
-                              {item.label} - {item.created_at ? new Date(item.created_at).toLocaleString() : 'saved'}
-                            </div>
-                            <div className="mt-2 text-xs uppercase tracking-[0.18em] text-cyan-100/85">
-                              {item.summary}
-                            </div>
-                            <div className="mt-2 whitespace-pre-wrap break-words text-sm text-slate-200/76">{item.details}</div>
-                            <div className="mt-3 flex gap-2">
-                              <button
-                                onClick={() =>
-                                  injectCommand(
-                                    `I saved a visual brief.\nLabel: ${item.label}\nSummary: ${item.summary}\nDetails:\n${item.details}\nContinue from this visual context and suggest the next best action.`,
-                                  )
-                                }
-                                className="rounded-[0.85rem] border border-cyan-400/12 bg-cyan-400/[0.08] px-3 py-2 text-[10px] uppercase tracking-[0.22em] text-cyan-100 transition hover:bg-cyan-400/[0.14]"
-                              >
-                                Load Brief
-                              </button>
-                              <button
-                                onClick={() =>
-                                  injectCommand(
-                                    `Act as my executive operations copilot.\nBlend this saved visual brief into my current daily operations view.\nLabel: ${item.label}\nSummary: ${item.summary}\nDetails:\n${item.details}`,
-                                  )
-                                }
-                                className="rounded-[0.85rem] border border-cyan-400/12 bg-slate-950/70 px-3 py-2 text-[10px] uppercase tracking-[0.22em] text-cyan-100 transition hover:bg-cyan-400/[0.08]"
-                              >
-                                Load Into Ops
-                              </button>
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  ) : null}
+                  </Suspense>
                 </div>
-
-                <div className="mt-4 rounded-[1.15rem] border border-cyan-400/10 bg-slate-950/55 p-4">
-                  <div className="mb-2 flex items-center justify-between gap-3">
-                    <div className="text-[10px] uppercase tracking-[0.35em] text-cyan-300/55">
-                      Action Center
-                    </div>
-                    <div className="flex gap-2">
-                      {(['email', 'calendar'] as const).map((mode) => (
-                        <button
-                          key={mode}
-                          onClick={() => setActionMode(mode)}
-                          className={`rounded-full border px-3 py-1 text-[10px] uppercase tracking-[0.24em] transition ${
-                            actionMode === mode
-                              ? 'border-cyan-300/30 bg-cyan-400/[0.12] text-cyan-50'
-                              : 'border-cyan-400/10 bg-slate-950/60 text-cyan-200/65 hover:bg-cyan-400/[0.08]'
-                          }`}
-                        >
-                          {mode}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                  {actionMode === 'email' ? (
-                    <div className="grid gap-3">
-                      <input
-                        value={emailRecipient}
-                        onChange={(event) => setEmailRecipient(event.target.value)}
-                        placeholder="recipient@example.com"
-                        className="rounded-[0.9rem] border border-cyan-400/10 bg-slate-950/70 px-4 py-3 text-sm text-slate-100 outline-none placeholder:text-slate-500"
-                      />
-                      <input
-                        value={emailSubject}
-                        onChange={(event) => setEmailSubject(event.target.value)}
-                        placeholder="Subject"
-                        className="rounded-[0.9rem] border border-cyan-400/10 bg-slate-950/70 px-4 py-3 text-sm text-slate-100 outline-none placeholder:text-slate-500"
-                      />
-                      <textarea
-                        value={emailBody}
-                        onChange={(event) => setEmailBody(event.target.value)}
-                        rows={4}
-                        placeholder="Write the email body JARVIS should stage."
-                        className="rounded-[0.9rem] border border-cyan-400/10 bg-slate-950/70 px-4 py-3 text-sm text-slate-100 outline-none placeholder:text-slate-500"
-                      />
-                    </div>
-                  ) : (
-                    <div className="grid gap-3">
-                      <input
-                        value={calendarTitle}
-                        onChange={(event) => setCalendarTitle(event.target.value)}
-                        placeholder="Meeting title"
-                        className="rounded-[0.9rem] border border-cyan-400/10 bg-slate-950/70 px-4 py-3 text-sm text-slate-100 outline-none placeholder:text-slate-500"
-                      />
-                      <input
-                        value={calendarStartAt}
-                        onChange={(event) => setCalendarStartAt(event.target.value)}
-                        placeholder="2026-04-08T14:00:00+02:00"
-                        className="rounded-[0.9rem] border border-cyan-400/10 bg-slate-950/70 px-4 py-3 text-sm text-slate-100 outline-none placeholder:text-slate-500"
-                      />
-                      <input
-                        value={calendarEndAt}
-                        onChange={(event) => setCalendarEndAt(event.target.value)}
-                        placeholder="2026-04-08T15:00:00+02:00"
-                        className="rounded-[0.9rem] border border-cyan-400/10 bg-slate-950/70 px-4 py-3 text-sm text-slate-100 outline-none placeholder:text-slate-500"
-                      />
-                      <div className="grid gap-3 md:grid-cols-2">
-                        <input
-                          value={calendarAttendees}
-                          onChange={(event) => setCalendarAttendees(event.target.value)}
-                          placeholder="Attendees"
-                          className="rounded-[0.9rem] border border-cyan-400/10 bg-slate-950/70 px-4 py-3 text-sm text-slate-100 outline-none placeholder:text-slate-500"
-                        />
-                        <input
-                          value={calendarLocation}
-                          onChange={(event) => setCalendarLocation(event.target.value)}
-                          placeholder="Location"
-                          className="rounded-[0.9rem] border border-cyan-400/10 bg-slate-950/70 px-4 py-3 text-sm text-slate-100 outline-none placeholder:text-slate-500"
-                        />
-                      </div>
-                      <textarea
-                        value={calendarNotes}
-                        onChange={(event) => setCalendarNotes(event.target.value)}
-                        rows={3}
-                        placeholder="Talking points or notes"
-                        className="rounded-[0.9rem] border border-cyan-400/10 bg-slate-950/70 px-4 py-3 text-sm text-slate-100 outline-none placeholder:text-slate-500"
-                      />
-                    </div>
-                  )}
-                  <button
-                    onClick={handleStageAction}
-                    disabled={actionBusy !== null || !actionCenterExecutionHint.ready}
-                    className="mt-3 w-full rounded-[0.9rem] border border-cyan-300/20 bg-cyan-400/[0.08] px-4 py-3 text-xs uppercase tracking-[0.28em] text-cyan-100 transition hover:bg-cyan-400/[0.14] disabled:cursor-not-allowed disabled:opacity-50"
-                  >
-                    {actionBusy === 'stage' ? 'Staging' : actionCenterExecutionHint.button}
-                  </button>
-                  <div className="mt-3 rounded-[0.9rem] border border-cyan-400/10 bg-black/20 px-3 py-3 text-sm text-slate-200/76">
-                    {actionCenterExecutionHint.label}
-                  </div>
-                  <div className="mt-3 grid gap-2 sm:grid-cols-2">
-                    {connectorCapabilities.map((item) => (
-                      <div
-                        key={item.label}
-                        className="rounded-[0.9rem] border border-cyan-400/10 bg-black/20 px-3 py-3"
-                      >
-                        <div className="text-[10px] uppercase tracking-[0.2em] text-cyan-300/55">{item.label}</div>
-                        <div className="mt-1 text-sm text-slate-200/76">{item.value}</div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
+                <Suspense fallback={<DashboardSectionFallback label="Loading action center..." />}>
+                  <ActionCenterPanel
+                    actionMode={actionMode}
+                    onActionModeChange={setActionMode}
+                    emailRecipient={emailRecipient}
+                    onEmailRecipientChange={setEmailRecipient}
+                    emailSubject={emailSubject}
+                    onEmailSubjectChange={setEmailSubject}
+                    emailBody={emailBody}
+                    onEmailBodyChange={setEmailBody}
+                    calendarTitle={calendarTitle}
+                    onCalendarTitleChange={setCalendarTitle}
+                    calendarStartAt={calendarStartAt}
+                    onCalendarStartAtChange={setCalendarStartAt}
+                    calendarEndAt={calendarEndAt}
+                    onCalendarEndAtChange={setCalendarEndAt}
+                    calendarAttendees={calendarAttendees}
+                    onCalendarAttendeesChange={setCalendarAttendees}
+                    calendarLocation={calendarLocation}
+                    onCalendarLocationChange={setCalendarLocation}
+                    calendarNotes={calendarNotes}
+                    onCalendarNotesChange={setCalendarNotes}
+                    onStageAction={handleStageAction}
+                    actionBusy={actionBusy}
+                    executionHint={actionCenterExecutionHint}
+                    connectorCapabilities={connectorCapabilities}
+                  />
+                </Suspense>
 
                 <div className="mt-4 rounded-[1.15rem] border border-cyan-400/10 bg-slate-950/55 p-4">
                   <div className="mb-2 text-[10px] uppercase tracking-[0.35em] text-cyan-300/55">
@@ -6597,12 +5714,14 @@ ${item.details}`,
                       </button>
                     ))}
                   </div>
-                  <DesignIntelligence
-                    designBrief={designBrief}
-                    onLoadPrompt={loadDesignPrompt}
-                    onLoadBrief={() => injectCommand(designBrief?.creativePrompt || '')}
-                    onRouteToPlanner={() => void handoffWithBrief(designBrief?.implementationPrompt || '', 'design-intel')}
-                  />
+                  <Suspense fallback={<DashboardSectionFallback label="Loading design intelligence..." />}>
+                    <DesignIntelligence
+                      designBrief={designBrief}
+                      onLoadPrompt={loadDesignPrompt}
+                      onLoadBrief={() => injectCommand(designBrief?.creativePrompt || '')}
+                      onRouteToPlanner={() => void handoffWithBrief(designBrief?.implementationPrompt || '', 'design-intel')}
+                    />
+                  </Suspense>
                   <div className="mt-3 grid gap-2 sm:grid-cols-2">
                     {([
                       ['Git Status', () => loadWorkbenchPreset('status')],
@@ -6935,7 +6054,9 @@ ${item.details}`,
             </Panel>
 
             <Panel title="Commander Queue" kicker="Next best actions">
-              <CommanderQueue items={commanderQueue} />
+              <Suspense fallback={<DashboardSectionFallback label="Loading commander queue..." />}>
+                <CommanderQueue items={commanderQueue} />
+              </Suspense>
             </Panel>
           </div>
 
