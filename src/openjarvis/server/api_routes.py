@@ -238,6 +238,41 @@ class OperatorMissionUpdateRequest(BaseModel):
     updated_at: Optional[str] = None
 
 
+class OperatorMissionActionRequest(BaseModel):
+    id: str
+    action: Literal["resume", "retry", "complete", "block"]
+    summary: Optional[str] = None
+    result: Optional[str] = None
+    retry_hint: Optional[str] = None
+
+
+def _mission_followup_payload(mission: dict[str, Any], action: str) -> dict[str, str] | None:
+    domain = str(mission.get("domain", "")).strip().lower()
+    summary = str(mission.get("summary", "")).strip()
+    result = str(mission.get("result", "")).strip()
+    next_step = str(mission.get("next_step", "")).strip()
+    title = str(mission.get("title", "mission")).strip() or "mission"
+
+    if action not in {"resume", "retry"}:
+        return None
+    if domain == "planner":
+        content = result or summary or next_step
+        if not content:
+            return None
+        return {"kind": "brief", "content": content, "label": title}
+    if domain == "self-improve":
+        content = result or summary or next_step
+        if not content:
+            return None
+        return {"kind": "prompt", "content": content, "label": title}
+    if domain == "visual":
+        content = result or summary or next_step
+        if not content:
+            return None
+        return {"kind": "prompt", "content": content, "label": title}
+    return None
+
+
 class AgentArchitectureHandoffRequest(BaseModel):
     brief: str
     source: Optional[str] = "hud"
@@ -1202,7 +1237,45 @@ async def workbench_approve(request: Request):
     if manager is None:
         raise HTTPException(status_code=503, detail="Workbench manager not configured")
     try:
-        return await run_in_threadpool(manager.approve)
+        result = await run_in_threadpool(manager.approve)
+        latest = result.get("result", {}) if isinstance(result, dict) else {}
+        command = str(latest.get("command", "")).lower()
+        is_validation = any(
+            token in command
+            for token in (
+                "pytest",
+                "ruff",
+                "npm test",
+                "npm run lint",
+                "npm run build",
+                "cargo test",
+                "cargo check",
+            )
+        )
+        if is_validation:
+            success = str(latest.get("status", "")).strip().lower() == "success"
+            _update_self_improve_mission(
+                request.app.state,
+                phase="done" if success else "retry",
+                status="complete" if success else "blocked",
+                summary=(
+                    "Self-improvement validation passed."
+                    if success
+                    else "Self-improvement validation failed."
+                ),
+                next_step=(
+                    "Prepare the commit or continue refining the patch."
+                    if success
+                    else "Inspect the validation failure and prepare the smallest safe follow-up patch."
+                ),
+                result=str(latest.get("output", "")).strip()[:500] or str(latest.get("command", "")).strip(),
+                retry_hint=(
+                    "Start a new self-improvement cycle if more polish is needed."
+                    if success
+                    else "Retry after narrowing the root cause and patch scope."
+                ),
+            )
+        return result
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
 
@@ -1597,6 +1670,65 @@ async def operator_memory_update_mission(
         raise HTTPException(status_code=503, detail="Operator memory not configured")
     try:
         return manager.update_mission(req.id, req.model_dump(exclude_none=True))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@operator_memory_router.post("/mission/action")
+async def operator_memory_act_on_mission(
+    req: OperatorMissionActionRequest,
+    request: Request,
+):
+    manager = getattr(request.app.state, "operator_memory", None)
+    if manager is None:
+        raise HTTPException(status_code=503, detail="Operator memory not configured")
+    snapshot = manager.snapshot()
+    missions = snapshot.get("missions", []) if isinstance(snapshot, dict) else []
+    current = next((item for item in missions if str(item.get("id", "")).strip() == req.id.strip()), None)
+    if current is None:
+        raise HTTPException(status_code=404, detail="Mission not found")
+
+    action = req.action
+    status_map = {
+        "resume": ("active", "act"),
+        "retry": ("blocked", "retry"),
+        "complete": ("complete", "done"),
+        "block": ("blocked", "retry"),
+    }
+    status, phase = status_map[action]
+    default_summary = {
+        "resume": f"Mission resumed: {current.get('title', 'mission')}.",
+        "retry": f"Mission retry requested: {current.get('title', 'mission')}.",
+        "complete": f"Mission completed: {current.get('title', 'mission')}.",
+        "block": f"Mission blocked: {current.get('title', 'mission')}.",
+    }
+    try:
+        updated = manager.update_mission(
+            req.id,
+            {
+                "title": str(current.get("title", "")).strip(),
+                "domain": str(current.get("domain", "")).strip(),
+                "status": status,
+                "phase": phase,
+                "summary": (req.summary or default_summary[action]).strip(),
+                "next_step": str(current.get("next_step", "")).strip(),
+                "result": (req.result or str(current.get("result", ""))).strip(),
+                "retry_hint": (req.retry_hint or str(current.get("retry_hint", ""))).strip(),
+            },
+        )
+        updated_mission = next(
+            (
+                item
+                for item in updated.get("missions", [])
+                if str(item.get("id", "")).strip() == req.id.strip()
+            ),
+            current,
+        )
+        return {
+            "memory": updated,
+            "mission": updated_mission,
+            "followup": _mission_followup_payload(updated_mission, action),
+        }
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
 
@@ -2449,6 +2581,56 @@ def _update_visual_mission(
     )
 
 
+def _current_self_improve_mission(app_state: Any) -> dict[str, Any] | None:
+    operator_memory = getattr(app_state, "operator_memory", None)
+    if operator_memory is None:
+        return None
+    snapshot = operator_memory.snapshot()
+    missions = snapshot.get("missions", []) if isinstance(snapshot, dict) else []
+    return next(
+        (
+            item
+            for item in missions
+            if str(item.get("id", "")).strip().lower() == "mission-self-improve"
+            or str(item.get("domain", "")).strip().lower() == "self-improve"
+        ),
+        None,
+    )
+
+
+def _update_self_improve_mission(
+    app_state: Any,
+    *,
+    phase: str,
+    status: str,
+    summary: str,
+    next_step: str = "",
+    result: str = "",
+    retry_hint: str = "",
+) -> dict[str, Any] | None:
+    operator_memory = getattr(app_state, "operator_memory", None)
+    if operator_memory is None:
+        return None
+    current = _current_self_improve_mission(app_state)
+    if current is None:
+        return None
+    mission_id = str(current.get("id", "")).strip() or "mission-self-improve"
+    title = str(current.get("title", "")).strip() or "Self-improvement mission"
+    return operator_memory.update_mission(
+        mission_id,
+        {
+            "title": title,
+            "domain": "self-improve",
+            "status": status,
+            "phase": phase,
+            "summary": summary,
+            "next_step": next_step,
+            "result": result,
+            "retry_hint": retry_hint,
+        },
+    )
+
+
 @automation_router.get("/status")
 async def automation_status(request: Request):
     scheduler = getattr(request.app.state, "task_scheduler", None)
@@ -2751,7 +2933,23 @@ async def coding_approve(request: Request):
     if manager is None:
         raise HTTPException(status_code=503, detail="Coding workspace not configured")
     try:
-        return manager.approve()
+        result = manager.approve()
+        latest = result.get("result", {}) if isinstance(result, dict) else {}
+        file_path = str(latest.get("file_path", "")).strip()
+        _update_self_improve_mission(
+            request.app.state,
+            phase="verify",
+            status="active",
+            summary=(
+                f"Applied a self-improvement patch to {file_path}."
+                if file_path
+                else "Applied a self-improvement patch."
+            ),
+            next_step="Run the next validation step to verify the patch.",
+            result=str(latest.get("result", "")).strip()[:500] or str(latest.get("diff", "")).strip()[:500],
+            retry_hint="If validation fails, reduce the patch to the smallest safe change and retry.",
+        )
+        return result
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
 

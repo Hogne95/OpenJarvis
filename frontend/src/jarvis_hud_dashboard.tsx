@@ -89,8 +89,9 @@ import {
   synthesizeSpeech,
   updateAutomationRoutine,
   updateDigestSchedule,
-  updateOperatorMeeting,
-  updateOperatorProject,
+    updateOperatorMeeting,
+    actOnOperatorMission,
+    updateOperatorProject,
   updateOperatorRelationship,
   updateOperatorMission,
   updateOperatorVisualBrief,
@@ -1439,6 +1440,18 @@ export default function JarvisHudDashboard() {
     selfImproveTargetFile,
     workspaceChecks?.checks,
   ]);
+  const durableMissionLookup = useMemo(() => {
+    const entries = durableOperatorMemory?.missions || [];
+    return {
+      selfImprove:
+        entries.find((item) => item.id === 'mission-self-improve' || item.domain === 'self-improve') || null,
+      planner:
+        entries.find((item) => item.id === 'planner-executor' || item.id === 'mission-planner-executor' || item.domain === 'planner') ||
+        null,
+      visual:
+        entries.find((item) => item.id === 'visual-mission' || item.id === 'mission-visual' || item.domain === 'visual') || null,
+    };
+  }, [durableOperatorMemory?.missions]);
   const autonomyMissions = useMemo(() => {
     const missions: Array<{
       id: string;
@@ -1454,13 +1467,14 @@ export default function JarvisHudDashboard() {
       action: () => void;
     }> = [];
 
-    if (selfImproveBrief || activeSelfImproveTask || selfImproveRuns[0]) {
-      const latestRun = selfImproveRuns[0] || null;
-      const blocked = latestRun?.phase === 'blocker';
-      const completed = latestRun?.phase === 'outcome' && activeSelfImproveTask?.status === 'done';
-      const phase: MissionPhase = completed
-        ? 'done'
-        : blocked
+      if (selfImproveBrief || activeSelfImproveTask || selfImproveRuns[0]) {
+        const latestRun = selfImproveRuns[0] || null;
+        const blocked = latestRun?.phase === 'blocker';
+        const completed = latestRun?.phase === 'outcome' && activeSelfImproveTask?.status === 'done';
+        const durable = durableMissionLookup.selfImprove;
+        const phase: MissionPhase = completed
+          ? 'done'
+          : blocked
         ? 'retry'
         : latestRun?.phase === 'patch'
         ? 'verify'
@@ -1469,25 +1483,31 @@ export default function JarvisHudDashboard() {
         : latestRun?.phase === 'route'
         ? 'act'
         : 'plan';
-      missions.push({
-        id: 'mission-self-improve',
-        title: activeSelfImproveTask?.title || 'Self-improvement mission',
-        domain: 'self-improve',
-        status: completed ? 'complete' : blocked ? 'blocked' : 'active',
-        phase,
-        summary: selfImprovePatchPlan?.summary || selfImproveBrief?.summary || latestRun?.summary || 'Self-improvement context is ready.',
-        nextStep:
-          selfImprovePatchPlan?.steps[0] ||
-          (blocked
-            ? 'Load the repair step and focus the target file.'
-            : workspaceChecks?.checks?.[0]
-            ? `Run ${workspaceChecks.checks[0].label}.`
-            : 'Load the self-improvement brief.'),
-        result: latestRun?.detail || architectureTaskOutcome?.summary || 'Awaiting the next self-improvement result.',
-        retryHint: blocked ? 'Retry the mission after preparing the smallest safe patch.' : undefined,
-        actionLabel: blocked ? 'Load Repair' : selfImprovePatchPlan ? 'Load Plan' : 'Load Brief',
-        action: () =>
-          blocked
+        missions.push({
+          id: durable?.id || 'mission-self-improve',
+          title: durable?.title || activeSelfImproveTask?.title || 'Self-improvement mission',
+          domain: 'self-improve',
+          status: ((durable?.status as MissionStatus | undefined) || (completed ? 'complete' : blocked ? 'blocked' : 'active')),
+          phase: ((durable?.phase as MissionPhase | undefined) || phase),
+          summary:
+            durable?.summary ||
+            selfImprovePatchPlan?.summary ||
+            selfImproveBrief?.summary ||
+            latestRun?.summary ||
+            'Self-improvement context is ready.',
+          nextStep:
+            durable?.next_step ||
+            selfImprovePatchPlan?.steps[0] ||
+            (blocked
+              ? 'Load the repair step and focus the target file.'
+              : workspaceChecks?.checks?.[0]
+              ? `Run ${workspaceChecks.checks[0].label}.`
+              : 'Load the self-improvement brief.'),
+          result: durable?.result || latestRun?.detail || architectureTaskOutcome?.summary || 'Awaiting the next self-improvement result.',
+          retryHint: durable?.retry_hint || (blocked ? 'Retry the mission after preparing the smallest safe patch.' : undefined),
+          actionLabel: blocked ? 'Load Repair' : selfImprovePatchPlan ? 'Load Plan' : 'Load Brief',
+          action: () =>
+            blocked
             ? void loadSelfImproveRepairStep(latestRun?.detail || selfImproveBrief?.summary || 'Self-improvement blocker detected.', 'self-improve-mission')
             : selfImprovePatchPlan
             ? injectCommand(selfImprovePatchPlan.prompt)
@@ -1497,52 +1517,57 @@ export default function JarvisHudDashboard() {
       });
     }
 
-    if (agentArchitecture?.handoff?.brief || architectureTaskOutcome || agentRoleTasks.planner?.[0] || agentRoleTasks.executor?.[0]) {
-      const blocked = architectureTaskOutcome?.kind === 'failed';
-      const hasOutcome = architectureTaskOutcome?.kind === 'completed';
-      missions.push({
-        id: 'mission-planner-executor',
-        title: 'Planner -> Executor',
-        domain: 'planner',
-        status: blocked ? 'blocked' : hasOutcome ? 'complete' : 'active',
-        phase: blocked ? 'retry' : hasOutcome ? 'done' : agentRoleTasks.executor?.[0] ? 'act' : 'plan',
-        summary: agentArchitecture?.handoff?.brief || architectureTaskOutcome?.summary || 'Planner handoff ready.',
-        nextStep: blocked
-          ? 'Review the blocker and retry the mission.'
-          : hasOutcome
-          ? 'Review the latest outcome and decide whether to continue.'
-          : 'Open Core Agents and watch the delegated work progress.',
-        result: architectureTaskOutcome?.summary || 'No planner/executor outcome reported yet.',
-        retryHint: blocked ? 'Retry after clarifying the brief or reducing mission scope.' : undefined,
-        actionLabel: blocked ? 'Retry Mission' : 'Open Core Agents',
-        action: () =>
-          blocked && selfImproveBrief
+      if (agentArchitecture?.handoff?.brief || architectureTaskOutcome || agentRoleTasks.planner?.[0] || agentRoleTasks.executor?.[0]) {
+        const blocked = architectureTaskOutcome?.kind === 'failed';
+        const hasOutcome = architectureTaskOutcome?.kind === 'completed';
+        const durable = durableMissionLookup.planner;
+        missions.push({
+          id: durable?.id || 'mission-planner-executor',
+          title: durable?.title || 'Planner -> Executor',
+          domain: 'planner',
+          status: ((durable?.status as MissionStatus | undefined) || (blocked ? 'blocked' : hasOutcome ? 'complete' : 'active')),
+          phase: ((durable?.phase as MissionPhase | undefined) || (blocked ? 'retry' : hasOutcome ? 'done' : agentRoleTasks.executor?.[0] ? 'act' : 'plan')),
+          summary: durable?.summary || agentArchitecture?.handoff?.brief || architectureTaskOutcome?.summary || 'Planner handoff ready.',
+          nextStep: durable?.next_step || (blocked
+            ? 'Review the blocker and retry the mission.'
+            : hasOutcome
+            ? 'Review the latest outcome and decide whether to continue.'
+            : 'Open Core Agents and watch the delegated work progress.'),
+          result: durable?.result || architectureTaskOutcome?.summary || 'No planner/executor outcome reported yet.',
+          retryHint: durable?.retry_hint || (blocked ? 'Retry after clarifying the brief or reducing mission scope.' : undefined),
+          actionLabel: blocked ? 'Retry Mission' : 'Open Core Agents',
+          action: () =>
+            blocked && selfImproveBrief
             ? void handoffWithBrief(selfImproveBrief.prompt, 'self-improve')
             : setFocusMode(false),
       });
     }
 
-    if (visualBrief || visionSuggestedActions?.actions?.length || visionUiPlan?.summary || visionQuery?.answer) {
-      const topVisualAction = visionSuggestedActions?.actions?.slice().sort((left, right) => right.priority - left.priority)[0] || null;
-      missions.push({
-        id: 'mission-visual',
-        title: visualBrief?.title || screenSnapshot?.label || 'Visual mission',
-        domain: 'visual',
-        status: topVisualAction || visionUiPlan?.summary ? 'active' : 'idle',
-        phase: topVisualAction?.desktop_intent ? 'act' : visionUiPlan?.summary ? 'plan' : 'detect',
-        summary: visualBrief?.summary || visionUiPlan?.summary || visionQuery?.answer || 'Visual context captured.',
-        nextStep:
-          topVisualAction?.title ||
-          visionUiPlan?.steps?.[0] ||
-          'Ask a visual question or extract the next UI target.',
-        result:
-          topVisualAction?.detail ||
-          visionUiVerify?.summary ||
-          visionSignals?.summary ||
-          'No resolved visual action yet.',
-        actionLabel: topVisualAction?.desktop_intent ? 'Stage Desktop' : 'Load Visual',
-        action: () =>
-          topVisualAction?.desktop_intent
+      if (visualBrief || visionSuggestedActions?.actions?.length || visionUiPlan?.summary || visionQuery?.answer) {
+        const topVisualAction = visionSuggestedActions?.actions?.slice().sort((left, right) => right.priority - left.priority)[0] || null;
+        const durable = durableMissionLookup.visual;
+        missions.push({
+          id: durable?.id || 'mission-visual',
+          title: durable?.title || visualBrief?.title || screenSnapshot?.label || 'Visual mission',
+          domain: 'visual',
+          status: ((durable?.status as MissionStatus | undefined) || (topVisualAction || visionUiPlan?.summary ? 'active' : 'idle')),
+          phase: ((durable?.phase as MissionPhase | undefined) || (topVisualAction?.desktop_intent ? 'act' : visionUiPlan?.summary ? 'plan' : 'detect')),
+          summary: durable?.summary || visualBrief?.summary || visionUiPlan?.summary || visionQuery?.answer || 'Visual context captured.',
+          nextStep:
+            durable?.next_step ||
+            topVisualAction?.title ||
+            visionUiPlan?.steps?.[0] ||
+            'Ask a visual question or extract the next UI target.',
+          result:
+            durable?.result ||
+            topVisualAction?.detail ||
+            visionUiVerify?.summary ||
+            visionSignals?.summary ||
+            'No resolved visual action yet.',
+          retryHint: durable?.retry_hint || undefined,
+          actionLabel: topVisualAction?.desktop_intent ? 'Stage Desktop' : 'Load Visual',
+          action: () =>
+            topVisualAction?.desktop_intent
             ? stageVisualDesktopIntent(topVisualAction.desktop_intent)
             : topVisualAction
             ? injectCommand(topVisualAction.prompt)
@@ -1561,18 +1586,54 @@ export default function JarvisHudDashboard() {
     agentRoleTasks.planner,
     architectureTaskOutcome,
     screenSnapshot?.label,
-    selfImproveBrief,
-    selfImprovePatchPlan,
-    selfImproveRuns,
-    visionQuery?.answer,
-    visionSignals?.summary,
-    visionSuggestedActions?.actions,
+      selfImproveBrief,
+      selfImprovePatchPlan,
+      selfImproveRuns,
+      durableMissionLookup,
+      visionQuery?.answer,
+      visionSignals?.summary,
+      visionSuggestedActions?.actions,
     visionUiPlan?.steps,
     visionUiPlan?.summary,
     visionUiVerify?.summary,
     visualBrief,
     workspaceChecks?.checks,
   ]);
+  async function runMissionAction(
+    mission: {
+      id: string;
+      status: MissionStatus;
+      summary: string;
+      retryHint?: string;
+      action: () => void;
+    },
+  ) {
+    let handledFollowup = false;
+    try {
+      const next = await actOnOperatorMission({
+        id: mission.id,
+        action: mission.status === 'blocked' ? 'retry' : mission.status === 'complete' ? 'complete' : 'resume',
+        summary: mission.summary,
+        retry_hint: mission.retryHint,
+      });
+      setDurableOperatorMemory(next.memory);
+      const followup = next.followup;
+      if (followup?.content?.trim()) {
+        if (followup.kind === 'brief' && mission.id.includes('planner')) {
+          await handoffWithBrief(followup.content, 'mission-action');
+          handledFollowup = true;
+        } else if (followup.kind === 'prompt') {
+          injectCommand(followup.content);
+          handledFollowup = true;
+        }
+      }
+    } catch {
+      // Keep the local action path working even if the durable mission update fails.
+    }
+    if (!handledFollowup) {
+      mission.action();
+    }
+  }
   const commanderQueue = useMemo(() => {
     const items: Array<{
       id: string;
@@ -4719,12 +4780,12 @@ export default function JarvisHudDashboard() {
                             {mission.domain} · {mission.status} · {missionPhaseLabel(mission.phase)}
                           </div>
                         </div>
-                        <button
-                          onClick={mission.action}
-                          className="rounded-[0.85rem] border border-cyan-400/12 bg-cyan-400/[0.08] px-3 py-2 text-[10px] uppercase tracking-[0.22em] text-cyan-100 transition hover:bg-cyan-400/[0.14]"
-                        >
-                          {mission.actionLabel}
-                        </button>
+                          <button
+                            onClick={() => void runMissionAction(mission)}
+                            className="rounded-[0.85rem] border border-cyan-400/12 bg-cyan-400/[0.08] px-3 py-2 text-[10px] uppercase tracking-[0.22em] text-cyan-100 transition hover:bg-cyan-400/[0.14]"
+                          >
+                            {mission.actionLabel}
+                          </button>
                       </div>
                       <div className="mt-2 text-sm text-slate-200/78">{mission.summary}</div>
                       <div className="mt-2 text-xs leading-6 text-slate-300/72">
