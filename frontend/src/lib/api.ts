@@ -590,6 +590,17 @@ export interface VisionAnalysisResult {
   label: string;
 }
 
+export interface DesktopState {
+  active_window_title: string;
+  active_process_name: string;
+  open_windows: Array<{
+    title: string;
+    process: string;
+  }>;
+  active_desktop_target: string;
+  active_browser_target: string;
+}
+
 export interface ReminderItem {
   kind: 'event' | 'task';
   title: string;
@@ -1334,6 +1345,15 @@ export async function analyzeVision(body: {
   if (!res.ok) {
     const detail = await res.json().catch(() => ({ detail: res.statusText }));
     throw new Error(detail.detail || `Vision analysis failed: ${res.status}`);
+  }
+  return res.json();
+}
+
+export async function fetchDesktopState(): Promise<DesktopState> {
+  const res = await fetch(`${getBase()}/v1/jarvis/desktop/state`);
+  if (!res.ok) {
+    const detail = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(detail.detail || `Desktop state failed: ${res.status}`);
   }
   return res.json();
 }

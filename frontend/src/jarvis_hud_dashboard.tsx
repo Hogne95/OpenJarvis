@@ -37,6 +37,7 @@ import {
   fetchAutomationStatus,
   fetchCodingStatus,
   fetchDailyDigest,
+  fetchDesktopState,
   fetchDigestSchedule,
   fetchInboxSummary,
   executeJarvisIntent,
@@ -85,6 +86,7 @@ import {
   type AutomationStatus,
   type CodingWorkspaceStatus,
   type DailyDigest,
+  type DesktopState,
   type DigestSchedule,
   type DurableOperatorMemory,
   type InboxSummaryItem,
@@ -218,6 +220,7 @@ function normalizeMeetingKey(value: string) {
 const DISMISSED_AUTOMATION_ALERTS_KEY = 'jarvis-dismissed-automation-alerts';
 const REVIEW_QUEUE_STATE_KEY = 'jarvis-review-queue-state';
 const CODING_TASKS_KEY = 'jarvis-coding-tasks';
+const DESKTOP_DRAFT_KEY = 'jarvis-desktop-draft';
 
 function loadDismissedAutomationAlerts() {
   if (typeof window === 'undefined') return [];
@@ -280,6 +283,26 @@ function loadCodingTasks() {
   } catch {
     return [];
   }
+}
+
+function loadDesktopDraft() {
+  if (typeof window === 'undefined') {
+    return null as null | { target: string; content: string; createdAt: number };
+  }
+  try {
+    const raw = window.localStorage.getItem(DESKTOP_DRAFT_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (
+      parsed &&
+      typeof parsed.target === 'string' &&
+      typeof parsed.content === 'string' &&
+      typeof parsed.createdAt === 'number'
+    ) {
+      return parsed as { target: string; content: string; createdAt: number };
+    }
+  } catch {}
+  return null;
 }
 
 function formatRoutineLabel(routineId: AutomationLogEntry['routine_id']) {
@@ -353,6 +376,9 @@ export default function JarvisHudDashboard() {
       status: 'pending' | 'in_progress' | 'done';
     }>
   >(() => loadCodingTasks());
+  const [desktopDraft, setDesktopDraft] = useState<null | { target: string; content: string; createdAt: number }>(
+    () => loadDesktopDraft(),
+  );
   const [workspaceSummary, setWorkspaceSummary] = useState<WorkspaceSummary | null>(null);
   const [workspaceRepos, setWorkspaceRepos] = useState<WorkspaceRepoCatalog | null>(null);
   const [workspaceChecks, setWorkspaceChecks] = useState<WorkspaceChecks | null>(null);
@@ -389,6 +415,7 @@ export default function JarvisHudDashboard() {
   const [dailyDigest, setDailyDigest] = useState<DailyDigest | null>(null);
   const [digestSchedule, setDigestSchedule] = useState<DigestSchedule | null>(null);
   const [durableOperatorMemory, setDurableOperatorMemory] = useState<DurableOperatorMemory | null>(null);
+  const [desktopState, setDesktopState] = useState<DesktopState | null>(null);
   const [reminders, setReminders] = useState<ReminderItem[]>([]);
   const [digestNotice, setDigestNotice] = useState('');
   const [digestBusy, setDigestBusy] = useState(false);
@@ -446,7 +473,7 @@ export default function JarvisHudDashboard() {
     let cancelled = false;
 
     const refreshLiveStatus = async () => {
-      const [action, automation, automationLogResult, coding, digest, digestSched, operatorMemory, inbox, tasks, reminderItems, health, speech, agents, connectors, loop, profile, wb, workspace, repos, checks] = await Promise.allSettled([
+      const [action, automation, automationLogResult, coding, digest, digestSched, operatorMemory, inbox, tasks, reminderItems, health, speech, agents, connectors, loop, profile, wb, workspace, repos, checks, desktop] = await Promise.allSettled([
         fetchActionCenterStatus(),
         fetchAutomationStatus(),
         fetchAutomationLogs(),
@@ -467,6 +494,7 @@ export default function JarvisHudDashboard() {
         fetchWorkspaceSummary(),
         fetchWorkspaceRepos(),
         fetchWorkspaceChecks(),
+        fetchDesktopState(),
       ]);
 
       if (cancelled) return;
@@ -484,6 +512,7 @@ export default function JarvisHudDashboard() {
       if (workspace.status === 'fulfilled') setWorkspaceSummary(workspace.value);
       if (repos.status === 'fulfilled') setWorkspaceRepos(repos.value);
       if (checks.status === 'fulfilled') setWorkspaceChecks(checks.value);
+      if (desktop.status === 'fulfilled') setDesktopState(desktop.value);
       setApiReachable(health.status === 'fulfilled' ? health.value : false);
       setSpeechAvailable(speech.status === 'fulfilled' ? speech.value.available : false);
       setRunningAgentCount(
@@ -556,6 +585,15 @@ export default function JarvisHudDashboard() {
     if (typeof window === 'undefined') return;
     window.localStorage.setItem(CODING_TASKS_KEY, JSON.stringify(codingTasks));
   }, [codingTasks]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    if (!desktopDraft) {
+      window.localStorage.removeItem(DESKTOP_DRAFT_KEY);
+      return;
+    }
+    window.localStorage.setItem(DESKTOP_DRAFT_KEY, JSON.stringify(desktopDraft));
+  }, [desktopDraft]);
 
   useEffect(() => {
     if (!actionNotice) return;
@@ -1563,6 +1601,20 @@ export default function JarvisHudDashboard() {
             'I uploaded an image into the HUD. Help me understand what matters in it, then ask one clarifying question before giving step-by-step guidance.',
           );
         }
+      }
+      if (
+        next.intent.type === 'desktop' &&
+        ['compose_message', 'compose_clipboard_message', 'compose_selection_message'].includes(next.intent.action) &&
+        next.status === 'staged'
+      ) {
+        setDesktopDraft({
+          target: next.intent.target || durableOperatorMemory?.profile.active_desktop_target || 'active target',
+          content: next.intent.content || intentCommand.trim(),
+          createdAt: Date.now(),
+        });
+      }
+      if (next.intent.type === 'desktop' && next.intent.action === 'submit_message' && next.status === 'staged') {
+        setDesktopDraft(null);
       }
       setWorkbenchNotice(next.message);
     } catch (error) {
@@ -3123,6 +3175,107 @@ export default function JarvisHudDashboard() {
                       </div>
                     </div>
                   </div>
+                  {desktopState ? (
+                    <div className="mt-3 rounded-[0.95rem] border border-cyan-400/10 bg-black/20 px-3 py-3">
+                      <div className="flex items-center justify-between gap-3">
+                        <div className="text-[10px] uppercase tracking-[0.22em] text-cyan-300/55">Desktop State</div>
+                        <div className="text-[10px] uppercase tracking-[0.22em] text-cyan-300/45">
+                          {desktopState.active_process_name || 'No active process'}
+                        </div>
+                      </div>
+                      <div className="mt-2 text-sm text-cyan-50/90">
+                        {desktopState.active_window_title || 'No active window detected.'}
+                      </div>
+                      {desktopState.open_windows.length ? (
+                        <div className="mt-3 grid gap-2">
+                          {desktopState.open_windows.slice(0, 4).map((item) => (
+                            <div
+                              key={`${item.process}-${item.title}`}
+                              className="rounded-[0.85rem] border border-cyan-400/10 bg-slate-950/55 px-3 py-2"
+                            >
+                              <div className="text-[10px] uppercase tracking-[0.22em] text-cyan-300/55">
+                                {item.process}
+                              </div>
+                              <div className="mt-1 text-sm text-slate-200/78">{item.title}</div>
+                            </div>
+                          ))}
+                        </div>
+                      ) : null}
+                    </div>
+                  ) : null}
+                  {intentExecution?.result?.metadata &&
+                  'page_title' in intentExecution.result.metadata &&
+                  intentExecution.intent.type === 'desktop' ? (
+                    <div className="mt-3 rounded-[0.95rem] border border-cyan-400/10 bg-black/20 px-3 py-3">
+                      <div className="flex items-center justify-between gap-3">
+                        <div className="text-[10px] uppercase tracking-[0.22em] text-cyan-300/55">Active Page</div>
+                        <div className="text-[10px] uppercase tracking-[0.22em] text-cyan-300/45">
+                          {String(intentExecution.result.metadata.browser || 'desktop')}
+                        </div>
+                      </div>
+                      <div className="mt-2 text-sm text-cyan-50/90">
+                        {String(intentExecution.result.metadata.page_title || intentExecution.result.metadata.window_title || 'No page detected.')}
+                      </div>
+                      {'page_url' in intentExecution.result.metadata && intentExecution.result.metadata.page_url ? (
+                        <div className="mt-2 break-all text-xs text-cyan-200/65">
+                          {String(intentExecution.result.metadata.page_url)}
+                        </div>
+                      ) : null}
+                    </div>
+                  ) : null}
+                  {intentExecution?.result?.metadata &&
+                  'document_title' in intentExecution.result.metadata &&
+                  intentExecution.intent.type === 'desktop' ? (
+                    <div className="mt-3 rounded-[0.95rem] border border-cyan-400/10 bg-black/20 px-3 py-3">
+                      <div className="flex items-center justify-between gap-3">
+                        <div className="text-[10px] uppercase tracking-[0.22em] text-cyan-300/55">Active Document</div>
+                        <div className="text-[10px] uppercase tracking-[0.22em] text-cyan-300/45">
+                          {String(intentExecution.result.metadata.app || 'desktop')}
+                        </div>
+                      </div>
+                      <div className="mt-2 text-sm text-cyan-50/90">
+                        {String(intentExecution.result.metadata.document_title || intentExecution.result.metadata.window_title || 'No document detected.')}
+                      </div>
+                    </div>
+                  ) : null}
+                  {desktopDraft ? (
+                    <div className="mt-3 rounded-[0.95rem] border border-cyan-400/10 bg-black/20 px-3 py-3">
+                      <div className="flex items-center justify-between gap-3">
+                        <div className="text-[10px] uppercase tracking-[0.22em] text-cyan-300/55">Desktop Draft Deck</div>
+                        <div className="text-[10px] uppercase tracking-[0.22em] text-cyan-300/45">
+                          {new Date(desktopDraft.createdAt).toLocaleTimeString()}
+                        </div>
+                      </div>
+                      <div className="mt-2 text-xs uppercase tracking-[0.18em] text-cyan-200/65">
+                        Target: {desktopDraft.target || 'active target'}
+                      </div>
+                      <div className="mt-2 text-sm text-slate-200/78">{desktopDraft.content}</div>
+                      <div className="mt-3 flex gap-2">
+                        <button
+                          onClick={() => loadIntentPreset(`Draft ${desktopDraft.content} into ${desktopDraft.target}`)}
+                          className="rounded-[0.85rem] border border-cyan-400/12 bg-cyan-400/[0.08] px-3 py-2 text-[10px] uppercase tracking-[0.22em] text-cyan-100 transition hover:bg-cyan-400/[0.14]"
+                        >
+                          Reload Draft
+                        </button>
+                        <button
+                          onClick={() =>
+                            loadIntentPreset(
+                              desktopDraft.target ? `Submit message in ${desktopDraft.target}` : 'Submit message',
+                            )
+                          }
+                          className="rounded-[0.85rem] border border-emerald-300/18 bg-emerald-400/[0.08] px-3 py-2 text-[10px] uppercase tracking-[0.22em] text-emerald-100 transition hover:bg-emerald-400/[0.14]"
+                        >
+                          Prepare Submit
+                        </button>
+                        <button
+                          onClick={() => setDesktopDraft(null)}
+                          className="rounded-[0.85rem] border border-cyan-400/12 bg-slate-950/70 px-3 py-2 text-[10px] uppercase tracking-[0.22em] text-cyan-100 transition hover:bg-cyan-400/[0.08]"
+                        >
+                          Clear Draft
+                        </button>
+                      </div>
+                    </div>
+                  ) : null}
                   <div className="mt-3 grid gap-3 md:grid-cols-[1fr_140px_140px]">
                     <input
                       value={intentCommand}
@@ -3154,6 +3307,25 @@ export default function JarvisHudDashboard() {
                       { label: 'Web Search', text: 'Search the web for the latest Ollama models', icon: Globe },
                       { label: 'Open YouTube', text: 'Open YouTube', icon: Radio },
                       { label: 'Switch App', text: 'Switch to Chrome', icon: Monitor },
+                      { label: 'Active Window', text: 'What window is active', icon: Activity },
+                      { label: 'Active Page', text: 'What page is active', icon: Globe },
+                      { label: 'Active Doc', text: 'What document is active', icon: Folder },
+                      { label: 'Active URL', text: 'What URL is active', icon: Globe },
+                      { label: 'Remember Page', text: 'Remember active page', icon: BookOpen },
+                      { label: 'Remember Doc', text: 'Remember active document', icon: BookOpen },
+                      { label: 'Lock Active', text: 'Use active window as target', icon: Shield },
+                      { label: 'Open Apps', text: 'List open apps', icon: Cpu },
+                      { label: 'Lock Browser', text: 'Set edge as browser target', icon: Shield },
+                      { label: 'Clear Target', text: 'Clear target', icon: XCircle },
+                      { label: 'Clipboard', text: 'What is on my clipboard', icon: BookOpen },
+                      { label: 'Selection', text: 'What text is selected', icon: BookOpen },
+                      { label: 'Remember Clipboard', text: 'Remember clipboard', icon: Brain },
+                      { label: 'Remember Selection', text: 'Remember selected text', icon: Brain },
+                      { label: 'Search Clipboard', text: 'Search clipboard in browser', icon: Globe },
+                      { label: 'Search Selection', text: 'Search selected text in browser', icon: Globe },
+                      { label: 'Clipboard URL', text: 'Open clipboard as URL', icon: Monitor },
+                      { label: 'Selection URL', text: 'Open selected text as URL', icon: Monitor },
+                      { label: 'Copy Page URL', text: 'Copy active URL', icon: Reply },
                       { label: 'Copy Text', text: 'Copy deployment checklist to clipboard', icon: Reply },
                       { label: 'Type In App', text: 'Type hello from Jarvis into Notepad', icon: Terminal },
                       { label: 'Shortcut', text: 'Press ctrl shift esc', icon: Cpu },
@@ -3161,10 +3333,23 @@ export default function JarvisHudDashboard() {
                       { label: 'Show Desktop', text: 'Show desktop', icon: Monitor },
                       { label: 'Refresh', text: 'Refresh page', icon: Activity },
                       { label: 'New Tab', text: 'New tab', icon: Globe },
+                      { label: 'Browser Search', text: 'Search browser for latest ollama models', icon: Globe },
+                      { label: 'Go To URL', text: 'Go to github.com', icon: Monitor },
+                      { label: 'Open In Code', text: 'Open C:\\Users\\hogne\\OpenJarvis in VS Code', icon: Terminal },
+                      { label: 'DevTools', text: 'Open devtools', icon: Wrench },
                       { label: 'Back', text: 'Go back', icon: ChevronRight },
                       { label: 'Play/Pause', text: 'Play pause', icon: AudioLines },
                       { label: 'Next Track', text: 'Next track', icon: Radio },
                       { label: 'Volume Up', text: 'Volume up', icon: Activity },
+                      { label: 'Draft Message', text: 'Draft hello team, standup starts in five minutes into Slack', icon: Mail },
+                      { label: 'Draft Clipboard', text: 'Draft clipboard into Slack', icon: Mail },
+                      { label: 'Draft Selection', text: 'Draft selected text into Slack', icon: Mail },
+                      { label: 'Submit Message', text: 'Submit message in Slack', icon: CheckCircle2 },
+                      { label: 'Project Search', text: 'Search project for voice loop', icon: Folder },
+                      { label: 'Clipboard Search', text: 'Search project for clipboard', icon: Folder },
+                      { label: 'Selection Search', text: 'Search project for selected text', icon: Folder },
+                      { label: 'Palette', text: 'Open command palette', icon: Sparkles },
+                      { label: 'Reveal Path', text: 'Reveal C:\\Users\\hogne\\OpenJarvis in Explorer', icon: Folder },
                       { label: 'Find PDFs', text: 'Find all PDFs in downloads', icon: Folder },
                       { label: 'Screen Brief', text: 'What is on my screen?', icon: Monitor },
                       { label: 'Upload Image', text: 'Analyze this image', icon: Sparkles },
@@ -3202,6 +3387,43 @@ export default function JarvisHudDashboard() {
                       <pre className="mt-2 max-h-48 overflow-auto whitespace-pre-wrap break-words text-sm text-slate-200/76">
                         {intentExecution.result.content}
                       </pre>
+                    </div>
+                  ) : null}
+                  {intentExecution?.result?.metadata &&
+                  ('target_ready' in intentExecution.result.metadata ||
+                    'active_window_title' in intentExecution.result.metadata) ? (
+                    <div className="mt-3 rounded-[0.95rem] border border-cyan-400/10 bg-black/20 px-3 py-3">
+                      {(() => {
+                        const targetReady = Boolean(intentExecution.result.metadata?.target_ready);
+                        const targetReason = String(intentExecution.result.metadata?.target_reason || 'No readiness note available.');
+                        const activeWindowTitle = String(intentExecution.result.metadata?.active_window_title || '');
+                        const submitMode = String(intentExecution.result.metadata?.submit_mode || '');
+                        return (
+                          <>
+                      <div className="flex items-center justify-between gap-3">
+                        <div className="text-[10px] uppercase tracking-[0.22em] text-cyan-300/55">Target Readiness</div>
+                        <div
+                          className={`text-[10px] uppercase tracking-[0.22em] ${targetReady ? 'text-emerald-300/80' : 'text-amber-300/80'}`}
+                        >
+                          {targetReady ? 'ready' : 'verify first'}
+                        </div>
+                      </div>
+                      <div className="mt-2 text-sm text-slate-200/76">
+                        {targetReason}
+                      </div>
+                      {activeWindowTitle ? (
+                        <div className="mt-2 text-xs text-cyan-200/65">
+                          Active window: {activeWindowTitle}
+                        </div>
+                      ) : null}
+                      {submitMode ? (
+                        <div className="mt-1 text-xs uppercase tracking-[0.18em] text-cyan-200/65">
+                          Submit mode: {submitMode}
+                        </div>
+                      ) : null}
+                          </>
+                        );
+                      })()}
                     </div>
                   ) : null}
                   {intentExecution?.result?.items?.length ? (
