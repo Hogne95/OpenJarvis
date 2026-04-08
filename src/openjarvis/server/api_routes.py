@@ -5,6 +5,7 @@ from __future__ import annotations
 import inspect
 import json
 import logging
+import os
 import subprocess
 from typing import Any, Dict, List, Literal, Optional
 from email.utils import parseaddr
@@ -13,6 +14,7 @@ from pathlib import Path
 
 from fastapi.concurrency import run_in_threadpool
 from fastapi import APIRouter, HTTPException, Request, Response, WebSocket, WebSocketDisconnect
+from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)
@@ -196,11 +198,25 @@ class OperatorProjectUpdateRequest(BaseModel):
     notes: Optional[str] = None
 
 
+class OperatorVisualObservationRequest(BaseModel):
+    label: str
+    source: Optional[str] = "screen"
+    note: str
+    image_data_url: Optional[str] = None
+    created_at: Optional[str] = None
+
+
 class RoutineScheduleRequest(BaseModel):
     routine_id: Literal["daily_ops", "inbox_sweep", "meeting_prep"]
     enabled: bool
     cron: Optional[str] = None
     agent: str = "orchestrator"
+
+
+class VisionAnalyzeRequest(BaseModel):
+    image_data_url: str
+    note: Optional[str] = None
+    label: Optional[str] = None
 
 
 # ---- Agent routes ----
@@ -815,6 +831,7 @@ voice_loop_router = APIRouter(prefix="/v1/voice-loop", tags=["voice-loop"])
 workbench_router = APIRouter(prefix="/v1/workbench", tags=["workbench"])
 action_center_router = APIRouter(prefix="/v1/action-center", tags=["action-center"])
 operator_memory_router = APIRouter(prefix="/v1/operator-memory", tags=["operator-memory"])
+vision_router = APIRouter(prefix="/v1/vision", tags=["vision"])
 automation_router = APIRouter(prefix="/v1/automation", tags=["automation"])
 workspace_router = APIRouter(prefix="/v1/workspace", tags=["workspace"])
 coding_router = APIRouter(prefix="/v1/coding", tags=["coding"])
@@ -1392,6 +1409,100 @@ async def operator_memory_update_project(
         raise HTTPException(status_code=400, detail=str(exc))
 
 
+@operator_memory_router.post("/visual")
+async def operator_memory_add_visual_observation(
+    req: OperatorVisualObservationRequest,
+    request: Request,
+):
+    manager = getattr(request.app.state, "operator_memory", None)
+    if manager is None:
+        raise HTTPException(status_code=503, detail="Operator memory not configured")
+    try:
+        return manager.add_visual_observation(
+            label=req.label,
+            source=req.source or "screen",
+            note=req.note,
+            image_data_url=req.image_data_url or "",
+            created_at=req.created_at or "",
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@operator_memory_router.get("/visual/{observation_id}/asset")
+async def operator_memory_visual_asset(
+    observation_id: str,
+    request: Request,
+):
+    manager = getattr(request.app.state, "operator_memory", None)
+    if manager is None:
+        raise HTTPException(status_code=503, detail="Operator memory not configured")
+    observation = manager.get_visual_observation(observation_id)
+    if observation is None:
+        raise HTTPException(status_code=404, detail="Visual observation not found")
+    image_path = str(observation.get("image_path", "")).strip()
+    if not image_path:
+        raise HTTPException(status_code=404, detail="Visual observation has no stored asset")
+    target = Path(image_path)
+    if not target.exists():
+        raise HTTPException(status_code=404, detail="Stored visual asset not found")
+    return FileResponse(target)
+
+
+@vision_router.post("/analyze")
+async def vision_analyze(req: VisionAnalyzeRequest):
+    api_key = os.environ.get("OPENAI_API_KEY", "").strip()
+    if not api_key:
+        raise HTTPException(status_code=503, detail="Vision analysis requires OPENAI_API_KEY")
+    try:
+        from openai import OpenAI
+    except ImportError as exc:
+        raise HTTPException(status_code=503, detail=f"openai package unavailable: {exc}") from exc
+
+    prompt = (
+        "You are JARVIS visual analysis. Reply in English only. "
+        "Analyze the provided image and produce a concise operator brief with these sections: "
+        "Summary, Important Details, Risks, Recommended Next Action. "
+        "If the user's note gives extra context, incorporate it."
+    )
+    if req.note:
+        prompt += f"\n\nUser context note: {req.note.strip()}"
+    if req.label:
+        prompt += f"\nVisual label: {req.label.strip()}"
+
+    try:
+        client = OpenAI(api_key=api_key)
+        response = client.chat.completions.create(
+            model=os.environ.get("OPENJARVIS_VISION_MODEL", "gpt-4o-mini"),
+            messages=[
+                {"role": "system", "content": prompt},
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": "Analyze this visual for my JARVIS HUD."},
+                        {
+                            "type": "image_url",
+                            "image_url": {"url": req.image_data_url},
+                        },
+                    ],
+                },
+            ],
+            temperature=0.2,
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"Vision analysis failed: {exc}") from exc
+
+    content = ""
+    choice = response.choices[0] if response.choices else None
+    if choice and choice.message:
+        content = (choice.message.content or "").strip()
+    return {
+        "content": content,
+        "model": os.environ.get("OPENJARVIS_VISION_MODEL", "gpt-4o-mini"),
+        "label": req.label or "",
+    }
+
+
 def _routine_defaults(routine_id: str, operator_memory: Any | None = None) -> dict[str, str]:
     snapshot = operator_memory.snapshot() if operator_memory is not None else {}
     profile = snapshot.get("profile", {}) if isinstance(snapshot, dict) else {}
@@ -1881,6 +1992,7 @@ def include_all_routes(app) -> None:
     app.include_router(workbench_router)
     app.include_router(action_center_router)
     app.include_router(operator_memory_router)
+    app.include_router(vision_router)
     app.include_router(automation_router)
     app.include_router(workspace_router)
     app.include_router(coding_router)

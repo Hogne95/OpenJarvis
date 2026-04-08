@@ -486,6 +486,8 @@ export interface DurableOperatorProfile {
   priority_contacts: string[];
   workday_start: string;
   workday_end: string;
+  active_desktop_target?: string;
+  active_browser_target?: string;
 }
 
 export interface DurableOperatorSignals {
@@ -504,6 +506,14 @@ export interface DurableOperatorMemory {
     content: string;
     created_at: string;
     tags: string[];
+  }>;
+  visual_observations?: Array<{
+    id: string;
+    label: string;
+    source: string;
+    note: string;
+    created_at: string;
+    image_path: string;
   }>;
   relationships: Record<
     string,
@@ -572,6 +582,12 @@ export interface JarvisIntentExecution {
     default_working_dir?: string;
     client_action?: string;
   };
+}
+
+export interface VisionAnalysisResult {
+  content: string;
+  model: string;
+  label: string;
 }
 
 export interface ReminderItem {
@@ -1249,6 +1265,25 @@ export async function updateOperatorProject(body: {
   return res.json();
 }
 
+export async function updateOperatorVisualObservation(body: {
+  label: string;
+  source?: string;
+  note: string;
+  image_data_url?: string;
+  created_at?: string;
+}): Promise<DurableOperatorMemory> {
+  const res = await fetch(`${getBase()}/v1/operator-memory/visual`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const detail = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(detail.detail || `Operator visual update failed: ${res.status}`);
+  }
+  return res.json();
+}
+
 export async function fetchReminders(limit: number = 8): Promise<ReminderItem[]> {
   const res = await fetch(`${getBase()}/v1/action-center/reminders?limit=${limit}`);
   if (!res.ok) {
@@ -1282,6 +1317,23 @@ export async function executeJarvisIntent(text: string): Promise<JarvisIntentExe
   if (!res.ok) {
     const detail = await res.json().catch(() => ({ detail: res.statusText }));
     throw new Error(detail.detail || `Intent execution failed: ${res.status}`);
+  }
+  return res.json();
+}
+
+export async function analyzeVision(body: {
+  image_data_url: string;
+  note?: string;
+  label?: string;
+}): Promise<VisionAnalysisResult> {
+  const res = await fetch(`${getBase()}/v1/vision/analyze`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const detail = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(detail.detail || `Vision analysis failed: ${res.status}`);
   }
   return res.json();
 }

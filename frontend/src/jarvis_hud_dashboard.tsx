@@ -28,6 +28,7 @@ import { useNavigate } from 'react-router';
 import {
   checkHealth,
   approveActionCenterItem,
+  analyzeVision,
   approveCodeEdit,
   approveWorkbenchCommand,
   createManagedAgent,
@@ -77,6 +78,7 @@ import {
   updateOperatorMeeting,
   updateOperatorProject,
   updateOperatorRelationship,
+  updateOperatorVisualObservation,
   updateVoiceLoopState,
   type ActionCenterStatus,
   type AutomationLogEntry,
@@ -88,6 +90,7 @@ import {
   type InboxSummaryItem,
   type JarvisIntent,
   type JarvisIntentExecution,
+  type VisionAnalysisResult,
   type ReminderItem,
   type SpeechProfile,
   type TaskSummaryItem,
@@ -102,6 +105,12 @@ import { useAppStore } from './lib/store';
 import type { ChatMessage, ToolCallInfo } from './types';
 import { InputArea } from './components/Chat/InputArea';
 import { useSpeech } from './hooks/useSpeech';
+
+function getApiBase() {
+  const envBase = (import.meta.env.VITE_API_BASE_URL as string | undefined)?.trim();
+  if (envBase) return envBase.replace(/\/$/, '');
+  return typeof window !== 'undefined' ? window.location.origin : '';
+}
 
 type Status = 'Standby' | 'Listening' | 'Analyzing' | 'Responding';
 
@@ -391,7 +400,14 @@ export default function JarvisHudDashboard() {
   const [intentBusy, setIntentBusy] = useState<'classify' | 'run' | 'capture' | null>(null);
   const [intentPreview, setIntentPreview] = useState<JarvisIntent | null>(null);
   const [intentExecution, setIntentExecution] = useState<JarvisIntentExecution | null>(null);
-  const [screenSnapshot, setScreenSnapshot] = useState<{ dataUrl: string; capturedAt: number } | null>(null);
+  const [visionAnalysis, setVisionAnalysis] = useState<VisionAnalysisResult | null>(null);
+  const [visionBusy, setVisionBusy] = useState(false);
+  const [screenSnapshot, setScreenSnapshot] = useState<{
+    dataUrl: string;
+    capturedAt: number;
+    source: 'screen' | 'upload';
+    label: string;
+  } | null>(null);
   const [screenContextNote, setScreenContextNote] = useState('');
   const lastSyncedPhaseRef = useRef('');
   const hasAutoRequestedDigestRef = useRef(false);
@@ -1089,6 +1105,22 @@ export default function JarvisHudDashboard() {
       });
     }
 
+    if (visionAnalysis?.content.trim()) {
+      const firstLine = visionAnalysis.content.split('\n').find((line) => line.trim()) || 'Visual analysis ready.';
+      items.push({
+        id: `vision-${screenSnapshot?.capturedAt || 'current'}`,
+        priority: 54,
+        label: 'Visual Intel',
+        title: screenSnapshot?.label || 'Visual analysis',
+        detail: firstLine,
+        actionLabel: 'Load Insight',
+        action: () =>
+          injectCommand(
+            `I have a vision analysis result for "${screenSnapshot?.label || 'this visual'}".\n${visionAnalysis.content}\nTurn this into the next concrete action and ask one clarifying question if needed.`,
+          ),
+      });
+    }
+
     if (nextCodingTask) {
       items.push({
         id: `coding-task-${nextCodingTask.id}`,
@@ -1114,7 +1146,7 @@ export default function JarvisHudDashboard() {
     }
 
     return items.sort((left, right) => right.priority - left.priority).slice(0, 6);
-  }, [activeAutomationAlerts, editorFilePath, gitCommitMessage, inboxFocusQueue, latestCodeResult?.file_path, latestValidationFailure, latestValidationSuccess, nextCodingTask, nextReviewQueueItem, pendingAction, pendingCodeEdit, pendingWorkbench, prepQueue]);
+  }, [activeAutomationAlerts, editorFilePath, gitCommitMessage, inboxFocusQueue, latestCodeResult?.file_path, latestValidationFailure, latestValidationSuccess, nextCodingTask, nextReviewQueueItem, pendingAction, pendingCodeEdit, pendingWorkbench, prepQueue, screenSnapshot?.capturedAt, screenSnapshot?.label, visionAnalysis?.content]);
   const connectorCapabilities = useMemo(() => {
     const ids = new Set(connectedConnectorIds);
     const gmailConnected = ids.has('gmail') || ids.has('gmail_imap');
@@ -1182,6 +1214,7 @@ export default function JarvisHudDashboard() {
       button: 'Calendar Source Needed',
     };
   }, [actionMode, connectedConnectorIds, connectorSummary.emailReady]);
+  const apiBase = useMemo(() => getApiBase(), []);
 
   useEffect(() => {
     if (!immediateReminder) return;
@@ -1437,12 +1470,60 @@ export default function JarvisHudDashboard() {
       ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
       stream.getTracks().forEach((track) => track.stop());
       const dataUrl = canvas.toDataURL('image/png');
-      setScreenSnapshot({ dataUrl, capturedAt: Date.now() });
+      setScreenSnapshot({
+        dataUrl,
+        capturedAt: Date.now(),
+        source: 'screen',
+        label: 'Screen Snapshot',
+      });
+      setVisionAnalysis(null);
       setScreenContextNote('');
       setWorkbenchNotice('Screen snapshot captured. Review it in the HUD and load a screen-help prompt when needed.');
       return dataUrl;
     } catch (error) {
       setWorkbenchNotice(error instanceof Error ? error.message : 'Screen capture failed.');
+      return null;
+    } finally {
+      setIntentBusy(null);
+    }
+  }
+
+  async function uploadVisualSnapshot() {
+    if (typeof document === 'undefined') {
+      setWorkbenchNotice('Image upload is not available in this environment.');
+      return null;
+    }
+    setIntentBusy('capture');
+    try {
+      const file = await new Promise<File | null>((resolve) => {
+        const input = document.createElement('input');
+        input.type = 'file';
+        input.accept = 'image/png,image/jpeg,image/webp,image/gif';
+        input.onchange = () => resolve(input.files?.[0] ?? null);
+        input.click();
+      });
+      if (!file) {
+        setWorkbenchNotice('Image upload cancelled.');
+        return null;
+      }
+      const dataUrl = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(String(reader.result || ''));
+        reader.onerror = () => reject(new Error('Image upload failed.'));
+        reader.readAsDataURL(file);
+      });
+      setScreenSnapshot({
+        dataUrl,
+        capturedAt: Date.now(),
+        source: 'upload',
+        label: file.name || 'Uploaded Image',
+      });
+      setVisionAnalysis(null);
+      setScreenContextNote('');
+      setWorkbenchNotice('Image uploaded into the visual console. Add context or load an analysis prompt.');
+      return dataUrl;
+    } catch (error) {
+      setWorkbenchNotice(error instanceof Error ? error.message : 'Image upload failed.');
       return null;
     } finally {
       setIntentBusy(null);
@@ -1475,6 +1556,14 @@ export default function JarvisHudDashboard() {
           );
         }
       }
+      if (next.status === 'client_action_required' || next.intent.client_action === 'upload_image') {
+        const uploaded = await uploadVisualSnapshot();
+        if (uploaded) {
+          injectCommand(
+            'I uploaded an image into the HUD. Help me understand what matters in it, then ask one clarifying question before giving step-by-step guidance.',
+          );
+        }
+      }
       setWorkbenchNotice(next.message);
     } catch (error) {
       setWorkbenchNotice(error instanceof Error ? error.message : 'Intent execution failed.');
@@ -1492,24 +1581,25 @@ export default function JarvisHudDashboard() {
 
   async function createTaskFromScreenContext() {
     if (!screenSnapshot) {
-      setWorkbenchNotice('Capture a screen snapshot first.');
+      setWorkbenchNotice('Capture or upload a visual snapshot first.');
       return;
     }
     const note = screenContextNote.trim();
     if (!note) {
-      setWorkbenchNotice('Add a short screen context note first.');
+      setWorkbenchNotice('Add a short visual context note first.');
       return;
     }
     setActionBusy('stage');
     try {
+      const sourceLabel = screenSnapshot.source === 'upload' ? 'Image' : 'Screen';
       const next = await stageTask({
         title: `Screen follow-up · ${new Date(screenSnapshot.capturedAt).toLocaleTimeString()}`,
         notes: note,
       });
       setActionCenter(next);
-      setActionNotice('Screen follow-up task staged for approval.');
+      setActionNotice(`${sourceLabel} follow-up task staged for approval.`);
     } catch (error) {
-      setActionNotice(error instanceof Error ? error.message : 'Unable to stage task from screen context.');
+      setActionNotice(error instanceof Error ? error.message : 'Unable to stage task from visual context.');
     } finally {
       setActionBusy(null);
     }
@@ -1517,28 +1607,97 @@ export default function JarvisHudDashboard() {
 
   async function rememberScreenContext() {
     if (!screenSnapshot) {
-      setWorkbenchNotice('Capture a screen snapshot first.');
+      setWorkbenchNotice('Capture or upload a visual snapshot first.');
       return;
     }
     const note = screenContextNote.trim();
     if (!note) {
-      setWorkbenchNotice('Add a short screen context note first.');
+      setWorkbenchNotice('Add a short visual context note first.');
       return;
     }
     setIntentBusy('run');
     try {
-      const next = await executeJarvisIntent(`Remember ${note}`);
+      const next = await executeJarvisIntent(`Remember ${screenSnapshot.label}: ${note}`);
       setIntentPreview(next.intent);
       setIntentExecution(next);
-      const memory = await fetchOperatorMemory().catch(() => null);
+      const memory =
+        (await updateOperatorVisualObservation({
+          label: screenSnapshot.label,
+          source: screenSnapshot.source,
+          note,
+          image_data_url: screenSnapshot.dataUrl,
+          created_at: new Date(screenSnapshot.capturedAt).toISOString(),
+        }).catch(() => null)) ||
+        (await fetchOperatorMemory().catch(() => null));
       if (memory) setDurableOperatorMemory(memory);
-      setWorkbenchNotice('Screen context saved to explicit memory.');
+      setWorkbenchNotice(`${screenSnapshot.source === 'upload' ? 'Image' : 'Screen'} context saved to explicit memory.`);
     } catch (error) {
-      setWorkbenchNotice(error instanceof Error ? error.message : 'Unable to remember screen context.');
+      setWorkbenchNotice(error instanceof Error ? error.message : 'Unable to remember visual context.');
     } finally {
       setIntentBusy(null);
     }
   }
+
+  async function restoreVisualObservation(observation: NonNullable<DurableOperatorMemory['visual_observations']>[number]) {
+    const assetUrl =
+      observation.image_path && apiBase
+        ? `${apiBase}/v1/operator-memory/visual/${encodeURIComponent(observation.id)}/asset`
+        : '';
+    if (!assetUrl) {
+      setWorkbenchNotice('This visual memory has no stored image asset to restore.');
+      return;
+    }
+    try {
+      const response = await fetch(assetUrl);
+      if (!response.ok) throw new Error(`Unable to load visual asset: ${response.status}`);
+      const blob = await response.blob();
+      const dataUrl = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(String(reader.result || ''));
+        reader.onerror = () => reject(new Error('Unable to decode visual asset.'));
+        reader.readAsDataURL(blob);
+      });
+      setScreenSnapshot({
+        dataUrl,
+        capturedAt: observation.created_at ? new Date(observation.created_at).getTime() || Date.now() : Date.now(),
+        source: observation.source === 'upload' ? 'upload' : 'screen',
+        label: observation.label,
+      });
+      setVisionAnalysis(null);
+      setScreenContextNote(observation.note || '');
+      setWorkbenchNotice('Visual memory restored into the HUD.');
+    } catch (error) {
+      setWorkbenchNotice(error instanceof Error ? error.message : 'Unable to restore visual memory.');
+    }
+  }
+
+  async function analyzeCurrentVisual() {
+    if (!screenSnapshot) {
+      setWorkbenchNotice('Capture or upload a visual snapshot first.');
+      return;
+    }
+    setVisionBusy(true);
+    try {
+      const result = await analyzeVision({
+        image_data_url: screenSnapshot.dataUrl,
+        note: screenContextNote.trim() || undefined,
+        label: screenSnapshot.label,
+      });
+      setVisionAnalysis(result);
+      setWorkbenchNotice('Vision analysis complete.');
+    } catch (error) {
+      setWorkbenchNotice(error instanceof Error ? error.message : 'Vision analysis failed.');
+    } finally {
+      setVisionBusy(false);
+    }
+  }
+
+  useEffect(() => {
+    if (!visionAnalysis?.content.trim()) return;
+    const firstLine = visionAnalysis.content.split('\n').find((line) => line.trim()) || '';
+    if (!firstLine) return;
+    setVoiceNotice(`Visual analysis ready: ${firstLine}`);
+  }, [visionAnalysis?.content]);
 
   function interruptAssistantOutput(reason?: string) {
     audioElementRef.current?.pause();
@@ -2944,17 +3103,31 @@ export default function JarvisHudDashboard() {
                       Intent Console
                     </div>
                     <div className="text-[10px] uppercase tracking-[0.24em] text-cyan-200/60">
-                      memory · web · desktop · screen
+                      memory · web · desktop · visual
                     </div>
                   </div>
                   <div className="text-sm leading-7 text-slate-200/78">
-                    One structured lane for “remember this”, “search the web”, desktop actions, and screen capture.
+                    One structured lane for memory, web search, desktop control, and visual awareness.
+                  </div>
+                  <div className="mt-3 grid gap-2 md:grid-cols-2">
+                    <div className="rounded-[0.95rem] border border-cyan-400/10 bg-black/20 px-3 py-3">
+                      <div className="text-[10px] uppercase tracking-[0.22em] text-cyan-300/55">Active Desktop Target</div>
+                      <div className="mt-1 text-sm text-cyan-50/90">
+                        {durableOperatorMemory?.profile.active_desktop_target || 'None locked yet'}
+                      </div>
+                    </div>
+                    <div className="rounded-[0.95rem] border border-cyan-400/10 bg-black/20 px-3 py-3">
+                      <div className="text-[10px] uppercase tracking-[0.22em] text-cyan-300/55">Active Browser</div>
+                      <div className="mt-1 text-sm text-cyan-50/90">
+                        {durableOperatorMemory?.profile.active_browser_target || 'Chrome fallback'}
+                      </div>
+                    </div>
                   </div>
                   <div className="mt-3 grid gap-3 md:grid-cols-[1fr_140px_140px]">
                     <input
                       value={intentCommand}
                       onChange={(event) => setIntentCommand(event.target.value)}
-                      placeholder="Remember my gym is at 18:00 on weekdays"
+                      placeholder="Switch to Chrome"
                       className="rounded-[0.9rem] border border-cyan-400/10 bg-slate-950/70 px-4 py-3 text-sm text-slate-100 outline-none placeholder:text-slate-500"
                     />
                     <button
@@ -2980,8 +3153,21 @@ export default function JarvisHudDashboard() {
                       { label: 'Forget', text: 'Forget gym', icon: XCircle },
                       { label: 'Web Search', text: 'Search the web for the latest Ollama models', icon: Globe },
                       { label: 'Open YouTube', text: 'Open YouTube', icon: Radio },
+                      { label: 'Switch App', text: 'Switch to Chrome', icon: Monitor },
+                      { label: 'Copy Text', text: 'Copy deployment checklist to clipboard', icon: Reply },
+                      { label: 'Type In App', text: 'Type hello from Jarvis into Notepad', icon: Terminal },
+                      { label: 'Shortcut', text: 'Press ctrl shift esc', icon: Cpu },
+                      { label: 'Minimize', text: 'Minimize window', icon: ChevronRight },
+                      { label: 'Show Desktop', text: 'Show desktop', icon: Monitor },
+                      { label: 'Refresh', text: 'Refresh page', icon: Activity },
+                      { label: 'New Tab', text: 'New tab', icon: Globe },
+                      { label: 'Back', text: 'Go back', icon: ChevronRight },
+                      { label: 'Play/Pause', text: 'Play pause', icon: AudioLines },
+                      { label: 'Next Track', text: 'Next track', icon: Radio },
+                      { label: 'Volume Up', text: 'Volume up', icon: Activity },
                       { label: 'Find PDFs', text: 'Find all PDFs in downloads', icon: Folder },
                       { label: 'Screen Brief', text: 'What is on my screen?', icon: Monitor },
+                      { label: 'Upload Image', text: 'Analyze this image', icon: Sparkles },
                     ] as const).map(({ label, text, icon: Icon }) => (
                       <button
                         key={label}
@@ -3058,32 +3244,44 @@ export default function JarvisHudDashboard() {
                   {screenSnapshot ? (
                     <div className="mt-3 rounded-[0.95rem] border border-cyan-400/10 bg-black/20 px-3 py-3">
                       <div className="flex items-center justify-between gap-3">
-                        <div className="text-[10px] uppercase tracking-[0.22em] text-cyan-300/55">Screen Snapshot</div>
+                        <div className="text-[10px] uppercase tracking-[0.22em] text-cyan-300/55">
+                          {screenSnapshot.source === 'upload' ? 'Visual Upload' : 'Screen Snapshot'}
+                        </div>
                         <div className="text-[10px] uppercase tracking-[0.22em] text-cyan-300/45">
                           {new Date(screenSnapshot.capturedAt).toLocaleTimeString()}
                         </div>
                       </div>
+                      <div className="mt-1 text-xs text-slate-300/65">{screenSnapshot.label}</div>
                       <img
                         src={screenSnapshot.dataUrl}
-                        alt="Captured screen snapshot"
+                        alt={screenSnapshot.label}
                         className="mt-3 max-h-48 w-full rounded-[0.95rem] border border-cyan-400/10 object-cover"
                       />
                       <textarea
                         value={screenContextNote}
                         onChange={(event) => setScreenContextNote(event.target.value)}
-                        placeholder="What matters in this screenshot? Add a short note so JARVIS can turn it into a task or memory."
+                        placeholder="What matters in this visual? Add a short note so JARVIS can turn it into a task or memory."
                         className="mt-3 min-h-[84px] w-full rounded-[0.95rem] border border-cyan-400/10 bg-slate-950/70 px-3 py-3 text-sm text-slate-100 outline-none placeholder:text-slate-500"
                       />
                       <div className="mt-3 flex gap-2">
                         <button
                           onClick={() =>
                             injectCommand(
-                              'I captured a screen snapshot in the HUD. Help me figure out what the most important visible task is, then ask one clarifying question before you suggest the next action.',
+                              screenSnapshot.source === 'upload'
+                                ? 'I uploaded an image into the HUD. Help me figure out what the most important visible detail is, then ask one clarifying question before you suggest the next action.'
+                                : 'I captured a screen snapshot in the HUD. Help me figure out what the most important visible task is, then ask one clarifying question before you suggest the next action.',
                             )
                           }
                           className="rounded-[0.85rem] border border-cyan-400/12 bg-cyan-400/[0.08] px-3 py-2 text-[10px] uppercase tracking-[0.22em] text-cyan-100 transition hover:bg-cyan-400/[0.14]"
                         >
-                          Load Screen Prompt
+                          Load Visual Prompt
+                        </button>
+                        <button
+                          onClick={analyzeCurrentVisual}
+                          disabled={visionBusy}
+                          className="rounded-[0.85rem] border border-cyan-400/12 bg-cyan-400/[0.08] px-3 py-2 text-[10px] uppercase tracking-[0.22em] text-cyan-100 transition hover:bg-cyan-400/[0.14] disabled:cursor-not-allowed disabled:opacity-50"
+                        >
+                          {visionBusy ? 'Analyzing' : 'Analyze'}
                         </button>
                         <button
                           onClick={createTaskFromScreenContext}
@@ -3103,11 +3301,71 @@ export default function JarvisHudDashboard() {
                           onClick={() => {
                             setScreenSnapshot(null);
                             setScreenContextNote('');
+                            setVisionAnalysis(null);
                           }}
                           className="rounded-[0.85rem] border border-cyan-400/12 bg-slate-950/70 px-3 py-2 text-[10px] uppercase tracking-[0.22em] text-cyan-100 transition hover:bg-cyan-400/[0.08]"
                         >
-                          Clear Snapshot
+                          Clear Visual
                         </button>
+                      </div>
+                      {visionAnalysis?.content ? (
+                        <div className="mt-3 rounded-[0.9rem] border border-cyan-400/10 bg-slate-950/55 px-3 py-3">
+                          <div className="flex items-center justify-between gap-3">
+                            <div className="text-[10px] uppercase tracking-[0.22em] text-cyan-300/55">Vision Analysis</div>
+                            <div className="text-[10px] uppercase tracking-[0.22em] text-cyan-300/45">
+                              {visionAnalysis.model}
+                            </div>
+                          </div>
+                          <pre className="mt-2 whitespace-pre-wrap break-words text-sm text-slate-200/76">
+                            {visionAnalysis.content}
+                          </pre>
+                        </div>
+                      ) : null}
+                    </div>
+                  ) : null}
+                  {durableOperatorMemory?.visual_observations?.length ? (
+                    <div className="mt-3 rounded-[0.95rem] border border-cyan-400/10 bg-black/20 px-3 py-3">
+                      <div className="text-[10px] uppercase tracking-[0.22em] text-cyan-300/55">Recent Visual Memory</div>
+                      <div className="mt-3 grid gap-2">
+                        {durableOperatorMemory.visual_observations.slice(0, 3).map((item) => (
+                          <div
+                            key={item.id}
+                            className="rounded-[0.9rem] border border-cyan-400/10 bg-slate-950/55 px-3 py-3"
+                          >
+                            {item.image_path ? (
+                              <img
+                                src={`${apiBase}/v1/operator-memory/visual/${encodeURIComponent(item.id)}/asset`}
+                                alt={item.label}
+                                className="mb-3 max-h-32 w-full rounded-[0.85rem] border border-cyan-400/10 object-cover"
+                              />
+                            ) : null}
+                            <div className="flex items-center justify-between gap-3">
+                              <div className="text-xs uppercase tracking-[0.2em] text-cyan-100/85">{item.label}</div>
+                              <div className="text-[10px] uppercase tracking-[0.22em] text-cyan-300/45">
+                                {item.source}
+                              </div>
+                            </div>
+                            <div className="mt-2 text-sm text-slate-200/76">{item.note}</div>
+                            <div className="mt-3 flex gap-2">
+                              <button
+                                onClick={() => restoreVisualObservation(item)}
+                                className="rounded-[0.85rem] border border-cyan-400/12 bg-cyan-400/[0.08] px-3 py-2 text-[10px] uppercase tracking-[0.22em] text-cyan-100 transition hover:bg-cyan-400/[0.14]"
+                              >
+                                Reload
+                              </button>
+                              <button
+                                onClick={() =>
+                                  injectCommand(
+                                    `I restored a saved visual memory called "${item.label}". Help me continue from this context: ${item.note}`,
+                                  )
+                                }
+                                className="rounded-[0.85rem] border border-cyan-400/12 bg-slate-950/70 px-3 py-2 text-[10px] uppercase tracking-[0.22em] text-cyan-100 transition hover:bg-cyan-400/[0.08]"
+                              >
+                                Load Prompt
+                              </button>
+                            </div>
+                          </div>
+                        ))}
                       </div>
                     </div>
                   ) : null}

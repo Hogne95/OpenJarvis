@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 import json
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
@@ -17,6 +18,8 @@ class OperatorProfile:
     priority_contacts: list[str] = field(default_factory=list)
     workday_start: str = "08:00"
     workday_end: str = "17:00"
+    active_desktop_target: str = ""
+    active_browser_target: str = ""
 
 
 @dataclass(slots=True)
@@ -64,6 +67,16 @@ class ExplicitMemory:
     tags: list[str] = field(default_factory=list)
 
 
+@dataclass(slots=True)
+class VisualObservation:
+    id: str
+    label: str
+    source: str = "screen"
+    note: str = ""
+    created_at: str = ""
+    image_path: str = ""
+
+
 class OperatorMemory:
     """Simple JSON-backed operator memory for cross-session HUD personalization."""
 
@@ -76,6 +89,7 @@ class OperatorMemory:
         self._meetings: dict[str, MeetingMemory] = {}
         self._projects: dict[str, ProjectMemory] = {}
         self._explicit_memories: list[ExplicitMemory] = []
+        self._visual_observations: list[VisualObservation] = []
         self._load()
 
     def _load(self) -> None:
@@ -93,6 +107,8 @@ class OperatorMemory:
             priority_contacts=list(profile.get("priority_contacts", [])),
             workday_start=str(profile.get("workday_start", self._profile.workday_start)),
             workday_end=str(profile.get("workday_end", self._profile.workday_end)),
+            active_desktop_target=str(profile.get("active_desktop_target", "")),
+            active_browser_target=str(profile.get("active_browser_target", "")),
         )
         self._signals = OperatorSignals(
             reply_drafts=int(signals.get("reply_drafts", 0)),
@@ -146,6 +162,19 @@ class OperatorMemory:
             for value in explicit_memories
             if str(value.get("content", "")).strip()
         ]
+        visual_observations = data.get("visual_observations", [])
+        self._visual_observations = [
+            VisualObservation(
+                id=str(value.get("id", "")),
+                label=str(value.get("label", "")),
+                source=str(value.get("source", "screen")),
+                note=str(value.get("note", "")),
+                created_at=str(value.get("created_at", "")),
+                image_path=str(value.get("image_path", "")),
+            )
+            for value in visual_observations
+            if str(value.get("label", "")).strip()
+        ]
 
     def _save(self) -> None:
         payload = {
@@ -155,6 +184,7 @@ class OperatorMemory:
             "meetings": {key: asdict(value) for key, value in self._meetings.items()},
             "projects": {key: asdict(value) for key, value in self._projects.items()},
             "explicit_memories": [asdict(value) for value in self._explicit_memories],
+            "visual_observations": [asdict(value) for value in self._visual_observations],
         }
         self._path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
 
@@ -166,6 +196,7 @@ class OperatorMemory:
             "meetings": {key: asdict(value) for key, value in self._meetings.items()},
             "projects": {key: asdict(value) for key, value in self._projects.items()},
             "explicit_memories": [asdict(value) for value in self._explicit_memories],
+            "visual_observations": [asdict(value) for value in self._visual_observations],
         }
 
     def update_profile(self, partial: dict[str, Any]) -> dict[str, Any]:
@@ -184,6 +215,24 @@ class OperatorMemory:
             self._profile.workday_start = str(partial["workday_start"]).strip() or self._profile.workday_start
         if "workday_end" in partial:
             self._profile.workday_end = str(partial["workday_end"]).strip() or self._profile.workday_end
+        if "active_desktop_target" in partial:
+            self._profile.active_desktop_target = str(partial["active_desktop_target"]).strip()
+        if "active_browser_target" in partial:
+            self._profile.active_browser_target = str(partial["active_browser_target"]).strip()
+        self._save()
+        return self.snapshot()
+
+    def active_desktop_target(self) -> str:
+        return self._profile.active_desktop_target
+
+    def active_browser_target(self) -> str:
+        return self._profile.active_browser_target
+
+    def update_active_target(self, target: str, *, browser: bool = False) -> dict[str, Any]:
+        cleaned = target.strip()
+        self._profile.active_desktop_target = cleaned
+        if browser:
+            self._profile.active_browser_target = cleaned
         self._save()
         return self.snapshot()
 
@@ -314,6 +363,65 @@ class OperatorMemory:
         deleted = original_len - len(self._explicit_memories)
         self._save()
         return {"deleted": deleted, "snapshot": self.snapshot()}
+
+    def get_visual_observation(self, observation_id: str) -> dict[str, Any] | None:
+        cleaned = observation_id.strip()
+        if not cleaned:
+            return None
+        for item in self._visual_observations:
+            if item.id == cleaned:
+                return asdict(item)
+        return None
+
+    def add_visual_observation(
+        self,
+        *,
+        label: str,
+        source: str,
+        note: str,
+        image_data_url: str = "",
+        created_at: str = "",
+    ) -> dict[str, Any]:
+        cleaned_label = label.strip() or "Visual Context"
+        cleaned_note = note.strip()
+        if not cleaned_note:
+            raise ValueError("Visual note is required")
+        observation_id = f"{source.strip().lower() or 'visual'}-{(created_at or cleaned_label).strip().lower().replace(' ', '-')}"
+        image_path = ""
+        if image_data_url.strip().startswith("data:image/"):
+            image_path = self._persist_visual_asset(observation_id, image_data_url.strip())
+        self._visual_observations = [item for item in self._visual_observations if item.id != observation_id]
+        self._visual_observations.insert(
+            0,
+            VisualObservation(
+                id=observation_id,
+                label=cleaned_label,
+                source=source.strip().lower() or "visual",
+                note=cleaned_note,
+                created_at=created_at,
+                image_path=image_path,
+            ),
+        )
+        self._visual_observations = self._visual_observations[:24]
+        self._save()
+        return self.snapshot()
+
+    def _persist_visual_asset(self, observation_id: str, image_data_url: str) -> str:
+        header, _, payload = image_data_url.partition(",")
+        if not payload:
+            return ""
+        mime = header.split(";")[0].replace("data:", "").strip().lower()
+        ext = {
+            "image/png": ".png",
+            "image/jpeg": ".jpg",
+            "image/webp": ".webp",
+            "image/gif": ".gif",
+        }.get(mime, ".png")
+        target_dir = DEFAULT_CONFIG_DIR / "visual_memory"
+        target_dir.mkdir(parents=True, exist_ok=True)
+        target = target_dir / f"{observation_id}{ext}"
+        target.write_bytes(base64.b64decode(payload))
+        return str(target)
 
 
 __all__ = ["OperatorMemory"]
