@@ -39,6 +39,8 @@ import {
   approveWorkbenchCommand,
   createManagedAgent,
   fetchActionCenterStatus,
+  fetchAgentArchitectureStatus,
+  fetchAgentTasks,
   fetchAutomationLogs,
   fetchAutomationStatus,
   fetchCodingStatus,
@@ -47,6 +49,8 @@ import {
   fetchDigestSchedule,
   fetchInboxSummary,
   executeJarvisIntent,
+  ensureCoreAgentArchitecture,
+  handoffAgentArchitecture,
   fetchManagedAgents,
   fetchOperatorMemory,
   parseJarvisIntent,
@@ -93,6 +97,8 @@ import {
   updateOperatorVisualObservation,
   updateVoiceLoopState,
   type ActionCenterStatus,
+  type AgentTask,
+  type AgentArchitectureStatus,
   type AutomationLogEntry,
   type AutomationStatus,
   type CodingWorkspaceStatus,
@@ -133,6 +139,8 @@ function getApiBase() {
 }
 
 type Status = 'Standby' | 'Listening' | 'Analyzing' | 'Responding';
+type MissionPhase = 'detect' | 'plan' | 'act' | 'verify' | 'retry' | 'done';
+type MissionStatus = 'idle' | 'active' | 'blocked' | 'complete';
 
 type ConnectorSummary = {
   totalConnected: number;
@@ -169,6 +177,25 @@ function Panel({
       {children}
     </div>
   );
+}
+
+function missionPhaseLabel(phase: MissionPhase) {
+  switch (phase) {
+    case 'detect':
+      return 'Detect';
+    case 'plan':
+      return 'Plan';
+    case 'act':
+      return 'Act';
+    case 'verify':
+      return 'Verify';
+    case 'retry':
+      return 'Retry';
+    case 'done':
+      return 'Done';
+    default:
+      return phase;
+  }
 }
 
 function Equalizer({ bars }: { bars: number[] }) {
@@ -239,6 +266,7 @@ const DISMISSED_AUTOMATION_ALERTS_KEY = 'jarvis-dismissed-automation-alerts';
 const REVIEW_QUEUE_STATE_KEY = 'jarvis-review-queue-state';
 const CODING_TASKS_KEY = 'jarvis-coding-tasks';
 const DESKTOP_DRAFT_KEY = 'jarvis-desktop-draft';
+const SELF_IMPROVE_RUNS_KEY = 'jarvis-self-improve-runs';
 
 function loadDismissedAutomationAlerts() {
   if (typeof window === 'undefined') return [];
@@ -323,6 +351,45 @@ function loadDesktopDraft() {
   return null;
 }
 
+function loadSelfImproveRuns() {
+  if (typeof window === 'undefined') {
+    return [] as Array<{
+      id: string;
+      source: string;
+      phase: 'brief' | 'route' | 'patch' | 'check' | 'outcome' | 'blocker';
+      summary: string;
+      detail: string;
+      createdAt: number;
+    }>;
+  }
+  try {
+    const raw = window.localStorage.getItem(SELF_IMPROVE_RUNS_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed)
+      ? parsed.filter(
+          (item): item is {
+            id: string;
+            source: string;
+            phase: 'brief' | 'route' | 'patch' | 'check' | 'outcome' | 'blocker';
+            summary: string;
+            detail: string;
+            createdAt: number;
+          } =>
+            item &&
+            typeof item.id === 'string' &&
+            typeof item.source === 'string' &&
+            ['brief', 'route', 'patch', 'check', 'outcome', 'blocker'].includes(String(item.phase)) &&
+            typeof item.summary === 'string' &&
+            typeof item.detail === 'string' &&
+            typeof item.createdAt === 'number',
+        )
+      : [];
+  } catch {
+    return [];
+  }
+}
+
 function formatRoutineLabel(routineId: AutomationLogEntry['routine_id']) {
   switch (routineId) {
     case 'daily_ops':
@@ -378,6 +445,9 @@ export default function JarvisHudDashboard() {
   const [automationStatus, setAutomationStatus] = useState<AutomationStatus | null>(null);
   const [automationLogs, setAutomationLogs] = useState<AutomationLogEntry[]>([]);
   const [automationNotice, setAutomationNotice] = useState('');
+  const [agentArchitecture, setAgentArchitecture] = useState<AgentArchitectureStatus | null>(null);
+  const [agentRoleTasks, setAgentRoleTasks] = useState<Record<string, AgentTask[]>>({});
+  const [architectureBusy, setArchitectureBusy] = useState(false);
   const [dismissedAutomationAlerts, setDismissedAutomationAlerts] = useState<string[]>(() =>
     loadDismissedAutomationAlerts(),
   );
@@ -394,6 +464,16 @@ export default function JarvisHudDashboard() {
       status: 'pending' | 'in_progress' | 'done';
     }>
   >(() => loadCodingTasks());
+  const [selfImproveRuns, setSelfImproveRuns] = useState<
+    Array<{
+      id: string;
+      source: string;
+      phase: 'brief' | 'route' | 'patch' | 'check' | 'outcome' | 'blocker';
+      summary: string;
+      detail: string;
+      createdAt: number;
+    }>
+  >(() => loadSelfImproveRuns());
   const [desktopDraft, setDesktopDraft] = useState<null | { target: string; content: string; createdAt: number }>(
     () => loadDesktopDraft(),
   );
@@ -482,6 +562,12 @@ export default function JarvisHudDashboard() {
   const audioElementRef = useRef<HTMLAudioElement | null>(null);
   const lastAutoValidationFailureRef = useRef('');
   const lastAutoValidationSuccessRef = useRef('');
+  const lastAutoArchitectureVisualRef = useRef('');
+  const lastAutoArchitectureDigestRef = useRef('');
+  const lastAutoArchitectureSelfImproveRef = useRef('');
+  const lastSelfImproveOutcomeRef = useRef('');
+  const lastSelfImproveFollowupRef = useRef('');
+  const lastSelfImprovePatchRef = useRef('');
 
   const {
     state: hudSpeechState,
@@ -507,7 +593,7 @@ export default function JarvisHudDashboard() {
     let cancelled = false;
 
     const refreshLiveStatus = async () => {
-      const [action, automation, automationLogResult, coding, digest, digestSched, operatorMemory, inbox, tasks, reminderItems, health, speech, agents, connectors, loop, profile, wb, workspace, repos, checks, desktop] = await Promise.allSettled([
+      const [action, automation, automationLogResult, coding, digest, digestSched, operatorMemory, inbox, tasks, reminderItems, health, speech, agents, connectors, loop, profile, wb, workspace, repos, checks, desktop, architecture] = await Promise.allSettled([
         fetchActionCenterStatus(),
         fetchAutomationStatus(),
         fetchAutomationLogs(),
@@ -529,6 +615,7 @@ export default function JarvisHudDashboard() {
         fetchWorkspaceRepos(),
         fetchWorkspaceChecks(),
         fetchDesktopState(),
+        fetchAgentArchitectureStatus(),
       ]);
 
       if (cancelled) return;
@@ -547,6 +634,7 @@ export default function JarvisHudDashboard() {
       if (repos.status === 'fulfilled') setWorkspaceRepos(repos.value);
       if (checks.status === 'fulfilled') setWorkspaceChecks(checks.value);
       if (desktop.status === 'fulfilled') setDesktopState(desktop.value);
+      if (architecture.status === 'fulfilled') setAgentArchitecture(architecture.value);
       setApiReachable(health.status === 'fulfilled' ? health.value : false);
       setSpeechAvailable(speech.status === 'fulfilled' ? speech.value.available : false);
       setRunningAgentCount(
@@ -585,6 +673,35 @@ export default function JarvisHudDashboard() {
   }, [managedAgents, workbenchDirectory]);
 
   useEffect(() => {
+    let cancelled = false;
+    const managedRoles = (agentArchitecture?.roles || []).filter((role) => role.kind === 'managed' && role.agent_id);
+    if (!managedRoles.length) {
+      setAgentRoleTasks({});
+      return;
+    }
+    const loadRoleTasks = async () => {
+      const pairs = await Promise.all(
+        managedRoles.map(async (role) => {
+          try {
+            const tasks = await fetchAgentTasks(role.agent_id as string);
+            return [role.role, tasks.slice(0, 3)] as const;
+          } catch {
+            return [role.role, []] as const;
+          }
+        }),
+      );
+      if (cancelled) return;
+      setAgentRoleTasks(Object.fromEntries(pairs));
+    };
+    loadRoleTasks();
+    const timer = window.setInterval(loadRoleTasks, 12000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [agentArchitecture]);
+
+  useEffect(() => {
     return () => {
       audioElementRef.current?.pause();
       if (audioUrlRef.current) URL.revokeObjectURL(audioUrlRef.current);
@@ -619,6 +736,11 @@ export default function JarvisHudDashboard() {
     if (typeof window === 'undefined') return;
     window.localStorage.setItem(CODING_TASKS_KEY, JSON.stringify(codingTasks));
   }, [codingTasks]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    window.localStorage.setItem(SELF_IMPROVE_RUNS_KEY, JSON.stringify(selfImproveRuns.slice(0, 20)));
+  }, [selfImproveRuns]);
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -941,6 +1063,23 @@ export default function JarvisHudDashboard() {
     () => codingTasks.find((task) => task.status !== 'done') || codingTasks[0] || null,
     [codingTasks],
   );
+  const selfImproveTargetFile = useMemo(
+    () =>
+      latestCodeResult?.file_path ||
+      nextCodingTask?.filePath ||
+      nextReviewQueueItem?.filePath ||
+      workspaceSummary?.changed_files?.[0] ||
+      editorFilePath ||
+      '',
+    [editorFilePath, latestCodeResult?.file_path, nextCodingTask?.filePath, nextReviewQueueItem?.filePath, workspaceSummary?.changed_files],
+  );
+  const activeSelfImproveTask = useMemo(
+    () =>
+      codingTasks.find((task) => task.title.startsWith('Self-improve ') && task.status !== 'done') ||
+      codingTasks.find((task) => task.title.startsWith('Self-improve ')) ||
+      null,
+    [codingTasks],
+  );
   useEffect(() => {
     if (!latestValidationFailure) {
       lastAutoValidationFailureRef.current = '';
@@ -956,6 +1095,10 @@ export default function JarvisHudDashboard() {
       nextReviewQueueItem?.filePath ||
       workspaceSummary?.changed_files?.[0] ||
       '';
+    const isSelfImproveFailure =
+      !!activeSelfImproveTask &&
+      !!likelyFile &&
+      activeSelfImproveTask.filePath === likelyFile;
 
     if (likelyFile) {
       setCodingTasks((current) => {
@@ -977,16 +1120,31 @@ export default function JarvisHudDashboard() {
     }
 
     if (!streamState.isStreaming && !pendingAction && !pendingCodeEdit && !pendingWorkbench) {
-      injectCommand(
-        buildValidationFixPrompt(
-          latestValidationFailure.command,
-          latestValidationFailure.output,
-          likelyFile || undefined,
-        ),
-      );
-      setWorkbenchNotice('Validation failure detected. Fix prompt loaded into the command deck.');
+      if (isSelfImproveFailure) {
+        recordSelfImproveRun(
+          'blocker',
+          'Validation failed for the self-improvement mission.',
+          `${latestValidationFailure.command}\n${latestValidationFailure.output}`,
+          'self-improve-validation',
+        );
+        ensureSelfImproveTask('in_progress');
+        loadSelfImproveRepairStep(
+          `Validation command failed: ${latestValidationFailure.command}\n${latestValidationFailure.output}`,
+          'self-improve-validation',
+        ).catch(() => null);
+      } else {
+        injectCommand(
+          buildValidationFixPrompt(
+            latestValidationFailure.command,
+            latestValidationFailure.output,
+            likelyFile || undefined,
+          ),
+        );
+        setWorkbenchNotice('Validation failure detected. Fix prompt loaded into the command deck.');
+      }
     }
   }, [
+    activeSelfImproveTask,
     editorFilePath,
     latestCodeResult?.file_path,
     latestValidationFailure,
@@ -1012,6 +1170,10 @@ export default function JarvisHudDashboard() {
       nextReviewQueueItem?.filePath ||
       workspaceSummary?.changed_files?.[0] ||
       '';
+    const isSelfImproveSuccess =
+      !!activeSelfImproveTask &&
+      !!likelyFile &&
+      activeSelfImproveTask.filePath === likelyFile;
     const suggestedMessage = buildSuggestedCommitMessage(likelyFile || undefined);
 
     if (!gitCommitMessage.trim()) {
@@ -1029,12 +1191,23 @@ export default function JarvisHudDashboard() {
       );
     }
 
+    if (isSelfImproveSuccess) {
+      recordSelfImproveRun(
+        'outcome',
+        'Validation passed for the self-improvement mission.',
+        latestValidationSuccess.command,
+        'self-improve-validation',
+      );
+      ensureSelfImproveTask('done');
+    }
+
     if (!pendingAction && !pendingCodeEdit && !pendingWorkbench) {
       prepareCommitCommand(suggestedMessage, 'Validation passed. Commit command prepared and ready for approval.');
     } else {
       setWorkbenchNotice('Validation passed. Commit message drafted for the next approval step.');
     }
   }, [
+    activeSelfImproveTask,
     editorFilePath,
     gitCommitMessage,
     latestCodeResult?.file_path,
@@ -1115,6 +1288,288 @@ export default function JarvisHudDashboard() {
     visionSignals,
     visionSuggestedActions?.actions,
     visionTextExtraction?.content,
+  ]);
+  const architectureTaskOutcome = useMemo(() => {
+    const plannerTask = agentRoleTasks.planner?.[0] || null;
+    const executorTask = agentRoleTasks.executor?.[0] || null;
+    const tasks = [plannerTask, executorTask].filter(Boolean) as AgentTask[];
+    const failed = tasks.find((task) => task.status === 'failed');
+    if (failed) {
+      return {
+        kind: 'failed' as const,
+        label: failed.agent_id === plannerTask?.agent_id ? 'Planner' : 'Executor',
+        task: failed,
+        summary: failed.description,
+      };
+    }
+    const completed = tasks.find((task) => task.status === 'completed');
+    if (completed) {
+      return {
+        kind: 'completed' as const,
+        label: completed.agent_id === plannerTask?.agent_id ? 'Planner' : 'Executor',
+        task: completed,
+        summary: completed.description,
+      };
+    }
+    return null;
+  }, [agentRoleTasks.executor, agentRoleTasks.planner]);
+  const selfImproveBrief = useMemo(() => {
+    const sections: string[] = [];
+    const summaryParts: string[] = [];
+    const inferredProjectKey = normalizeMeetingKey(workspaceSummary?.root || workspaceSummary?.branch || 'workspace');
+    const inferredProjectMemory = durableOperatorMemory?.projects?.[inferredProjectKey] || null;
+    const inferredActiveRepo = workspaceRepos?.repos.find((repo) => repo.root === workspaceRepos.active_root) || null;
+    const repoLabel = workspaceSummary?.root || inferredActiveRepo?.root || 'active workspace';
+
+    if (workspaceSummary) {
+      sections.push(
+        `Workspace\nRoot: ${workspaceSummary.root}\nBranch: ${workspaceSummary.branch || 'unknown'}\nDirty: ${
+          workspaceSummary.dirty ? 'yes' : 'no'
+        }\nChanged files: ${(workspaceSummary.changed_files || []).slice(0, 8).join(', ') || 'None'}`,
+      );
+    }
+
+    if (inferredProjectMemory) {
+      sections.push(
+        `Project memory\nFocus: ${inferredProjectMemory.focus || 'None'}\nStatus: ${inferredProjectMemory.status || 'Unknown'}\nNext step: ${
+          inferredProjectMemory.next_step || 'None'
+        }\nNotes: ${inferredProjectMemory.notes || 'None'}`,
+      );
+    }
+
+    if (latestValidationFailure) {
+      summaryParts.push('Validation is failing.');
+      sections.push(
+        `Latest validation failure\nCommand: ${latestValidationFailure.command}\nOutput:\n${latestValidationFailure.output}`,
+      );
+    } else if (latestValidationSuccess) {
+      summaryParts.push('Validation is currently green.');
+      sections.push(`Latest validation success\nCommand: ${latestValidationSuccess.command}`);
+    }
+
+    if (nextReviewQueueItem) {
+      sections.push(`Review queue\nNext file: ${nextReviewQueueItem.filePath}\nStatus: ${nextReviewQueueItem.status}`);
+    }
+
+    if (nextCodingTask) {
+      sections.push(
+        `Coding task\nTitle: ${nextCodingTask.title}\nFile: ${nextCodingTask.filePath}\nMode: ${nextCodingTask.mode}\nStatus: ${nextCodingTask.status}`,
+      );
+    }
+
+    if (workspaceChecks?.checks?.length) {
+      sections.push(
+        `Recommended checks\n${workspaceChecks.checks
+          .slice(0, 4)
+          .map((item) => `${item.label}: ${item.command}`)
+          .join('\n')}`,
+      );
+    }
+
+    if (!sections.length) return null;
+
+    return {
+      title: 'Self-Improve',
+      summary: summaryParts[0] || `JARVIS has enough coding context to inspect ${repoLabel}.`,
+      details: sections.join('\n\n'),
+      prompt:
+        `Inspect the current JARVIS coding state for "${repoLabel}".\n${sections.join('\n\n')}\n\n` +
+        'Identify the highest-value self-improvement step, explain the root cause, and propose the safest next patch.',
+    };
+  }, [
+    durableOperatorMemory?.projects,
+    latestValidationFailure,
+    latestValidationSuccess,
+    nextCodingTask,
+    nextReviewQueueItem,
+    workspaceChecks?.checks,
+    workspaceRepos,
+    workspaceSummary,
+  ]);
+  const selfImprovePatchPlan = useMemo(() => {
+    const targetFile = (activeSelfImproveTask?.filePath || selfImproveTargetFile || '').trim();
+    const latestRun = selfImproveRuns[0] || null;
+    if (!selfImproveBrief && !targetFile && !latestRun) return null;
+
+    const summary =
+      latestRun?.phase === 'blocker'
+        ? 'A blocker was returned. Focus the target file and prepare the smallest safe patch.'
+        : latestRun?.phase === 'patch'
+        ? 'A patch landed. Re-check the target and validate the change.'
+        : latestValidationFailure
+        ? 'Validation is failing. Inspect the target file and prepare the next safe fix.'
+        : latestValidationSuccess
+        ? 'Validation is green. Review the patch and decide whether to commit or continue refining.'
+        : 'JARVIS has enough context to prepare the next self-improvement patch.';
+
+    const steps = [
+      targetFile ? `Open ${targetFile} and inspect the active mission scope.` : 'Inspect the highest-signal active file in the current repo.',
+      latestRun?.phase === 'blocker' || latestValidationFailure
+        ? 'Trace the blocker or validation failure back to the smallest plausible root cause.'
+        : latestRun?.phase === 'patch'
+        ? 'Review the applied patch and confirm whether it addressed the intended mission.'
+        : 'Review the current mission state and identify the smallest safe improvement.',
+      workspaceChecks?.checks?.[0]
+        ? `Run ${workspaceChecks.checks[0].label} once the next patch is ready.`
+        : 'Prepare the next available validation step after the patch.',
+    ];
+
+    const prompt =
+      `Build the next self-improvement patch plan.\n` +
+      `${targetFile ? `Target file: ${targetFile}\n` : ''}` +
+      `${selfImproveBrief ? `Mission brief:\n${selfImproveBrief.details}\n\n` : ''}` +
+      `${latestRun ? `Latest cycle event (${latestRun.phase}): ${latestRun.summary}\n${latestRun.detail}\n\n` : ''}` +
+      `${latestValidationFailure ? `Latest validation failure:\n${latestValidationFailure.command}\n${latestValidationFailure.output}\n\n` : ''}` +
+      `Return:\n1. Root cause\n2. Smallest safe patch\n3. Validation step\n4. Risks`;
+
+    return {
+      targetFile,
+      summary,
+      steps,
+      prompt,
+    };
+  }, [
+    activeSelfImproveTask?.filePath,
+    latestValidationFailure,
+    latestValidationSuccess,
+    selfImproveBrief,
+    selfImproveRuns,
+    selfImproveTargetFile,
+    workspaceChecks?.checks,
+  ]);
+  const autonomyMissions = useMemo(() => {
+    const missions: Array<{
+      id: string;
+      title: string;
+      domain: 'self-improve' | 'planner' | 'visual';
+      status: MissionStatus;
+      phase: MissionPhase;
+      summary: string;
+      nextStep: string;
+      result: string;
+      retryHint?: string;
+      actionLabel: string;
+      action: () => void;
+    }> = [];
+
+    if (selfImproveBrief || activeSelfImproveTask || selfImproveRuns[0]) {
+      const latestRun = selfImproveRuns[0] || null;
+      const blocked = latestRun?.phase === 'blocker';
+      const completed = latestRun?.phase === 'outcome' && activeSelfImproveTask?.status === 'done';
+      const phase: MissionPhase = completed
+        ? 'done'
+        : blocked
+        ? 'retry'
+        : latestRun?.phase === 'patch'
+        ? 'verify'
+        : latestRun?.phase === 'check'
+        ? 'verify'
+        : latestRun?.phase === 'route'
+        ? 'act'
+        : 'plan';
+      missions.push({
+        id: 'mission-self-improve',
+        title: activeSelfImproveTask?.title || 'Self-improvement mission',
+        domain: 'self-improve',
+        status: completed ? 'complete' : blocked ? 'blocked' : 'active',
+        phase,
+        summary: selfImprovePatchPlan?.summary || selfImproveBrief?.summary || latestRun?.summary || 'Self-improvement context is ready.',
+        nextStep:
+          selfImprovePatchPlan?.steps[0] ||
+          (blocked
+            ? 'Load the repair step and focus the target file.'
+            : workspaceChecks?.checks?.[0]
+            ? `Run ${workspaceChecks.checks[0].label}.`
+            : 'Load the self-improvement brief.'),
+        result: latestRun?.detail || architectureTaskOutcome?.summary || 'Awaiting the next self-improvement result.',
+        retryHint: blocked ? 'Retry the mission after preparing the smallest safe patch.' : undefined,
+        actionLabel: blocked ? 'Load Repair' : selfImprovePatchPlan ? 'Load Plan' : 'Load Brief',
+        action: () =>
+          blocked
+            ? void loadSelfImproveRepairStep(latestRun?.detail || selfImproveBrief?.summary || 'Self-improvement blocker detected.', 'self-improve-mission')
+            : selfImprovePatchPlan
+            ? injectCommand(selfImprovePatchPlan.prompt)
+            : selfImproveBrief
+            ? injectCommand(selfImproveBrief.prompt)
+            : setFocusMode(false),
+      });
+    }
+
+    if (agentArchitecture?.handoff?.brief || architectureTaskOutcome || agentRoleTasks.planner?.[0] || agentRoleTasks.executor?.[0]) {
+      const blocked = architectureTaskOutcome?.kind === 'failed';
+      const hasOutcome = architectureTaskOutcome?.kind === 'completed';
+      missions.push({
+        id: 'mission-planner-executor',
+        title: 'Planner -> Executor',
+        domain: 'planner',
+        status: blocked ? 'blocked' : hasOutcome ? 'complete' : 'active',
+        phase: blocked ? 'retry' : hasOutcome ? 'done' : agentRoleTasks.executor?.[0] ? 'act' : 'plan',
+        summary: agentArchitecture?.handoff?.brief || architectureTaskOutcome?.summary || 'Planner handoff ready.',
+        nextStep: blocked
+          ? 'Review the blocker and retry the mission.'
+          : hasOutcome
+          ? 'Review the latest outcome and decide whether to continue.'
+          : 'Open Core Agents and watch the delegated work progress.',
+        result: architectureTaskOutcome?.summary || 'No planner/executor outcome reported yet.',
+        retryHint: blocked ? 'Retry after clarifying the brief or reducing mission scope.' : undefined,
+        actionLabel: blocked ? 'Retry Mission' : 'Open Core Agents',
+        action: () =>
+          blocked && selfImproveBrief
+            ? void handoffWithBrief(selfImproveBrief.prompt, 'self-improve')
+            : setFocusMode(false),
+      });
+    }
+
+    if (visualBrief || visionSuggestedActions?.actions?.length || visionUiPlan?.summary || visionQuery?.answer) {
+      const topVisualAction = visionSuggestedActions?.actions?.slice().sort((left, right) => right.priority - left.priority)[0] || null;
+      missions.push({
+        id: 'mission-visual',
+        title: visualBrief?.title || screenSnapshot?.label || 'Visual mission',
+        domain: 'visual',
+        status: topVisualAction || visionUiPlan?.summary ? 'active' : 'idle',
+        phase: topVisualAction?.desktop_intent ? 'act' : visionUiPlan?.summary ? 'plan' : 'detect',
+        summary: visualBrief?.summary || visionUiPlan?.summary || visionQuery?.answer || 'Visual context captured.',
+        nextStep:
+          topVisualAction?.title ||
+          visionUiPlan?.steps?.[0] ||
+          'Ask a visual question or extract the next UI target.',
+        result:
+          topVisualAction?.detail ||
+          visionUiVerify?.summary ||
+          visionSignals?.summary ||
+          'No resolved visual action yet.',
+        actionLabel: topVisualAction?.desktop_intent ? 'Stage Desktop' : 'Load Visual',
+        action: () =>
+          topVisualAction?.desktop_intent
+            ? stageVisualDesktopIntent(topVisualAction.desktop_intent)
+            : topVisualAction
+            ? injectCommand(topVisualAction.prompt)
+            : visualBrief
+            ? injectCommand(visualBrief.prompt)
+            : setFocusMode(false),
+      });
+    }
+
+    return missions;
+  }, [
+    activeSelfImproveTask?.status,
+    activeSelfImproveTask?.title,
+    agentArchitecture?.handoff?.brief,
+    agentRoleTasks.executor,
+    agentRoleTasks.planner,
+    architectureTaskOutcome,
+    screenSnapshot?.label,
+    selfImproveBrief,
+    selfImprovePatchPlan,
+    selfImproveRuns,
+    visionQuery?.answer,
+    visionSignals?.summary,
+    visionSuggestedActions?.actions,
+    visionUiPlan?.steps,
+    visionUiPlan?.summary,
+    visionUiVerify?.summary,
+    visualBrief,
+    workspaceChecks?.checks,
   ]);
   const commanderQueue = useMemo(() => {
     const items: Array<{
@@ -1248,6 +1703,28 @@ export default function JarvisHudDashboard() {
       });
     }
 
+    if (selfImproveBrief) {
+      const plannerReady = agentArchitecture?.roles?.some(
+        (role) => role.role === 'planner' && role.ready && !!role.agent_id,
+      );
+      const executorReady = agentArchitecture?.roles?.some(
+        (role) => role.role === 'executor' && role.ready && !!role.agent_id,
+      );
+      const canRouteToPlanner = plannerReady && executorReady;
+      items.push({
+        id: `self-improve-${selfImproveBrief.title}`,
+        priority: latestValidationFailure ? 62 : nextCodingTask || nextReviewQueueItem ? 56 : 51,
+        label: 'Self-Improve',
+        title: selfImproveBrief.title,
+        detail: selfImproveBrief.summary,
+        actionLabel: canRouteToPlanner ? 'Route Plan' : 'Load Brief',
+        action: () =>
+          canRouteToPlanner
+            ? void handoffWithBrief(selfImproveBrief.prompt, 'self-improve')
+            : injectCommand(selfImproveBrief.prompt),
+      });
+    }
+
     if (visualBrief) {
       items.push({
         id: `visual-brief-${visualBrief.title}`,
@@ -1257,6 +1734,56 @@ export default function JarvisHudDashboard() {
         detail: visualBrief.summary,
         actionLabel: 'Load Brief',
         action: () => injectCommand(visualBrief.prompt),
+      });
+    }
+
+    if (agentArchitecture?.handoff?.brief) {
+      items.push({
+        id: `agent-handoff-${agentArchitecture.handoff.planner?.task_id || agentArchitecture.handoff.executor?.task_id || 'current'}`,
+        priority: 61,
+        label: 'Agent Handoff',
+        title: 'Planner -> Executor',
+        detail: agentArchitecture.handoff.brief,
+        actionLabel: 'Open Core Agents',
+        action: () => setFocusMode(false),
+      });
+    }
+
+    if (architectureTaskOutcome) {
+      items.push({
+        id: `agent-outcome-${architectureTaskOutcome.task.id}`,
+        priority: architectureTaskOutcome.kind === 'failed' ? 66 : 59,
+        label: architectureTaskOutcome.kind === 'failed' ? 'Agent Blocker' : 'Agent Outcome',
+        title: `${architectureTaskOutcome.label} ${architectureTaskOutcome.kind}`,
+        detail: architectureTaskOutcome.summary,
+        actionLabel: 'Open Core Agents',
+        action: () => setFocusMode(false),
+      });
+    }
+
+    const plannerTask = agentRoleTasks.planner?.[0];
+    if (plannerTask) {
+      items.push({
+        id: `planner-task-${plannerTask.id}`,
+        priority: plannerTask.status === 'active' ? 64 : 58,
+        label: 'Planner Task',
+        title: 'JARVIS Planner',
+        detail: plannerTask.description,
+        actionLabel: 'Open Core Agents',
+        action: () => setFocusMode(false),
+      });
+    }
+
+    const executorTask = agentRoleTasks.executor?.[0];
+    if (executorTask) {
+      items.push({
+        id: `executor-task-${executorTask.id}`,
+        priority: executorTask.status === 'active' ? 63 : 57,
+        label: 'Executor Task',
+        title: 'JARVIS Executor',
+        detail: executorTask.description,
+        actionLabel: 'Open Core Agents',
+        action: () => setFocusMode(false),
       });
     }
 
@@ -1402,6 +1929,47 @@ export default function JarvisHudDashboard() {
       });
     }
 
+    if (selfImproveRuns[0]) {
+      items.push({
+        id: `self-improve-run-${selfImproveRuns[0].id}`,
+        priority: selfImproveRuns[0].phase === 'blocker' ? 60 : selfImproveRuns[0].phase === 'outcome' ? 56 : 50,
+        label: 'Self-Improve Loop',
+        title: selfImproveRuns[0].summary,
+        detail: selfImproveRuns[0].detail,
+        actionLabel: selfImproveBrief ? 'Load Brief' : 'Open Coding',
+        action: () => (selfImproveBrief ? injectCommand(selfImproveBrief.prompt) : setFocusMode(false)),
+      });
+    }
+
+    if (selfImprovePatchPlan) {
+      items.push({
+        id: `self-improve-plan-${selfImprovePatchPlan.targetFile || 'workspace'}`,
+        priority: selfImproveRuns[0]?.phase === 'blocker' ? 61 : 54,
+        label: 'Patch Plan',
+        title: selfImprovePatchPlan.targetFile || 'Workspace patch plan',
+        detail: selfImprovePatchPlan.summary,
+        actionLabel: 'Load Plan',
+        action: () => injectCommand(selfImprovePatchPlan.prompt),
+      });
+    }
+
+    if (autonomyMissions[0]) {
+      items.push({
+        id: `mission-${autonomyMissions[0].id}`,
+        priority:
+          autonomyMissions[0].status === 'blocked'
+            ? 67
+            : autonomyMissions[0].status === 'active'
+            ? 53
+            : 45,
+        label: 'Mission Loop',
+        title: autonomyMissions[0].title,
+        detail: `${missionPhaseLabel(autonomyMissions[0].phase)} · ${autonomyMissions[0].nextStep}`,
+        actionLabel: autonomyMissions[0].actionLabel,
+        action: autonomyMissions[0].action,
+      });
+    }
+
     if (activeAutomationAlerts.find((item) => item.success && item.routine_id === 'daily_ops')) {
       items.push({
         id: 'daily-ops-ready',
@@ -1415,7 +1983,7 @@ export default function JarvisHudDashboard() {
     }
 
     return items.sort((left, right) => right.priority - left.priority).slice(0, 6);
-  }, [activeAutomationAlerts, editorFilePath, gitCommitMessage, inboxFocusQueue, latestCodeResult?.file_path, latestValidationFailure, latestValidationSuccess, nextCodingTask, nextReviewQueueItem, pendingAction, pendingCodeEdit, pendingWorkbench, prepQueue, screenSnapshot?.capturedAt, screenSnapshot?.label, visionAnalysis?.content, visionQuery?.answer, visionQuery?.question, visionSignals, visionSuggestedActions?.actions, visionTextExtraction?.content, visionUiPlan?.summary, visionUiPlan?.target_label, visionUiTargets?.targets, visionUiVerify?.summary, visionUiVerify?.risk_level, visionUiVerify?.target_label, visualBrief]);
+  }, [activeAutomationAlerts, agentArchitecture?.handoff?.brief, agentArchitecture?.handoff?.executor?.task_id, agentArchitecture?.handoff?.planner?.task_id, agentArchitecture?.roles, agentRoleTasks.executor, agentRoleTasks.planner, architectureTaskOutcome, autonomyMissions, editorFilePath, gitCommitMessage, inboxFocusQueue, latestCodeResult?.file_path, latestValidationFailure, latestValidationSuccess, nextCodingTask, nextReviewQueueItem, pendingAction, pendingCodeEdit, pendingWorkbench, prepQueue, screenSnapshot?.capturedAt, screenSnapshot?.label, selfImproveBrief, selfImprovePatchPlan, selfImproveRuns, visionAnalysis?.content, visionQuery?.answer, visionQuery?.question, visionSignals, visionSuggestedActions?.actions, visionTextExtraction?.content, visionUiPlan?.summary, visionUiPlan?.target_label, visionUiTargets?.targets, visionUiVerify?.summary, visionUiVerify?.risk_level, visionUiVerify?.target_label, visualBrief]);
   const connectorCapabilities = useMemo(() => {
     const ids = new Set(connectedConnectorIds);
     const gmailConnected = ids.has('gmail') || ids.has('gmail_imap');
@@ -1613,7 +2181,6 @@ export default function JarvisHudDashboard() {
     () => workspaceRepos?.repos.find((repo) => repo.root === workspaceRepos.active_root) || null,
     [workspaceRepos],
   );
-
   const reactorMetrics = useMemo(
     () => [
       {
@@ -1684,6 +2251,88 @@ export default function JarvisHudDashboard() {
   function injectCommand(text: string) {
     window.dispatchEvent(new CustomEvent('jarvis:set-input', { detail: { text, replace: true } }));
     setVoiceNotice('Command loaded into the deck.');
+  }
+
+  function recordSelfImproveRun(
+    phase: 'brief' | 'route' | 'patch' | 'check' | 'outcome' | 'blocker',
+    summary: string,
+    detail: string,
+    source = 'self-improve',
+  ) {
+    setSelfImproveRuns((current) => [
+      {
+        id: `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`,
+        source,
+        phase,
+        summary,
+        detail,
+        createdAt: Date.now(),
+      },
+      ...current,
+    ].slice(0, 20));
+  }
+
+  function ensureSelfImproveTask(status: 'pending' | 'in_progress' | 'done' = 'pending') {
+    const filePath = selfImproveTargetFile.trim();
+    if (!filePath) return;
+    const title = `Self-improve ${filePath}`;
+    setCodingTasks((current) => {
+      const existing = current.find((item) => item.title === title);
+      if (existing) {
+        return current.map((item) => (item.id === existing.id ? { ...item, status } : item));
+      }
+      return [
+        {
+          id: `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`,
+          title,
+          filePath,
+          mode: 'fix',
+          status,
+        },
+        ...current,
+      ];
+    });
+  }
+
+  async function focusSelfImproveTarget() {
+    const filePath = (activeSelfImproveTask?.filePath || selfImproveTargetFile).trim();
+    if (!filePath) return;
+    if (editorFilePath === filePath && editorContent.trim()) return;
+    await openFileInEditor(filePath).catch(() => null);
+  }
+
+  async function loadSelfImproveRepairStep(summary: string, source = 'self-improve') {
+    ensureSelfImproveTask('in_progress');
+    await focusSelfImproveTarget();
+    const filePath = (activeSelfImproveTask?.filePath || selfImproveTargetFile).trim();
+    const prompt =
+      `A self-improvement agent run returned a blocker.\nSummary: ${summary}\n` +
+      `${filePath ? `Target file: ${filePath}\n` : ''}` +
+      `${selfImproveBrief ? `Current self-improvement brief:\n${selfImproveBrief.details}\n\n` : ''}` +
+      'Explain the root cause, identify the smallest safe fix, and prepare the next patch.';
+    recordSelfImproveRun('brief', 'Loaded the next self-improvement repair step.', summary, source);
+    injectCommand(prompt);
+    setWorkbenchNotice(
+      filePath
+        ? `Self-improvement blocker detected. Repair prompt loaded for ${filePath}.`
+        : 'Self-improvement blocker detected. Repair prompt loaded into the command deck.',
+    );
+  }
+
+  function primeSelfImproveValidation(source = 'self-improve') {
+    if (workspaceChecks?.checks?.[0]) {
+      ensureSelfImproveTask('in_progress');
+      recordSelfImproveRun(
+        'check',
+        'Primed the next validation step for the self-improvement mission.',
+        workspaceChecks.checks[0].command,
+        source,
+      );
+      stageSuggestedCommand(workspaceChecks.checks[0].command);
+      setWorkbenchNotice(`Self-improvement outcome received. Next validation check loaded: ${workspaceChecks.checks[0].label}.`);
+      return true;
+    }
+    return false;
   }
 
   function buildSpokenLine(text: string, purpose: 'digest' | 'announcement' | 'reply' = 'reply') {
@@ -2770,6 +3419,59 @@ export default function JarvisHudDashboard() {
     );
   }
 
+  function buildArchitectureHandoffBrief() {
+    const trimmedIntent = intentCommand.trim();
+    if (trimmedIntent) {
+      return `User command: ${trimmedIntent}`;
+    }
+    if (visualBrief) {
+      return `Visual brief from ${visualBrief.title}:\n${visualBrief.details}`;
+    }
+    if (commanderQueue[0]) {
+      return `Commander queue item:\nLabel: ${commanderQueue[0].label}\nTitle: ${commanderQueue[0].title}\nDetail: ${commanderQueue[0].detail}`;
+    }
+    if (screenContextNote.trim()) {
+      return `Current screen note: ${screenContextNote.trim()}`;
+    }
+    return '';
+  }
+
+  async function handoffWithBrief(brief: string, source = 'hud') {
+    const cleanedBrief = brief.trim();
+    if (!cleanedBrief) {
+      setAgentNotice('There is no current command, visual brief, or queue item to hand off.');
+      return;
+    }
+    setArchitectureBusy(true);
+    setAgentNotice('');
+    if (source.startsWith('self-improve')) {
+      recordSelfImproveRun('route', 'Self-improvement brief routed to planner and executor.', cleanedBrief, source);
+    }
+    try {
+      const next = await handoffAgentArchitecture(cleanedBrief, source);
+      setAgentArchitecture(next);
+      const plannerAgentId = next.handoff?.planner?.agent_id;
+      const executorAgentId = next.handoff?.executor?.agent_id;
+      if (plannerAgentId) {
+        await runManagedAgent(plannerAgentId).catch(() => null);
+      }
+      if (executorAgentId) {
+        await runManagedAgent(executorAgentId).catch(() => null);
+      }
+      const refreshed = await fetchAgentArchitectureStatus().catch(() => null);
+      if (refreshed) setAgentArchitecture(refreshed);
+      const plannerTaskId = next.handoff?.planner?.task_id;
+      const executorTaskId = next.handoff?.executor?.task_id;
+      setAgentNotice(
+        `Planner delegated the current brief to the executor${plannerTaskId || executorTaskId ? ` (planner ${plannerTaskId || 'queued'}, executor ${executorTaskId || 'queued'})` : ''}.`,
+      );
+    } catch (error) {
+      setAgentNotice(error instanceof Error ? error.message : 'Unable to create planner handoff.');
+    } finally {
+      setArchitectureBusy(false);
+    }
+  }
+
   function dismissAutomationAlert(item: AutomationLogEntry) {
     const key = `${item.task_id}:${item.started_at}`;
     setDismissedAutomationAlerts((current) => (current.includes(key) ? current : [...current, key]));
@@ -3129,6 +3831,215 @@ export default function JarvisHudDashboard() {
       setAgentActionBusy(null);
     }
   }
+
+  async function ensureCoreArchitecture() {
+    setArchitectureBusy(true);
+    setAgentNotice('');
+    try {
+      const next = await ensureCoreAgentArchitecture();
+      setAgentArchitecture(next);
+      const createdCount = next.created?.length || 0;
+      setAgentNotice(
+        createdCount
+          ? `Core agent architecture updated. ${createdCount} specialist role${createdCount === 1 ? '' : 's'} provisioned.`
+          : 'Core agent architecture already provisioned.',
+      );
+    } catch (error) {
+      setAgentNotice(error instanceof Error ? error.message : 'Unable to provision core agent architecture.');
+    } finally {
+      setArchitectureBusy(false);
+    }
+  }
+
+  async function runArchitectureRole(role: string) {
+    const target = agentArchitecture?.roles.find((item) => item.role === role);
+    if (!target?.agent_id) {
+      setAgentNotice(`${role[0]?.toUpperCase() || ''}${role.slice(1)} role is not provisioned yet.`);
+      return;
+    }
+    setArchitectureBusy(true);
+    try {
+      await runManagedAgent(target.agent_id);
+      setAgentNotice(`${target.title} launched in Agents.`);
+      const refreshed = await fetchAgentArchitectureStatus().catch(() => null);
+      if (refreshed) setAgentArchitecture(refreshed);
+      navigate('/agents');
+    } catch (error) {
+      setAgentNotice(error instanceof Error ? error.message : `Unable to run ${target.title}.`);
+    } finally {
+      setArchitectureBusy(false);
+    }
+  }
+
+  async function handoffToArchitecture() {
+    const brief = buildArchitectureHandoffBrief();
+    await handoffWithBrief(brief, 'hud');
+  }
+
+  useEffect(() => {
+    const plannerReady = agentArchitecture?.roles?.some((role) => role.role === 'planner' && role.ready && !!role.agent_id);
+    const executorReady = agentArchitecture?.roles?.some((role) => role.role === 'executor' && role.ready && !!role.agent_id);
+    const systemBusy =
+      architectureBusy ||
+      !!pendingAction ||
+      !!pendingCodeEdit ||
+      !!pendingWorkbench ||
+      streamState.isStreaming ||
+      editorBusy !== null ||
+      actionBusy !== null ||
+      workbenchBusy !== null;
+    if (!plannerReady || !executorReady || systemBusy) return;
+
+    if (visualBrief) {
+      const visualKey = `${visualBrief.title}:${visualBrief.summary}`;
+      if (lastAutoArchitectureVisualRef.current !== visualKey) {
+        lastAutoArchitectureVisualRef.current = visualKey;
+        handoffWithBrief(visualBrief.prompt, 'visual-auto').catch(() => null);
+        return;
+      }
+    }
+
+    if (dailyDigest?.generated_at && dailyDigest.text?.trim()) {
+      const digestKey = dailyDigest.generated_at;
+      if (lastAutoArchitectureDigestRef.current !== digestKey) {
+        lastAutoArchitectureDigestRef.current = digestKey;
+        handoffWithBrief(buildDailyOpsPrompt(), 'daily-ops-auto').catch(() => null);
+        return;
+      }
+    }
+
+    if (selfImproveBrief) {
+      const selfImproveKey = `${selfImproveBrief.summary}:${selfImproveBrief.details}`;
+      if (lastAutoArchitectureSelfImproveRef.current !== selfImproveKey) {
+        lastAutoArchitectureSelfImproveRef.current = selfImproveKey;
+        ensureSelfImproveTask('in_progress');
+        handoffWithBrief(selfImproveBrief.prompt, 'self-improve-auto').catch(() => null);
+      }
+    }
+  }, [
+    actionBusy,
+    agentArchitecture?.roles,
+    architectureBusy,
+    buildDailyOpsPrompt,
+    dailyDigest?.generated_at,
+    dailyDigest?.text,
+    editorBusy,
+    pendingAction,
+    pendingCodeEdit,
+    pendingWorkbench,
+    selfImproveBrief,
+    streamState.isStreaming,
+    visualBrief,
+    workbenchBusy,
+  ]);
+
+  useEffect(() => {
+    if (!architectureTaskOutcome || !agentArchitecture?.handoff?.source?.startsWith('self-improve')) return;
+    const outcomeKey = `${agentArchitecture.handoff.source}:${architectureTaskOutcome.task.id}:${architectureTaskOutcome.kind}`;
+    if (lastSelfImproveOutcomeRef.current === outcomeKey) return;
+    lastSelfImproveOutcomeRef.current = outcomeKey;
+    recordSelfImproveRun(
+      architectureTaskOutcome.kind === 'failed' ? 'blocker' : 'outcome',
+      architectureTaskOutcome.kind === 'failed'
+        ? 'Self-improvement cycle returned a blocker.'
+        : 'Self-improvement cycle returned an outcome.',
+      architectureTaskOutcome.summary,
+      agentArchitecture.handoff.source,
+    );
+    ensureSelfImproveTask(architectureTaskOutcome.kind === 'failed' ? 'in_progress' : 'done');
+  }, [agentArchitecture?.handoff?.source, architectureTaskOutcome]);
+
+  useEffect(() => {
+    if (!latestCodeResult || !activeSelfImproveTask) return;
+    if (latestCodeResult.file_path !== activeSelfImproveTask.filePath) return;
+    const patchKey = `${latestCodeResult.id}:${latestCodeResult.completed_at}`;
+    if (lastSelfImprovePatchRef.current === patchKey) return;
+    lastSelfImprovePatchRef.current = patchKey;
+
+    recordSelfImproveRun(
+      'patch',
+      `Applied patch to ${latestCodeResult.file_path}.`,
+      latestCodeResult.result || latestCodeResult.diff || 'Code edit applied.',
+      'self-improve-patch',
+    );
+    ensureSelfImproveTask('in_progress');
+
+    const systemBusy =
+      architectureBusy ||
+      !!pendingAction ||
+      !!pendingCodeEdit ||
+      !!pendingWorkbench ||
+      streamState.isStreaming ||
+      editorBusy !== null ||
+      actionBusy !== null ||
+      workbenchBusy !== null;
+    if (!systemBusy && workspaceChecks?.checks?.[0]) {
+      stageSuggestedCommand(workspaceChecks.checks[0].command);
+      setWorkbenchNotice(`Self-improvement patch applied. Validation loaded: ${workspaceChecks.checks[0].label}.`);
+    }
+  }, [
+    actionBusy,
+    activeSelfImproveTask,
+    architectureBusy,
+    editorBusy,
+    latestCodeResult,
+    pendingAction,
+    pendingCodeEdit,
+    pendingWorkbench,
+    streamState.isStreaming,
+    workbenchBusy,
+    workspaceChecks?.checks,
+  ]);
+
+  useEffect(() => {
+    if (!architectureTaskOutcome || !agentArchitecture?.handoff?.source?.startsWith('self-improve')) return;
+    const systemBusy =
+      architectureBusy ||
+      !!pendingAction ||
+      !!pendingCodeEdit ||
+      !!pendingWorkbench ||
+      streamState.isStreaming ||
+      editorBusy !== null ||
+      actionBusy !== null ||
+      workbenchBusy !== null;
+    if (systemBusy) return;
+
+    const followupKey = `${agentArchitecture.handoff.source}:${architectureTaskOutcome.task.id}:${architectureTaskOutcome.kind}`;
+    if (lastSelfImproveFollowupRef.current === followupKey) return;
+    lastSelfImproveFollowupRef.current = followupKey;
+
+    if (architectureTaskOutcome.kind === 'failed') {
+      loadSelfImproveRepairStep(architectureTaskOutcome.summary, agentArchitecture.handoff.source).catch(() => null);
+      return;
+    }
+
+    if (primeSelfImproveValidation(agentArchitecture.handoff.source)) {
+      return;
+    }
+
+    if (selfImproveBrief) {
+      ensureSelfImproveTask('in_progress');
+      injectCommand(selfImproveBrief.prompt);
+      setWorkbenchNotice('Self-improvement outcome received. Brief reloaded for the next patch step.');
+    }
+  }, [
+    actionBusy,
+    agentArchitecture?.handoff?.source,
+    architectureBusy,
+    architectureTaskOutcome,
+    editorBusy,
+    editorContent,
+    editorFilePath,
+    pendingAction,
+    pendingCodeEdit,
+    pendingWorkbench,
+    selfImproveBrief,
+    activeSelfImproveTask?.filePath,
+    selfImproveTargetFile,
+    streamState.isStreaming,
+    workbenchBusy,
+    workspaceChecks?.checks,
+  ]);
 
   const missionProfiles = [
     {
@@ -3637,6 +4548,172 @@ export default function JarvisHudDashboard() {
               <div className="mt-4 rounded-[1.15rem] border border-cyan-400/10 bg-slate-950/50 px-4 py-3 text-sm text-slate-100/78">
                 {agentNotice || 'Launch inbox and meeting agents directly from the HUD.'}
               </div>
+            </Panel>
+
+            <Panel title="Core Agents" kicker="Explicit architecture">
+              <div className="rounded-[1.15rem] border border-cyan-400/10 bg-slate-950/50 px-4 py-3">
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <div className="text-sm uppercase tracking-[0.18em] text-cyan-50/92">
+                      {agentArchitecture
+                        ? `${agentArchitecture.summary.ready_roles}/${agentArchitecture.summary.total_roles} roles ready`
+                        : 'Role status pending'}
+                    </div>
+                    <div className="mt-1 text-[10px] uppercase tracking-[0.28em] text-cyan-300/55">
+                      Voice, planner, executor, vision, and memory
+                    </div>
+                  </div>
+                  <button
+                    onClick={ensureCoreArchitecture}
+                    disabled={architectureBusy}
+                    className="rounded-[0.95rem] border border-cyan-400/12 bg-cyan-400/[0.08] px-3 py-2 text-[10px] uppercase tracking-[0.22em] text-cyan-100 transition hover:bg-cyan-400/[0.14] disabled:cursor-not-allowed disabled:opacity-40"
+                  >
+                    {architectureBusy ? 'Provisioning' : 'Ensure Core Team'}
+                  </button>
+                </div>
+                <div className="mt-3 flex gap-2">
+                  <button
+                    onClick={handoffToArchitecture}
+                    disabled={architectureBusy}
+                    className="rounded-[0.95rem] border border-cyan-400/12 bg-slate-950/70 px-3 py-2 text-[10px] uppercase tracking-[0.22em] text-cyan-100 transition hover:bg-cyan-400/[0.08] disabled:cursor-not-allowed disabled:opacity-40"
+                  >
+                    {architectureBusy ? 'Routing' : 'Planner Handoff'}
+                  </button>
+                </div>
+                {agentArchitecture?.handoff ? (
+                  <div className="mt-3 rounded-[0.95rem] border border-cyan-400/10 bg-black/20 px-3 py-3">
+                    <div className="text-[10px] uppercase tracking-[0.22em] text-cyan-300/55">Latest Handoff</div>
+                    <div className="mt-2 text-sm text-slate-200/76 whitespace-pre-wrap break-words">
+                      {agentArchitecture.handoff.brief}
+                    </div>
+                    <div className="mt-2 text-[10px] uppercase tracking-[0.22em] text-cyan-300/45">
+                      Planner {agentArchitecture.handoff.planner?.task_id || 'queued'} - Executor {agentArchitecture.handoff.executor?.task_id || 'queued'}
+                    </div>
+                  </div>
+                ) : null}
+                {architectureTaskOutcome ? (
+                  <div className="mt-3 rounded-[0.95rem] border border-cyan-400/10 bg-black/20 px-3 py-3">
+                    <div className="flex items-center justify-between gap-3">
+                      <div className="text-[10px] uppercase tracking-[0.22em] text-cyan-300/55">
+                        {architectureTaskOutcome.kind === 'failed' ? 'Latest Agent Blocker' : 'Latest Agent Outcome'}
+                      </div>
+                      <div
+                        className={`text-[10px] uppercase tracking-[0.22em] ${
+                          architectureTaskOutcome.kind === 'failed' ? 'text-amber-300/75' : 'text-emerald-300/75'
+                        }`}
+                      >
+                        {architectureTaskOutcome.label}
+                      </div>
+                    </div>
+                    <div className="mt-2 text-sm text-slate-200/76">{architectureTaskOutcome.summary}</div>
+                  </div>
+                ) : null}
+                <div className="mt-3 grid gap-2">
+                  {(agentArchitecture?.roles || []).map((role) => (
+                    <div
+                      key={role.role}
+                      className="rounded-[0.95rem] border border-cyan-400/10 bg-black/20 px-3 py-3"
+                    >
+                      <div className="flex items-start justify-between gap-3">
+                        <div>
+                          <div className="text-xs uppercase tracking-[0.18em] text-cyan-50/92">{role.title}</div>
+                          <div className="mt-1 text-[10px] uppercase tracking-[0.22em] text-cyan-300/55">
+                            {role.status} - {role.source}
+                          </div>
+                        </div>
+                        {role.agent_id ? (
+                          <button
+                            onClick={() => runArchitectureRole(role.role)}
+                            disabled={architectureBusy || role.status === 'running'}
+                            className="rounded-[0.85rem] border border-cyan-400/12 bg-slate-950/70 px-3 py-2 text-[10px] uppercase tracking-[0.22em] text-cyan-100 transition hover:bg-cyan-400/[0.08] disabled:cursor-not-allowed disabled:opacity-40"
+                          >
+                            {role.status === 'running' ? 'Running' : 'Run'}
+                          </button>
+                        ) : (
+                          <div className={`text-[10px] uppercase tracking-[0.22em] ${role.ready ? 'text-emerald-300/75' : 'text-amber-300/75'}`}>
+                            {role.ready ? 'Ready' : 'Needs role'}
+                          </div>
+                        )}
+                      </div>
+                      <div className="mt-2 text-sm text-slate-200/76">{role.detail}</div>
+                      {agentRoleTasks[role.role]?.length ? (
+                        <div className="mt-3 grid gap-2">
+                          {agentRoleTasks[role.role].slice(0, 2).map((task) => (
+                            <div
+                              key={task.id}
+                              className="rounded-[0.85rem] border border-cyan-400/10 bg-slate-950/55 px-3 py-2"
+                            >
+                              <div className="flex items-center justify-between gap-3">
+                                <div className="text-[10px] uppercase tracking-[0.22em] text-cyan-300/55">
+                                  {task.status}
+                                </div>
+                                <div className="text-[10px] uppercase tracking-[0.22em] text-cyan-300/45">
+                                  {new Date(task.created_at * 1000).toLocaleTimeString()}
+                                </div>
+                              </div>
+                              <div className="mt-1 text-sm text-slate-200/72 line-clamp-3">{task.description}</div>
+                            </div>
+                          ))}
+                        </div>
+                      ) : null}
+                    </div>
+                  ))}
+                  {!agentArchitecture?.roles?.length ? (
+                    <div className="rounded-[0.95rem] border border-cyan-400/10 bg-black/20 px-3 py-3 text-sm text-slate-200/72">
+                      Agent architecture status will appear once the backend reports the core roles.
+                    </div>
+                  ) : null}
+                </div>
+              </div>
+            </Panel>
+
+            <Panel title="Mission Matrix" kicker="Shared autonomy loop">
+              <div className="rounded-[1.15rem] border border-cyan-400/10 bg-slate-950/50 px-4 py-3">
+                <div className="text-sm uppercase tracking-[0.18em] text-cyan-50/92">
+                  {autonomyMissions.length ? `${autonomyMissions.length} active mission lane${autonomyMissions.length === 1 ? '' : 's'}` : 'Mission loop standing by'}
+                </div>
+                <div className="mt-1 text-[10px] uppercase tracking-[0.28em] text-cyan-300/55">
+                  Detect · Plan · Act · Verify · Retry
+                </div>
+              </div>
+              {autonomyMissions.length ? (
+                <div className="mt-3 space-y-3">
+                  {autonomyMissions.slice(0, 4).map((mission) => (
+                    <div key={mission.id} className="rounded-[1rem] border border-cyan-400/10 bg-black/20 px-4 py-3">
+                      <div className="flex items-start justify-between gap-3">
+                        <div>
+                          <div className="text-sm text-cyan-50/92">{mission.title}</div>
+                          <div className="mt-1 text-[10px] uppercase tracking-[0.22em] text-cyan-300/55">
+                            {mission.domain} · {mission.status} · {missionPhaseLabel(mission.phase)}
+                          </div>
+                        </div>
+                        <button
+                          onClick={mission.action}
+                          className="rounded-[0.85rem] border border-cyan-400/12 bg-cyan-400/[0.08] px-3 py-2 text-[10px] uppercase tracking-[0.22em] text-cyan-100 transition hover:bg-cyan-400/[0.14]"
+                        >
+                          {mission.actionLabel}
+                        </button>
+                      </div>
+                      <div className="mt-2 text-sm text-slate-200/78">{mission.summary}</div>
+                      <div className="mt-2 text-xs leading-6 text-slate-300/72">
+                        Next: {mission.nextStep}
+                      </div>
+                      <div className="mt-1 text-xs leading-6 text-slate-300/60">
+                        Result: {mission.result}
+                      </div>
+                      {mission.retryHint ? (
+                        <div className="mt-1 text-xs leading-6 text-amber-200/78">
+                          Retry: {mission.retryHint}
+                        </div>
+                      ) : null}
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="mt-3 text-sm leading-6 text-slate-200/76">
+                  Once JARVIS has a self-improvement mission, delegated brief, or active visual workflow, it will show up here with a shared mission lifecycle.
+                </div>
+              )}
             </Panel>
           </div> : null}
 
@@ -4364,6 +5441,13 @@ export default function JarvisHudDashboard() {
                               className="rounded-[0.85rem] border border-cyan-400/12 bg-cyan-400/[0.08] px-3 py-2 text-[10px] uppercase tracking-[0.22em] text-cyan-100 transition hover:bg-cyan-400/[0.14]"
                             >
                               Load Brief
+                            </button>
+                            <button
+                              onClick={() => handoffWithBrief(visualBrief.prompt, 'visual-brief')}
+                              disabled={architectureBusy}
+                              className="rounded-[0.85rem] border border-cyan-400/12 bg-slate-950/70 px-3 py-2 text-[10px] uppercase tracking-[0.22em] text-cyan-100 transition hover:bg-cyan-400/[0.08] disabled:cursor-not-allowed disabled:opacity-40"
+                            >
+                              {architectureBusy ? 'Routing' : 'Route To Planner'}
                             </button>
                             <button
                               onClick={() => injectCommand(buildDailyOpsPrompt())}
@@ -5183,6 +6267,177 @@ export default function JarvisHudDashboard() {
 
                 <div className="mt-4 rounded-[1.15rem] border border-cyan-400/10 bg-slate-950/55 p-4">
                   <div className="mb-2 text-[10px] uppercase tracking-[0.35em] text-cyan-300/55">
+                    Self-Improve
+                  </div>
+                  {selfImproveBrief ? (
+                    <div className="space-y-3">
+                      {activeSelfImproveTask ? (
+                        <div className="rounded-[0.95rem] border border-cyan-400/10 bg-cyan-400/[0.06] px-3 py-3">
+                          <div className="text-[10px] uppercase tracking-[0.22em] text-cyan-300/55">Active Mission</div>
+                          <div className="mt-1 text-sm text-cyan-50/92">{activeSelfImproveTask.title}</div>
+                          <div className="mt-1 text-[10px] uppercase tracking-[0.18em] text-cyan-300/55">
+                            {activeSelfImproveTask.status} · {activeSelfImproveTask.filePath}
+                          </div>
+                        </div>
+                      ) : null}
+                      <div className="rounded-[0.95rem] border border-cyan-400/10 bg-black/20 px-3 py-3">
+                        <div className="text-sm text-cyan-50/92">{selfImproveBrief.summary}</div>
+                        <pre className="mt-2 max-h-48 overflow-auto whitespace-pre-wrap break-words font-mono text-xs leading-6 text-slate-200/72">
+                          {selfImproveBrief.details}
+                        </pre>
+                      </div>
+                      {selfImprovePatchPlan ? (
+                        <div className="rounded-[0.95rem] border border-cyan-400/10 bg-black/20 px-3 py-3">
+                          <div className="text-[10px] uppercase tracking-[0.22em] text-cyan-300/55">Patch Plan</div>
+                          <div className="mt-1 text-sm text-cyan-50/92">{selfImprovePatchPlan.summary}</div>
+                          {selfImprovePatchPlan.targetFile ? (
+                            <div className="mt-1 text-[10px] uppercase tracking-[0.18em] text-cyan-300/55">
+                              target · {selfImprovePatchPlan.targetFile}
+                            </div>
+                          ) : null}
+                          <div className="mt-2 space-y-2">
+                            {selfImprovePatchPlan.steps.map((step, index) => (
+                              <div key={`${index}-${step}`} className="text-sm leading-6 text-slate-200/76">
+                                {index + 1}. {step}
+                              </div>
+                            ))}
+                          </div>
+                          <div className="mt-3 grid gap-2 sm:grid-cols-3">
+                            <button
+                              onClick={() => injectCommand(selfImprovePatchPlan.prompt)}
+                              className="rounded-[0.85rem] border border-cyan-400/12 bg-cyan-400/[0.08] px-3 py-2 text-[10px] uppercase tracking-[0.22em] text-cyan-100 transition hover:bg-cyan-400/[0.14]"
+                            >
+                              Load Plan
+                            </button>
+                            <button
+                              onClick={() => focusSelfImproveTarget().catch(() => null)}
+                              disabled={!selfImprovePatchPlan.targetFile}
+                              className="rounded-[0.85rem] border border-cyan-400/12 bg-slate-950/70 px-3 py-2 text-[10px] uppercase tracking-[0.22em] text-cyan-100 transition hover:bg-cyan-400/[0.08] disabled:cursor-not-allowed disabled:opacity-40"
+                            >
+                              Focus File
+                            </button>
+                            <button
+                              onClick={() => primeSelfImproveValidation('self-improve-plan')}
+                              disabled={!workspaceChecks?.checks?.[0]}
+                              className="rounded-[0.85rem] border border-cyan-400/12 bg-slate-950/70 px-3 py-2 text-[10px] uppercase tracking-[0.22em] text-cyan-100 transition hover:bg-cyan-400/[0.08] disabled:cursor-not-allowed disabled:opacity-40"
+                            >
+                              Prime Check
+                            </button>
+                          </div>
+                        </div>
+                      ) : null}
+                      <div className="grid gap-2 sm:grid-cols-3">
+                        <button
+                          onClick={() => {
+                            ensureSelfImproveTask('in_progress');
+                            recordSelfImproveRun('brief', 'Loaded self-improvement brief into the command core.', selfImproveBrief.summary);
+                            injectCommand(selfImproveBrief.prompt);
+                          }}
+                          className="rounded-[0.9rem] border border-cyan-400/12 bg-cyan-400/[0.08] px-3 py-3 text-xs uppercase tracking-[0.22em] text-cyan-100 transition hover:bg-cyan-400/[0.14]"
+                        >
+                          Load Brief
+                        </button>
+                        <button
+                          onClick={() => {
+                            ensureSelfImproveTask('in_progress');
+                            handoffWithBrief(selfImproveBrief.prompt, 'self-improve').catch(() => null);
+                          }}
+                          disabled={!agentArchitecture?.roles?.some((role) => role.role === 'planner' && role.ready && !!role.agent_id)}
+                          className="rounded-[0.9rem] border border-cyan-400/12 bg-slate-950/70 px-3 py-3 text-xs uppercase tracking-[0.22em] text-cyan-100 transition hover:bg-cyan-400/[0.08] disabled:cursor-not-allowed disabled:opacity-40"
+                        >
+                          Route To Planner
+                        </button>
+                        <button
+                          onClick={() =>
+                            workspaceChecks?.checks?.[0]
+                              ? (recordSelfImproveRun(
+                                  'check',
+                                  'Primed the top recommended validation command.',
+                                  workspaceChecks.checks[0].command,
+                                ),
+                                ensureSelfImproveTask('in_progress'),
+                                stageSuggestedCommand(workspaceChecks.checks[0].command))
+                              : (recordSelfImproveRun(
+                                  'brief',
+                                  'No check was available, so the self-improvement brief was loaded instead.',
+                                  selfImproveBrief.summary,
+                                ),
+                                ensureSelfImproveTask('in_progress'),
+                                injectCommand(selfImproveBrief.prompt))
+                          }
+                          className="rounded-[0.9rem] border border-cyan-400/12 bg-slate-950/70 px-3 py-3 text-xs uppercase tracking-[0.22em] text-cyan-100 transition hover:bg-cyan-400/[0.08]"
+                        >
+                          Prime Check
+                        </button>
+                      </div>
+                      {architectureTaskOutcome && agentArchitecture?.handoff?.source?.startsWith('self-improve') ? (
+                        <div
+                          className={`rounded-[0.95rem] border px-3 py-3 ${
+                            architectureTaskOutcome.kind === 'failed'
+                              ? 'border-amber-400/20 bg-amber-400/[0.06]'
+                              : 'border-emerald-400/20 bg-emerald-400/[0.06]'
+                          }`}
+                        >
+                          <div className="text-[10px] uppercase tracking-[0.22em] text-cyan-300/55">Latest Self-Improve Outcome</div>
+                          <div className="mt-1 text-sm text-cyan-50/92">{architectureTaskOutcome.summary}</div>
+                          <div className="mt-2 grid gap-2 sm:grid-cols-2">
+                            <button
+                              onClick={() =>
+                                architectureTaskOutcome.kind === 'failed'
+                                  ? void loadSelfImproveRepairStep(architectureTaskOutcome.summary, 'self-improve-manual')
+                                  : workspaceChecks?.checks?.[0]
+                                  ? primeSelfImproveValidation('self-improve-manual')
+                                  : injectCommand(selfImproveBrief.prompt)
+                              }
+                              className="rounded-[0.85rem] border border-cyan-400/12 bg-cyan-400/[0.08] px-3 py-2 text-[10px] uppercase tracking-[0.22em] text-cyan-100 transition hover:bg-cyan-400/[0.14]"
+                            >
+                              {architectureTaskOutcome.kind === 'failed' ? 'Load Repair' : 'Run Next Check'}
+                            </button>
+                            <button
+                              onClick={() => handoffWithBrief(selfImproveBrief.prompt, 'self-improve').catch(() => null)}
+                              disabled={architectureBusy}
+                              className="rounded-[0.85rem] border border-cyan-400/12 bg-slate-950/70 px-3 py-2 text-[10px] uppercase tracking-[0.22em] text-cyan-100 transition hover:bg-cyan-400/[0.08] disabled:cursor-not-allowed disabled:opacity-40"
+                            >
+                              {architectureBusy ? 'Routing' : 'Retry Mission'}
+                            </button>
+                          </div>
+                        </div>
+                      ) : null}
+                      <div className="rounded-[0.95rem] border border-cyan-400/10 bg-black/20 px-3 py-3">
+                        <div className="text-[10px] uppercase tracking-[0.22em] text-cyan-300/55">Self-Improve Cycle</div>
+                        {selfImproveRuns.length ? (
+                          <div className="mt-2 space-y-2">
+                            {selfImproveRuns.slice(0, 4).map((item) => (
+                              <div key={item.id} className="rounded-[0.85rem] border border-cyan-400/10 bg-slate-950/60 px-3 py-3">
+                                <div className="flex items-center justify-between gap-3">
+                                  <div className="text-xs uppercase tracking-[0.18em] text-cyan-50/92">
+                                    {item.phase} · {item.source}
+                                  </div>
+                                  <div className="text-[10px] uppercase tracking-[0.18em] text-cyan-300/55">
+                                    {new Date(item.createdAt).toLocaleTimeString()}
+                                  </div>
+                                </div>
+                                <div className="mt-1 text-sm text-slate-200/78">{item.summary}</div>
+                                <div className="mt-1 text-xs leading-6 text-slate-300/72">{item.detail}</div>
+                              </div>
+                            ))}
+                          </div>
+                        ) : (
+                          <div className="mt-2 text-sm leading-6 text-slate-200/76">
+                            Self-improvement runs will appear here once JARVIS loads, routes, or resolves a coding improvement loop.
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="text-sm leading-6 text-slate-200/76">
+                      JARVIS will surface a self-improvement brief once repo state, project memory, or validation context is available.
+                    </div>
+                  )}
+                </div>
+
+                <div className="mt-4 rounded-[1.15rem] border border-cyan-400/10 bg-slate-950/55 p-4">
+                  <div className="mb-2 text-[10px] uppercase tracking-[0.35em] text-cyan-300/55">
                     Coding Presets
                   </div>
                   <div className="text-sm leading-7 text-slate-200/78">
@@ -5607,6 +6862,13 @@ export default function JarvisHudDashboard() {
                         className="rounded-[0.95rem] border border-cyan-400/12 bg-cyan-400/[0.08] px-3 py-2 text-xs uppercase tracking-[0.22em] text-cyan-100 transition hover:bg-cyan-400/[0.14]"
                       >
                         Blend Visual Intel
+                      </button>
+                      <button
+                        onClick={() => handoffWithBrief(buildDailyOpsPrompt(), 'daily-ops')}
+                        disabled={architectureBusy}
+                        className="rounded-[0.95rem] border border-cyan-400/12 bg-slate-950/70 px-3 py-2 text-xs uppercase tracking-[0.22em] text-cyan-100 transition hover:bg-cyan-400/[0.08] disabled:cursor-not-allowed disabled:opacity-40"
+                      >
+                        {architectureBusy ? 'Routing' : 'Route Daily Ops'}
                       </button>
                       <button
                         onClick={() => injectCommand(visualBrief.prompt)}

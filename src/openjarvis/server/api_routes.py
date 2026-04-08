@@ -16,6 +16,11 @@ from fastapi.concurrency import run_in_threadpool
 from fastapi import APIRouter, HTTPException, Request, Response, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
+from openjarvis.server.agent_architecture import (
+    build_architecture_status,
+    create_role_handoff,
+    ensure_core_team,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -218,6 +223,11 @@ class OperatorVisualBriefRequest(BaseModel):
     summary: str
     details: Optional[str] = None
     created_at: Optional[str] = None
+
+
+class AgentArchitectureHandoffRequest(BaseModel):
+    brief: str
+    source: Optional[str] = "hud"
 
 
 class RoutineScheduleRequest(BaseModel):
@@ -903,6 +913,7 @@ workbench_router = APIRouter(prefix="/v1/workbench", tags=["workbench"])
 action_center_router = APIRouter(prefix="/v1/action-center", tags=["action-center"])
 operator_memory_router = APIRouter(prefix="/v1/operator-memory", tags=["operator-memory"])
 vision_router = APIRouter(prefix="/v1/vision", tags=["vision"])
+agent_architecture_router = APIRouter(prefix="/v1/agent-architecture", tags=["agent-architecture"])
 automation_router = APIRouter(prefix="/v1/automation", tags=["automation"])
 workspace_router = APIRouter(prefix="/v1/workspace", tags=["workspace"])
 coding_router = APIRouter(prefix="/v1/coding", tags=["coding"])
@@ -1122,6 +1133,31 @@ async def voice_loop_process_audio(request: Request):
         )
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc))
+
+
+@agent_architecture_router.get("/status")
+async def agent_architecture_status(request: Request):
+    return build_architecture_status(request.app.state)
+
+
+@agent_architecture_router.post("/ensure-core")
+async def agent_architecture_ensure_core(request: Request):
+    try:
+        return ensure_core_team(request.app.state)
+    except ValueError as exc:
+        raise HTTPException(status_code=503, detail=str(exc))
+
+
+@agent_architecture_router.post("/handoff")
+async def agent_architecture_handoff(req: AgentArchitectureHandoffRequest, request: Request):
+    try:
+        return create_role_handoff(
+            request.app.state,
+            brief=req.brief,
+            source=req.source or "hud",
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
 
 
 @workbench_router.get("/status")
@@ -2735,6 +2771,7 @@ def include_all_routes(app) -> None:
     app.include_router(learning_router)
     app.include_router(speech_router)
     app.include_router(voice_loop_router)
+    app.include_router(agent_architecture_router)
     app.include_router(workbench_router)
     app.include_router(action_center_router)
     app.include_router(operator_memory_router)

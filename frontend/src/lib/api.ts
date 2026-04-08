@@ -692,6 +692,54 @@ export interface DesktopState {
   active_browser_target: string;
 }
 
+export interface AgentArchitectureRole {
+  role: string;
+  title: string;
+  kind: 'system' | 'managed';
+  source: string;
+  ready: boolean;
+  status: string;
+  detail: string;
+  agent_id?: string | null;
+  agent_name?: string | null;
+  agent_type?: string | null;
+  active?: boolean;
+}
+
+export interface AgentArchitectureStatus {
+  roles: AgentArchitectureRole[];
+  summary: {
+    ready_roles: number;
+    total_roles: number;
+    managed_ready: number;
+    managed_total: number;
+  };
+  created?: Array<{
+    role: string;
+    agent_id?: string;
+    name?: string;
+  }>;
+  existing?: Array<{
+    role: string;
+    agent_id?: string;
+    name?: string;
+  }>;
+  handoff?: {
+    source: string;
+    brief: string;
+    planner?: {
+      agent_id?: string;
+      task_id?: string;
+      name?: string;
+    };
+    executor?: {
+      agent_id?: string;
+      task_id?: string;
+      name?: string;
+    };
+  };
+}
+
 export interface ReminderItem {
   kind: 'event' | 'task';
   title: string;
@@ -1670,6 +1718,37 @@ export async function fetchDesktopState(): Promise<DesktopState> {
   if (!res.ok) {
     const detail = await res.json().catch(() => ({ detail: res.statusText }));
     throw new Error(detail.detail || `Desktop state failed: ${res.status}`);
+  }
+  return res.json();
+}
+
+export async function fetchAgentArchitectureStatus(): Promise<AgentArchitectureStatus> {
+  const res = await fetch(`${getBase()}/v1/agent-architecture/status`);
+  if (!res.ok) {
+    const detail = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(detail.detail || `Agent architecture failed: ${res.status}`);
+  }
+  return res.json();
+}
+
+export async function ensureCoreAgentArchitecture(): Promise<AgentArchitectureStatus> {
+  const res = await fetch(`${getBase()}/v1/agent-architecture/ensure-core`, { method: 'POST' });
+  if (!res.ok) {
+    const detail = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(detail.detail || `Ensure core agent architecture failed: ${res.status}`);
+  }
+  return res.json();
+}
+
+export async function handoffAgentArchitecture(brief: string, source = 'hud'): Promise<AgentArchitectureStatus> {
+  const res = await fetch(`${getBase()}/v1/agent-architecture/handoff`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ brief, source }),
+  });
+  if (!res.ok) {
+    const detail = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(detail.detail || `Agent handoff failed: ${res.status}`);
   }
   return res.json();
 }
