@@ -213,6 +213,9 @@ class LearningExperience:
     lesson: str = ""
     reuse_hint: str = ""
     tags: list[str] = field(default_factory=list)
+    confidence: float = 0.6
+    use_count: int = 1
+    last_reused_at: str = ""
     created_at: str = ""
 
 
@@ -503,6 +506,9 @@ class OperatorMemory:
                 lesson=str(value.get("lesson", "")),
                 reuse_hint=str(value.get("reuse_hint", "")),
                 tags=[str(tag).strip().lower() for tag in value.get("tags", []) if str(tag).strip()],
+                confidence=float(value.get("confidence", 0.6) or 0.6),
+                use_count=max(1, int(value.get("use_count", 1) or 1)),
+                last_reused_at=str(value.get("last_reused_at", "")),
                 created_at=str(value.get("created_at", "")),
             )
             for value in learning_experiences
@@ -1103,6 +1109,7 @@ class OperatorMemory:
         lesson: str = "",
         reuse_hint: str = "",
         tags: list[str] | None = None,
+        confidence: float | None = None,
         created_at: str = "",
     ) -> dict[str, Any]:
         cleaned_label = label.strip() or "Learning"
@@ -1113,25 +1120,75 @@ class OperatorMemory:
         cleaned_reuse_hint = reuse_hint.strip()
         if not cleaned_summary and not cleaned_lesson:
             raise ValueError("Learning summary or lesson is required")
+        normalized_outcome = outcome_type.strip().lower() or "lesson"
+        inferred_confidence = confidence
+        if inferred_confidence is None:
+            inferred_confidence = 0.72 if normalized_outcome == "mistake" else 0.66 if normalized_outcome == "success" else 0.58
+        clamped_confidence = max(0.05, min(1.0, float(inferred_confidence)))
         stamp = (created_at or f"{cleaned_domain}-{cleaned_label}").strip().lower().replace(" ", "-")
         experience_id = f"learning-{stamp}"
-        self._learning_experiences = [item for item in self._learning_experiences if item.id != experience_id]
+        duplicate = next(
+            (
+                item
+                for item in self._learning_experiences
+                if item.id == experience_id
+                or (
+                    item.domain == cleaned_domain
+                    and item.context_key == cleaned_context_key
+                    and item.outcome_type == normalized_outcome
+                    and item.summary == cleaned_summary
+                    and item.lesson == cleaned_lesson
+                )
+            ),
+            None,
+        )
+        self._learning_experiences = [
+            item
+            for item in self._learning_experiences
+            if item.id != experience_id
+            and not (
+                item.domain == cleaned_domain
+                and item.context_key == cleaned_context_key
+                and item.outcome_type == normalized_outcome
+                and item.summary == cleaned_summary
+                and item.lesson == cleaned_lesson
+            )
+        ]
+        merged_tags = [tag.strip().lower() for tag in (tags or []) if tag.strip()]
+        if duplicate:
+            merged_tags = list(dict.fromkeys([*duplicate.tags, *merged_tags]))
         self._learning_experiences.insert(
             0,
             LearningExperience(
-                id=experience_id,
+                id=duplicate.id if duplicate else experience_id,
                 label=cleaned_label,
                 domain=cleaned_domain,
                 context_key=cleaned_context_key,
-                outcome_type=outcome_type.strip().lower() or "lesson",
+                outcome_type=normalized_outcome,
                 summary=cleaned_summary,
                 lesson=cleaned_lesson,
                 reuse_hint=cleaned_reuse_hint,
-                tags=[tag.strip().lower() for tag in (tags or []) if tag.strip()],
+                tags=merged_tags,
+                confidence=min(1.0, max(clamped_confidence, duplicate.confidence + 0.05 if duplicate else clamped_confidence)),
+                use_count=(duplicate.use_count + 1) if duplicate else 1,
+                last_reused_at=duplicate.last_reused_at if duplicate else "",
                 created_at=created_at,
             ),
         )
         self._learning_experiences = self._learning_experiences[:60]
+        self._save()
+        return self.snapshot()
+
+    def mark_learning_reused(self, experience_id: str, *, reused_at: str = "") -> dict[str, Any]:
+        cleaned_id = experience_id.strip()
+        if not cleaned_id:
+            raise ValueError("Learning experience id is required")
+        experience = next((item for item in self._learning_experiences if item.id == cleaned_id), None)
+        if experience is None:
+            raise ValueError("Learning experience not found")
+        experience.use_count = max(1, int(experience.use_count) + 1)
+        experience.confidence = min(1.0, max(0.05, float(experience.confidence) + 0.03))
+        experience.last_reused_at = (reused_at or datetime.utcnow().isoformat()).strip()
         self._save()
         return self.snapshot()
 
@@ -1151,6 +1208,12 @@ class OperatorMemory:
             except Exception:
                 return 0.0
 
+        def _reuse_timestamp(value: LearningExperience) -> float:
+            try:
+                return datetime.fromisoformat(value.last_reused_at.replace("Z", "+00:00")).timestamp()
+            except Exception:
+                return 0.0
+
         ranked: list[tuple[float, LearningExperience]] = []
         for item in self._learning_experiences:
             score = 0.0
@@ -1164,6 +1227,11 @@ class OperatorMemory:
             if cleaned_context_key:
                 if item.context_key == cleaned_context_key:
                     score += 5.0
+                elif item.context_key and (
+                    cleaned_context_key.endswith(item.context_key)
+                    or item.context_key.endswith(cleaned_context_key)
+                ):
+                    score += 3.5
                 elif item.context_key and cleaned_context_key in item.context_key:
                     score += 2.5
                 elif item.context_key:
@@ -1172,7 +1240,12 @@ class OperatorMemory:
                 score += 0.4
             elif item.outcome_type == "mistake":
                 score += 0.7
+            elif item.outcome_type == "anti-pattern":
+                score += 1.2
+            score += min(max(item.confidence, 0.05) * 2.5, 2.5)
+            score += min(max(item.use_count, 1) * 0.2, 2.0)
             score += min(_timestamp(item) / 10_000_000_000, 2.0)
+            score += min(_reuse_timestamp(item) / 10_000_000_000, 1.5)
             ranked.append((score, item))
         ranked.sort(key=lambda pair: pair[0], reverse=True)
         return [asdict(item) for _, item in ranked[: max(1, limit)]]

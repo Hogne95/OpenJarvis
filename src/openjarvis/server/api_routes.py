@@ -522,7 +522,13 @@ class OperatorLearningExperienceRequest(BaseModel):
     lesson: Optional[str] = None
     reuse_hint: Optional[str] = None
     tags: Optional[list[str]] = None
+    confidence: Optional[float] = None
     created_at: Optional[str] = None
+
+
+class OperatorLearningReuseRequest(BaseModel):
+    ids: list[str]
+    reused_at: Optional[str] = None
 
 
 class OperatorMissionUpdateRequest(BaseModel):
@@ -736,6 +742,198 @@ def _mission_followup_payload(mission: dict[str, Any], action: str) -> dict[str,
             "source": "fivem-mission",
         }
     return None
+
+
+def _record_learning_from_mission_action(
+    manager: Any,
+    mission: dict[str, Any],
+    action: str,
+    *,
+    summary_override: str = "",
+    result_override: str = "",
+    retry_hint_override: str = "",
+) -> None:
+    domain = str(mission.get("domain", "")).strip().lower()
+    if not domain:
+        return
+    title = str(mission.get("title", "Mission")).strip() or "Mission"
+    result_data = mission.get("result_data") if isinstance(mission.get("result_data"), dict) else {}
+    summary = summary_override.strip() or str(mission.get("summary", "")).strip()
+    result = result_override.strip() or str(mission.get("result", "")).strip()
+    retry_hint = retry_hint_override.strip() or str(mission.get("retry_hint", "")).strip()
+    context_key = (
+        str(result_data.get("file_path", "")).strip()
+        or str(result_data.get("resource_key", "")).strip()
+        or str(result_data.get("store", "")).strip()
+        or str(result_data.get("brief_label", "")).strip()
+        or domain
+    )
+    outcome_type = "success" if action == "complete" else "mistake" if action in {"retry", "block"} else "lesson"
+    lesson = result or summary or retry_hint
+    if not lesson:
+        return
+    if domain == "fivem":
+        framework = str(result_data.get("framework", "")).strip()
+        topology = str(result_data.get("topology", "")).strip()
+        native_families = str(result_data.get("native_families", "")).strip()
+        reuse_hint = retry_hint or (
+            "Narrow the next FiveM pass to one framework boundary, native family, or startup assumption."
+            if outcome_type == "mistake"
+            else "Reuse the same FiveM review pattern on similar framework/topology resources."
+        )
+        tags = [domain, framework.lower(), topology.lower(), outcome_type]
+        if native_families:
+            tags.extend([item.strip().lower() for item in native_families.split(",") if item.strip()])
+    elif domain in {"coding", "self-improve"}:
+        file_path = str(result_data.get("file_path", "")).strip()
+        reuse_hint = retry_hint or (
+            "Reduce the patch scope and rerun the same validation first."
+            if outcome_type == "mistake"
+            else "Reuse this fix/check pattern when the same file or failure family appears again."
+        )
+        tags = [domain, outcome_type]
+        if file_path:
+            tags.append("file-scoped")
+    elif domain == "design":
+        weakest_area = str(result_data.get("weakest_area", "")).strip()
+        reuse_hint = retry_hint or (
+            "Start from the weakest scored HUD area before making broader changes."
+            if outcome_type == "mistake"
+            else "Carry the strongest hierarchy and clarity decisions into the next HUD pass."
+        )
+        tags = [domain, weakest_area.lower(), outcome_type]
+    elif domain in {"visual", "document"}:
+        reuse_hint = retry_hint or (
+            "Reuse this analysis pattern when similar inputs appear again."
+        )
+        tags = [domain, outcome_type]
+    elif domain in {"commercial", "sales", "customer", "shopify"}:
+        reuse_hint = retry_hint or (
+            "Prioritize the highest combined business pressure first on the next commercial pass."
+            if outcome_type == "mistake"
+            else "Reuse this business sequencing when similar operating pressure appears again."
+        )
+        tags = [domain, outcome_type]
+    else:
+        reuse_hint = retry_hint or "Reuse this lesson when the same context appears again."
+        tags = [domain, outcome_type]
+    try:
+        manager.add_learning_experience(
+            label=f"{title} {action}",
+            domain=domain,
+            context_key=context_key,
+            outcome_type=outcome_type,
+            summary=summary or f"{title} {action}",
+            lesson=lesson[:800],
+            reuse_hint=reuse_hint[:400],
+            tags=[tag for tag in tags if tag],
+            created_at=datetime.utcnow().isoformat(),
+        )
+        if outcome_type == "mistake":
+            _promote_antipattern_learning(
+                manager,
+                domain=domain,
+                context_key=context_key,
+                summary=summary or f"{title} blocker pattern",
+                lesson=lesson,
+                reuse_hint=reuse_hint,
+                tags=[tag for tag in tags if tag],
+            )
+    except Exception:
+        return
+
+
+def _record_execution_learning(
+    manager: Any,
+    *,
+    label: str,
+    domain: str,
+    context_key: str = "",
+    outcome_type: str,
+    summary: str,
+    lesson: str = "",
+    reuse_hint: str = "",
+    tags: list[str] | None = None,
+    confidence: float | None = None,
+) -> None:
+    if manager is None:
+        return
+    cleaned_summary = summary.strip()
+    cleaned_lesson = lesson.strip()
+    if not cleaned_summary and not cleaned_lesson:
+        return
+    try:
+        manager.add_learning_experience(
+            label=label.strip() or "Execution lesson",
+            domain=domain.strip().lower() or "general",
+            context_key=context_key.strip(),
+            outcome_type=outcome_type.strip().lower() or "lesson",
+            summary=cleaned_summary or cleaned_lesson[:300],
+            lesson=cleaned_lesson[:800],
+            reuse_hint=reuse_hint.strip()[:400],
+            tags=[tag.strip().lower() for tag in (tags or []) if tag and tag.strip()],
+            confidence=confidence,
+            created_at=datetime.utcnow().isoformat(),
+        )
+        if (outcome_type.strip().lower() or "lesson") == "mistake":
+            _promote_antipattern_learning(
+                manager,
+                domain=domain,
+                context_key=context_key,
+                summary=cleaned_summary or f"{label} anti-pattern",
+                lesson=cleaned_lesson or cleaned_summary,
+                reuse_hint=reuse_hint,
+                tags=[tag.strip().lower() for tag in (tags or []) if tag and tag.strip()],
+            )
+    except Exception:
+        return
+
+
+def _promote_antipattern_learning(
+    manager: Any,
+    *,
+    domain: str,
+    context_key: str,
+    summary: str,
+    lesson: str,
+    reuse_hint: str,
+    tags: list[str] | None = None,
+) -> None:
+    if manager is None:
+        return
+    cleaned_domain = domain.strip().lower()
+    if not cleaned_domain:
+        return
+    related = manager.top_learning_experiences(
+        domain=cleaned_domain,
+        context_key=context_key.strip(),
+        limit=8,
+    )
+    repeated_mistakes = [
+        item for item in related
+        if str(item.get("outcome_type", "")).strip().lower() in {"mistake", "anti-pattern"}
+    ]
+    if len(repeated_mistakes) < 2:
+        return
+    anti_summary = summary.strip() or lesson.strip()
+    anti_lesson = lesson.strip() or anti_summary
+    if not anti_summary or not anti_lesson:
+        return
+    try:
+        manager.add_learning_experience(
+            label=f"Avoid {cleaned_domain} pattern",
+            domain=cleaned_domain,
+            context_key=context_key.strip(),
+            outcome_type="anti-pattern",
+            summary=anti_summary[:300],
+            lesson=anti_lesson[:800],
+            reuse_hint=(reuse_hint.strip() or "Avoid repeating this pattern in similar contexts.")[:400],
+            tags=[*(tags or []), "anti-pattern", "avoid"],
+            confidence=0.88,
+            created_at=datetime.utcnow().isoformat(),
+        )
+    except Exception:
+        return
 
 
 class AgentArchitectureHandoffRequest(BaseModel):
@@ -1711,6 +1909,7 @@ async def workbench_approve(request: Request):
     try:
         result = await run_in_threadpool(manager.approve)
         latest = result.get("result", {}) if isinstance(result, dict) else {}
+        operator_memory = getattr(request.app.state, "operator_memory", None)
         command = str(latest.get("command", "")).lower()
         is_validation = any(
             token in command
@@ -1726,6 +1925,9 @@ async def workbench_approve(request: Request):
         )
         if is_validation:
             success = str(latest.get("status", "")).strip().lower() == "success"
+            current_self_improve = _current_self_improve_mission(request.app.state) or {}
+            current_result_data = current_self_improve.get("result_data", {}) if isinstance(current_self_improve.get("result_data"), dict) else {}
+            context_key = str(current_result_data.get("file_path", "")).strip()
             _update_self_improve_mission(
                 request.app.state,
                 phase="done" if success else "retry",
@@ -1746,6 +1948,26 @@ async def workbench_approve(request: Request):
                     if success
                     else "Retry after narrowing the root cause and patch scope."
                 ),
+            )
+            _record_execution_learning(
+                operator_memory,
+                label="Validation result",
+                domain="self-improve" if context_key else "coding",
+                context_key=context_key,
+                outcome_type="success" if success else "mistake",
+                summary=(
+                    f"Validation passed for {context_key or 'the current patch'}."
+                    if success
+                    else f"Validation failed for {context_key or 'the current patch'}."
+                ),
+                lesson=(str(latest.get("output", "")).strip() or str(latest.get("command", "")).strip())[:800],
+                reuse_hint=(
+                    "Reuse the same validation sequence after similar patches."
+                    if success
+                    else "Reduce the patch scope and rerun the same validation before expanding the fix."
+                ),
+                tags=["validation", "workbench", "success" if success else "mistake"],
+                confidence=0.76 if success else 0.82,
             )
         return result
     except ValueError as exc:
@@ -2367,6 +2589,7 @@ async def operator_memory_add_learning_experience(
             lesson=req.lesson or "",
             reuse_hint=req.reuse_hint or "",
             tags=req.tags or [],
+            confidence=req.confidence,
             created_at=req.created_at or "",
         )
     except ValueError as exc:
@@ -2392,6 +2615,28 @@ async def operator_memory_top_learning_experiences(
     }
 
 
+@operator_memory_router.post("/learning/reuse")
+async def operator_memory_mark_learning_reused(
+    req: OperatorLearningReuseRequest,
+    request: Request,
+):
+    manager = getattr(request.app.state, "operator_memory", None)
+    if manager is None:
+        raise HTTPException(status_code=503, detail="Operator memory not configured")
+    updated = None
+    try:
+        for item_id in req.ids:
+            if not str(item_id).strip():
+                continue
+            updated = manager.mark_learning_reused(
+                str(item_id).strip(),
+                reused_at=req.reused_at or "",
+            )
+        return updated or manager.snapshot()
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
 @operator_memory_router.post("/mission")
 async def operator_memory_update_mission(
     req: OperatorMissionUpdateRequest,
@@ -2401,7 +2646,25 @@ async def operator_memory_update_mission(
     if manager is None:
         raise HTTPException(status_code=503, detail="Operator memory not configured")
     try:
-        return manager.update_mission(req.id, req.model_dump(exclude_none=True))
+        updated = manager.update_mission(req.id, req.model_dump(exclude_none=True))
+        updated_mission = next(
+            (
+                item
+                for item in updated.get("missions", [])
+                if str(item.get("id", "")).strip() == req.id.strip()
+            ),
+            None,
+        )
+        if isinstance(updated_mission, dict):
+            status = str(updated_mission.get("status", "")).strip().lower()
+            if status in {"blocked", "complete"}:
+                _record_learning_from_mission_action(
+                    manager,
+                    updated_mission,
+                    "complete" if status == "complete" else "retry",
+                )
+                updated = manager.snapshot()
+        return updated
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
 
@@ -2458,6 +2721,14 @@ async def operator_memory_act_on_mission(
                 if str(item.get("id", "")).strip() == req.id.strip()
             ),
             current,
+        )
+        _record_learning_from_mission_action(
+            manager,
+            updated_mission,
+            action,
+            summary_override=(req.summary or default_summary[action]).strip(),
+            result_override=(req.result or str(current.get("result", ""))).strip(),
+            retry_hint_override=(req.retry_hint or str(current.get("retry_hint", ""))).strip(),
         )
         return {
             "memory": updated,
@@ -3709,6 +3980,7 @@ async def coding_approve(request: Request):
         result = manager.approve()
         latest = result.get("result", {}) if isinstance(result, dict) else {}
         file_path = str(latest.get("file_path", "")).strip()
+        operator_memory = getattr(request.app.state, "operator_memory", None)
         _update_self_improve_mission(
             request.app.state,
             phase="verify",
@@ -3721,6 +3993,22 @@ async def coding_approve(request: Request):
             next_step="Run the next validation step to verify the patch.",
             result=str(latest.get("result", "")).strip()[:500] or str(latest.get("diff", "")).strip()[:500],
             retry_hint="If validation fails, reduce the patch to the smallest safe change and retry.",
+        )
+        _record_execution_learning(
+            operator_memory,
+            label="Patch applied",
+            domain="self-improve" if _current_self_improve_mission(request.app.state) else "coding",
+            context_key=file_path,
+            outcome_type="success",
+            summary=(
+                f"Applied a patch to {file_path}."
+                if file_path
+                else "Applied a coding patch."
+            ),
+            lesson=(str(latest.get("result", "")).strip() or str(latest.get("diff", "")).strip())[:800],
+            reuse_hint="After a successful patch apply, run the narrowest validation that proves the change.",
+            tags=["patch", "coding", "success"],
+            confidence=0.68,
         )
         return result
     except ValueError as exc:

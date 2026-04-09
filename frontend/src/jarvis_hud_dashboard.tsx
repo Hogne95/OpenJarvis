@@ -103,6 +103,7 @@ import {
   updateOperatorDesignBrief,
   updateOperatorFivemBrief,
   fetchOperatorLearningExperiences,
+  markOperatorLearningExperiencesReused,
   updateOperatorLearningExperience,
   updateOperatorVisualBrief,
   updateOperatorVisualInsight,
@@ -641,6 +642,9 @@ export default function JarvisHudDashboard() {
       lesson: string;
       reuse_hint: string;
       tags: string[];
+      confidence?: number;
+      use_count?: number;
+      last_reused_at?: string;
       created_at: string;
     }>
   >([]);
@@ -2139,7 +2143,14 @@ export default function JarvisHudDashboard() {
     const items = baseItems.filter((item) =>
       ['coding', 'self-improve', 'fivem'].includes((item.domain || '').toLowerCase()),
     );
-    return items.slice(0, 4);
+    return items
+      .sort(
+        (left, right) =>
+          (((right.outcome_type || '') === 'anti-pattern' ? 1 : 0) - ((left.outcome_type || '') === 'anti-pattern' ? 1 : 0)) ||
+          ((right.confidence || 0) - (left.confidence || 0)) ||
+          ((right.use_count || 0) - (left.use_count || 0)),
+      )
+      .slice(0, 4);
   }, [rankedLearningItems, recentLearningExperiences]);
   const fivemLearningContext = useMemo(() => {
     const resourceKey = fivemCodingBrief?.resourceKey || '';
@@ -2150,7 +2161,14 @@ export default function JarvisHudDashboard() {
       if (!resourceKey) return true;
       return !item.context_key || item.context_key === resourceKey;
     });
-    return items.slice(0, 4);
+    return items
+      .sort(
+        (left, right) =>
+          (((right.outcome_type || '') === 'anti-pattern' ? 1 : 0) - ((left.outcome_type || '') === 'anti-pattern' ? 1 : 0)) ||
+          ((right.confidence || 0) - (left.confidence || 0)) ||
+          ((right.use_count || 0) - (left.use_count || 0)),
+      )
+      .slice(0, 4);
   }, [fivemCodingBrief?.resourceKey, rankedLearningItems, recentLearningExperiences]);
   useEffect(() => {
     const domain = fivemCodingBrief ? 'fivem' : 'coding';
@@ -4356,6 +4374,17 @@ export default function JarvisHudDashboard() {
     }
   }
 
+  async function noteLearningReuse(items: Array<{ id: string }>) {
+    const ids = Array.from(new Set(items.map((item) => item.id?.trim()).filter(Boolean)));
+    if (!ids.length) return;
+    try {
+      const next = await markOperatorLearningExperiencesReused(ids, new Date().toISOString());
+      setDurableOperatorMemory(next);
+    } catch {
+      // Keep reuse tracking best-effort so prompts and handoffs never fail on memory bookkeeping.
+    }
+  }
+
   async function exportCurrentDocumentAnalysis(format: 'docx' | 'xlsx' | 'txt') {
     if (!documentAnalysis || !documentBrief) {
       setWorkbenchNotice('Build a document analysis first.');
@@ -5034,11 +5063,12 @@ export default function JarvisHudDashboard() {
   function loadCodingPrompt(
     mode: 'inspect' | 'debug' | 'review' | 'refactor' | 'logic',
   ) {
+    void noteLearningReuse(codingLearningContext);
     const learningContext = codingLearningContext.length
       ? `\nRecent learned lessons:\n${codingLearningContext
           .map(
             (item, index) =>
-              `${index + 1}. [${item.domain}/${item.outcome_type}] ${item.summary}${item.lesson ? `\nLesson: ${item.lesson}` : ''}${item.reuse_hint ? `\nReuse hint: ${item.reuse_hint}` : ''}`,
+              `${index + 1}. [${item.domain}/${item.outcome_type}] ${item.summary}${item.outcome_type === 'anti-pattern' ? '\nAvoid: Do not repeat this pattern unless the surrounding constraints have clearly changed.' : ''}${item.lesson ? `\nLesson: ${item.lesson}` : ''}${item.reuse_hint ? `\nReuse hint: ${item.reuse_hint}` : ''}`,
           )
           .join('\n\n')}`
       : '';
@@ -5088,12 +5118,13 @@ export default function JarvisHudDashboard() {
       | 'ox-review'
       | 'topology-review',
   ) {
+    void noteLearningReuse(fivemLearningContext);
     const changedFiles = (workspaceSummary?.changed_files || []).slice(0, 8).join(', ') || 'None';
     const learningContext = fivemLearningContext.length
       ? `Recent learned FiveM lessons\n${fivemLearningContext
           .map(
             (item, index) =>
-              `${index + 1}. [${item.outcome_type}] ${item.summary}${item.lesson ? `\nLesson: ${item.lesson}` : ''}${item.reuse_hint ? `\nReuse hint: ${item.reuse_hint}` : ''}`,
+              `${index + 1}. [${item.outcome_type}] ${item.summary}${item.outcome_type === 'anti-pattern' ? '\nAvoid: Treat this as a known risky FiveM pattern and only proceed if you can justify the exception.' : ''}${item.lesson ? `\nLesson: ${item.lesson}` : ''}${item.reuse_hint ? `\nReuse hint: ${item.reuse_hint}` : ''}`,
           )
           .join('\n\n')}`
       : '';
@@ -5558,6 +5589,12 @@ export default function JarvisHudDashboard() {
         }
         return true;
       })
+      .sort(
+        (left, right) =>
+          ((right.confidence || 0) - (left.confidence || 0)) ||
+          ((right.use_count || 0) - (left.use_count || 0)) ||
+          ((right.created_at || '').localeCompare(left.created_at || '')),
+      )
       .slice(0, 4);
   }
 
@@ -5576,6 +5613,7 @@ export default function JarvisHudDashboard() {
           )
           .join('\n\n')}`
       : cleanedBrief;
+    void noteLearningReuse(learningItems);
     setArchitectureBusy(true);
     setAgentNotice('');
     if (source.startsWith('self-improve')) {
@@ -7893,6 +7931,24 @@ ${item.details}`,
                               <span>{item.domain || 'general'}</span>
                               <span>·</span>
                               <span>{item.outcome_type || 'lesson'}</span>
+                              {item.outcome_type === 'anti-pattern' ? (
+                                <>
+                                  <span>·</span>
+                                  <span className="text-amber-300/80">avoid</span>
+                                </>
+                              ) : null}
+                              {typeof item.confidence === 'number' ? (
+                                <>
+                                  <span>·</span>
+                                  <span>{Math.round(item.confidence * 100)}% confidence</span>
+                                </>
+                              ) : null}
+                              {typeof item.use_count === 'number' ? (
+                                <>
+                                  <span>·</span>
+                                  <span>{item.use_count} reuse{item.use_count === 1 ? '' : 's'}</span>
+                                </>
+                              ) : null}
                               {item.context_key ? (
                                 <>
                                   <span>·</span>

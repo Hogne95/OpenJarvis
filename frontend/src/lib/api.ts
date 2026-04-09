@@ -722,6 +722,9 @@ export interface DurableOperatorMemory {
     lesson: string;
     reuse_hint: string;
     tags: string[];
+    confidence?: number;
+    use_count?: number;
+    last_reused_at?: string;
     created_at: string;
   }>;
   relationships: Record<
@@ -1954,6 +1957,7 @@ export async function updateOperatorLearningExperience(body: {
   lesson?: string;
   reuse_hint?: string;
   tags?: string[];
+  confidence?: number;
   created_at?: string;
 }): Promise<DurableOperatorMemory> {
   const res = await fetch(`${getBase()}/v1/operator-memory/learning`, {
@@ -1964,6 +1968,23 @@ export async function updateOperatorLearningExperience(body: {
   if (!res.ok) {
     const detail = await res.json().catch(() => ({ detail: res.statusText }));
     throw new Error(detail.detail || `Learning experience update failed: ${res.status}`);
+  }
+  return res.json();
+}
+
+export async function markOperatorLearningExperiencesReused(ids: string[], reused_at?: string): Promise<DurableOperatorMemory> {
+  const cleaned = ids.map((id) => id.trim()).filter(Boolean);
+  if (!cleaned.length) {
+    throw new Error('At least one learning experience id is required.');
+  }
+  const res = await fetch(`${getBase()}/v1/operator-memory/learning/reuse`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ ids: cleaned, reused_at }),
+  });
+  if (!res.ok) {
+    const detail = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(detail.detail || `Learning reuse update failed: ${res.status}`);
   }
   return res.json();
 }
@@ -1983,6 +2004,9 @@ export async function fetchOperatorLearningExperiences(params: {
     lesson: string;
     reuse_hint: string;
     tags: string[];
+    confidence?: number;
+    use_count?: number;
+    last_reused_at?: string;
     created_at: string;
   }>
 > {
