@@ -4,7 +4,7 @@ type MissionStatus = 'idle' | 'active' | 'blocked' | 'complete';
 export type MissionMatrixItem = {
   id: string;
   title: string;
-  domain: 'self-improve' | 'planner' | 'visual' | 'document' | 'design' | 'sales' | 'customer';
+  domain: 'self-improve' | 'planner' | 'visual' | 'document' | 'design' | 'sales' | 'customer' | 'shopify' | 'commercial';
   status: MissionStatus;
   phase: MissionPhase;
   summary: string;
@@ -13,6 +13,8 @@ export type MissionMatrixItem = {
   retryHint?: string;
   nextActionLabel?: string;
   resultMeta?: string[];
+  resultData?: Record<string, unknown>;
+  nextAction?: Record<string, unknown>;
   actionLabel: string;
   action?: () => void;
 };

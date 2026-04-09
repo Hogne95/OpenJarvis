@@ -101,10 +101,17 @@ export interface ShopifySummary {
   store: string;
   orders: number;
   open_orders: number;
+  canceled_orders: number;
+  refunded_orders: number;
   customers: number;
   products: number;
   active_products: number;
   estimated_revenue: number;
+  repeat_customers: number;
+  low_stock_products: Array<{
+    title: string;
+    inventory: number;
+  }>;
   top_customers: Array<{
     name: string;
     total_spent: string;

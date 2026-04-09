@@ -610,6 +610,67 @@ def _mission_followup_payload(mission: dict[str, Any], action: str) -> dict[str,
                 "source": "design-mission",
             }
         return {"kind": "prompt", "content": content, "label": title, "source": "design-mission"}
+    if domain == "shopify":
+        content = result or summary or next_step
+        if not content:
+            return None
+        store = str(result_data.get("store", "")).strip() or "store"
+        open_orders = str(result_data.get("open_orders", "")).strip()
+        low_stock = str(result_data.get("low_stock_products", "")).strip()
+        repeat_customers = str(result_data.get("repeat_customers", "")).strip()
+        details = [
+            f"Shopify mission for {store}.",
+            content,
+        ]
+        if open_orders:
+            details.append(f"Open orders: {open_orders}")
+        if low_stock:
+            details.append(f"Low-stock products: {low_stock}")
+        if repeat_customers:
+            details.append(f"Repeat customers: {repeat_customers}")
+        if blocked:
+            return {
+                "kind": "task",
+                "content": "\n".join(details),
+                "label": f"{title} Follow-up",
+                "source": "shopify-mission",
+            }
+        return {
+            "kind": "brief",
+            "content": "\n".join(details),
+            "label": f"{title} Ops Brief",
+            "source": "shopify-mission",
+        }
+    if domain == "commercial":
+        content = result or summary or next_step
+        if not content:
+            return None
+        pipeline_risk = str(result_data.get("pipeline_risk", "")).strip()
+        customer_pressure = str(result_data.get("customer_pressure", "")).strip()
+        store_pressure = str(result_data.get("store_pressure", "")).strip()
+        details = [
+            "Commercial operating mission.",
+            content,
+        ]
+        if pipeline_risk:
+            details.append(f"Pipeline risk: {pipeline_risk}")
+        if customer_pressure:
+            details.append(f"Customer pressure: {customer_pressure}")
+        if store_pressure:
+            details.append(f"Store pressure: {store_pressure}")
+        if blocked:
+            return {
+                "kind": "task",
+                "content": "\n".join(details),
+                "label": f"{title} Follow-up",
+                "source": "commercial-mission",
+            }
+        return {
+            "kind": "brief",
+            "content": "\n".join(details),
+            "label": f"{title} Brief",
+            "source": "commercial-mission",
+        }
     return None
 
 

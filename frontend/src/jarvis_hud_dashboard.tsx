@@ -143,7 +143,9 @@ import { DESIGN_ARCHETYPES, getDesignArchetype } from './lib/designCanon';
 import { useAppStore } from './lib/store';
 import type { ChatMessage, ToolCallInfo } from './types';
 import { InputArea } from './components/Chat/InputArea';
+import type { CommercialOpsBrief } from './components/Dashboard/CommercialOpsPanel';
 import type { MissionMatrixItem } from './components/Dashboard/MissionMatrix';
+import type { ShopifyIntelBrief } from './components/Dashboard/ShopifyIntelPanel';
 import { useSpeech } from './hooks/useSpeech';
 
 const CommanderQueue = lazy(() =>
@@ -154,6 +156,9 @@ const ActionCenterPanel = lazy(() =>
 );
 const CoreAgentsPanel = lazy(() =>
   import('./components/Dashboard/CoreAgentsPanel').then((module) => ({ default: module.CoreAgentsPanel })),
+);
+const CommercialOpsPanel = lazy(() =>
+  import('./components/Dashboard/CommercialOpsPanel').then((module) => ({ default: module.CommercialOpsPanel })),
 );
 const CustomerIntelPanel = lazy(() =>
   import('./components/Dashboard/CustomerIntelPanel').then((module) => ({ default: module.CustomerIntelPanel })),
@@ -649,6 +654,8 @@ export default function JarvisHudDashboard() {
   const lastAutoArchitectureDigestRef = useRef('');
   const lastAutoArchitectureSelfImproveRef = useRef('');
   const lastAutoArchitectureDesignRef = useRef('');
+  const lastAutoArchitectureShopifyRef = useRef('');
+  const lastAutoArchitectureCommercialRef = useRef('');
   const lastSelfImproveOutcomeRef = useRef('');
   const lastSelfImproveFollowupRef = useRef('');
   const lastSelfImprovePatchRef = useRef('');
@@ -1705,25 +1712,213 @@ export default function JarvisHudDashboard() {
 
   const shopifyBrief = useMemo(() => {
     if (!shopifySummary) return null;
+    const topCustomer = shopifySummary.top_customers[0] || null;
+    const topProduct = shopifySummary.top_products[0] || null;
+    const lowStock = shopifySummary.low_stock_products || [];
+    const fulfillmentPressure = shopifySummary.open_orders > 0;
+    const refundPressure = shopifySummary.refunded_orders > 0 || shopifySummary.canceled_orders > 0;
+    const retentionSignal = shopifySummary.repeat_customers > 0;
+    const focusItems = [
+      fulfillmentPressure
+        ? {
+            label: 'Fulfillment Pressure',
+            detail: `${shopifySummary.open_orders} open order${shopifySummary.open_orders === 1 ? '' : 's'} still need attention in ${shopifySummary.store}. Review shipping, support, or fulfillment blockers first.`,
+          }
+        : null,
+      lowStock.length
+        ? {
+            label: 'Stock Risk',
+            detail: `Low-stock watch is active for ${lowStock.length} product${lowStock.length === 1 ? '' : 's'}, led by ${lowStock.slice(0, 3).map((item) => `${item.title} (${item.inventory})`).join(', ')}.`,
+          }
+        : null,
+      refundPressure
+        ? {
+            label: 'Refund / Cancel Risk',
+            detail: `${shopifySummary.refunded_orders} refunded and ${shopifySummary.canceled_orders} canceled order${shopifySummary.refunded_orders + shopifySummary.canceled_orders === 1 ? '' : 's'} were detected in the recent store window. Review product quality, fulfillment friction, or customer-expectation gaps.`,
+          }
+        : null,
+      retentionSignal
+        ? {
+            label: 'Retention Opportunity',
+            detail: `${shopifySummary.repeat_customers} repeat customer${shopifySummary.repeat_customers === 1 ? '' : 's'} were detected. ${topCustomer ? `${topCustomer.name} is the current strongest customer signal.` : 'Use repeat purchase behavior to guide the next retention move.'}`,
+          }
+        : null,
+      topProduct
+        ? {
+            label: 'Product Momentum',
+            detail: `${topProduct.title} is the strongest current product signal with status ${topProduct.status} and ${topProduct.variant_count} variant${topProduct.variant_count === 1 ? '' : 's'}.`,
+          }
+        : null,
+    ].filter((item): item is { label: string; detail: string } => Boolean(item));
+    const details =
+      `Store: ${shopifySummary.store}\n` +
+      `Orders: ${shopifySummary.orders}\n` +
+      `Open orders: ${shopifySummary.open_orders}\n` +
+      `Refunded orders: ${shopifySummary.refunded_orders}\n` +
+      `Canceled orders: ${shopifySummary.canceled_orders}\n` +
+      `Customers: ${shopifySummary.customers}\n` +
+      `Products: ${shopifySummary.products}\n` +
+      `Active products: ${shopifySummary.active_products}\n` +
+      `Estimated revenue: ${shopifySummary.estimated_revenue}\n` +
+      `Repeat customers: ${shopifySummary.repeat_customers}\n` +
+      `Low stock products: ${lowStock.length}\n` +
+      `Top customers: ${shopifySummary.top_customers.map((item) => `${item.name} (${item.total_spent})`).join(', ') || 'None'}\n` +
+      `Top products: ${shopifySummary.top_products.map((item) => `${item.title} (${item.status})`).join(', ') || 'None'}`;
     return {
       title: `Shopify Intel · ${shopifySummary.store}`,
       summary:
-        `${shopifySummary.orders} recent orders · ${shopifySummary.open_orders} open · ` +
-        `${shopifySummary.customers} customers · revenue ${shopifySummary.estimated_revenue}`,
+        `${shopifySummary.orders} recent orders · ${shopifySummary.open_orders} open · ${lowStock.length} low-stock watch · revenue ${shopifySummary.estimated_revenue}`,
+      details,
       prompt:
         `I have a Shopify store summary.\n` +
-        `Store: ${shopifySummary.store}\n` +
-        `Orders: ${shopifySummary.orders}\n` +
-        `Open orders: ${shopifySummary.open_orders}\n` +
-        `Customers: ${shopifySummary.customers}\n` +
-        `Products: ${shopifySummary.products}\n` +
-        `Active products: ${shopifySummary.active_products}\n` +
-        `Estimated revenue: ${shopifySummary.estimated_revenue}\n` +
-        `Top customers: ${shopifySummary.top_customers.map((item) => `${item.name} (${item.total_spent})`).join(', ') || 'None'}\n` +
-        `Top products: ${shopifySummary.top_products.map((item) => `${item.title} (${item.status})`).join(', ') || 'None'}\n\n` +
+        `${details}\n\n` +
         `Turn this into the next best ecommerce operating actions, risks, and opportunities.`,
-    };
+      plannerPrompt:
+        `Shopify operations brief.\n${details}\n\nFocus on the next best ecommerce operating actions across fulfillment pressure, low-stock risk, retention opportunity, and product momentum. Return a prioritized store-ops plan with the safest first move.`,
+      counts: [
+        { label: 'Open Orders', value: String(shopifySummary.open_orders) },
+        { label: 'Refunded Orders', value: String(shopifySummary.refunded_orders) },
+        { label: 'Canceled Orders', value: String(shopifySummary.canceled_orders) },
+        { label: 'Low Stock', value: String(lowStock.length) },
+        { label: 'Repeat Customers', value: String(shopifySummary.repeat_customers) },
+      ],
+      focusItems,
+    } satisfies ShopifyIntelBrief;
   }, [shopifySummary]);
+
+  const commercialBrief = useMemo(() => {
+    if (!salesBrief && !customerBrief && !shopifyBrief) return null;
+    const salesAccounts = Object.values(durableOperatorMemory?.sales_accounts || {});
+    const salesDeals = Object.values(durableOperatorMemory?.sales_deals || {});
+    const customerAccounts = Object.values(durableOperatorMemory?.customer_accounts || {});
+    const customerInteractions = Object.values(durableOperatorMemory?.customer_interactions || {});
+    const salesRisk = Number(salesBrief?.counts.find((item) => item.label === 'Risk Signals')?.value || 0);
+    const customerRisk = Number(customerBrief?.counts.find((item) => item.label === 'Churn Risk')?.value || 0);
+    const customerUrgent = Number(customerBrief?.counts.find((item) => item.label === 'Urgent')?.value || 0);
+    const storeOpenOrders = Number(shopifySummary?.open_orders || 0);
+    const refundedOrders = Number(shopifySummary?.refunded_orders || 0);
+    const canceledOrders = Number(shopifySummary?.canceled_orders || 0);
+    const lowStock = Number(shopifySummary?.low_stock_products?.length || 0);
+    const repeatCustomers = Number(shopifySummary?.repeat_customers || 0);
+    const parseCommercialDate = (value: string) => {
+      const parsed = Date.parse(value || '');
+      return Number.isNaN(parsed) ? 0 : parsed;
+    };
+    const commercialTimeline = [
+      ...salesDeals
+        .filter((item) => item.last_interaction.trim())
+        .map((item) => ({
+          label: `Deal · ${item.title || item.key}`,
+          detail: `${item.account_key || 'Unknown account'} / ${item.stage || 'unknown stage'} / next: ${item.next_step || 'missing'} / risk: ${item.risk_level || 'unknown'}`,
+          when: item.last_interaction,
+          ts: parseCommercialDate(item.last_interaction),
+        })),
+      ...salesAccounts
+        .filter((item) => item.last_interaction.trim())
+        .map((item) => ({
+          label: `Account · ${item.name || item.key}`,
+          detail: `${item.status || 'unknown status'} / owner: ${item.owner || 'unassigned'} / next: ${item.next_step || 'missing'} / risk: ${item.risk_level || 'unknown'}`,
+          when: item.last_interaction,
+          ts: parseCommercialDate(item.last_interaction),
+        })),
+      ...customerAccounts
+        .filter((item) => item.last_interaction.trim())
+        .map((item) => ({
+          label: `Customer · ${item.name || item.key}`,
+          detail: `${item.health || 'unknown health'} / sentiment: ${item.sentiment || 'unknown'} / churn: ${item.churn_risk || 'unknown'} / next: ${item.next_step || 'missing'}`,
+          when: item.last_interaction,
+          ts: parseCommercialDate(item.last_interaction),
+        })),
+      ...customerInteractions
+        .filter((item) => item.last_interaction.trim())
+        .map((item) => ({
+          label: `Interaction · ${item.contact || item.key}`,
+          detail: `${item.topic || 'no topic'} / ${item.channel || 'unknown channel'} / urgency: ${item.urgency || 'unknown'} / follow-up: ${item.promised_follow_up || 'missing'}`,
+          when: item.last_interaction,
+          ts: parseCommercialDate(item.last_interaction),
+        })),
+      ...(shopifySummary
+        ? [
+            {
+              label: `Store Snapshot · ${shopifySummary.store}`,
+              detail: `${shopifySummary.open_orders} open orders / ${shopifySummary.refunded_orders} refunded / ${shopifySummary.canceled_orders} canceled / ${shopifySummary.low_stock_products.length} low stock`,
+              when: new Date().toISOString(),
+              ts: Date.now(),
+            },
+          ]
+        : []),
+    ]
+      .sort((left, right) => right.ts - left.ts)
+      .slice(0, 6)
+      .map(({ label, detail, when }) => ({ label, detail, when }));
+    const focusItems = [
+      salesRisk > 0
+        ? {
+            label: 'Pipeline Risk',
+            detail: salesBrief?.focusItems[0]?.detail || `${salesRisk} sales risk signal${salesRisk === 1 ? '' : 's'} need review before the next outreach pass.`,
+          }
+        : null,
+      customerRisk > 0 || customerUrgent > 0
+        ? {
+            label: 'Customer Attention',
+            detail:
+              customerBrief?.focusItems[0]?.detail ||
+              `${customerRisk} churn-risk account${customerRisk === 1 ? '' : 's'} and ${customerUrgent} urgent customer interaction${customerUrgent === 1 ? '' : 's'} are active.`,
+          }
+        : null,
+      storeOpenOrders > 0 || lowStock > 0
+        ? {
+            label: 'Store Pressure',
+            detail:
+              shopifyBrief?.focusItems[0]?.detail ||
+              `${storeOpenOrders} open order${storeOpenOrders === 1 ? '' : 's'} and ${lowStock} low-stock product${lowStock === 1 ? '' : 's'} need the next ecommerce pass.`,
+          }
+        : null,
+      refundedOrders > 0 || canceledOrders > 0
+        ? {
+            label: 'Store Friction',
+            detail: `${refundedOrders} refunded and ${canceledOrders} canceled order${refundedOrders + canceledOrders === 1 ? '' : 's'} suggest a product, expectation, or fulfillment issue that may affect growth.`,
+          }
+        : null,
+      repeatCustomers > 0
+        ? {
+            label: 'Retention Opportunity',
+            detail: `${repeatCustomers} repeat customer${repeatCustomers === 1 ? '' : 's'} suggest a good moment for retention or upsell follow-up.`,
+          }
+        : null,
+    ].filter((item): item is { label: string; detail: string } => Boolean(item));
+    const details = [
+      salesBrief ? `Sales: ${salesBrief.summary}` : '',
+      customerBrief ? `Customer: ${customerBrief.summary}` : '',
+      shopifyBrief ? `Shopify: ${shopifyBrief.summary}` : '',
+      focusItems.length ? `Commercial focus:\n- ${focusItems.map((item) => item.detail).join('\n- ')}` : '',
+    ]
+      .filter(Boolean)
+      .join('\n\n');
+    return {
+      title: 'Commercial Ops Brief',
+      summary:
+        `${salesRisk} pipeline risk · ${customerRisk + customerUrgent} customer pressure · ` +
+        `${storeOpenOrders + lowStock + refundedOrders + canceledOrders} store ops signal${storeOpenOrders + lowStock + refundedOrders + canceledOrders === 1 ? '' : 's'}`,
+      details,
+      prompt:
+        `I need a commercial operating brief across sales, customer, and Shopify.\n\n${details}\n\n` +
+        `Give me the next best business actions, the biggest current risks, and the safest first move.`,
+      plannerPrompt:
+        `Commercial operations planner brief.\n\n${details}\n\n` +
+        `Prioritize the next coordinated actions across sales, customer success, and ecommerce operations. Return the safest first move and the next two follow-ups.`,
+      counts: [
+        { label: 'Pipeline Risk', value: String(salesRisk) },
+        { label: 'Customer Pressure', value: String(customerRisk + customerUrgent) },
+        { label: 'Open Orders', value: String(storeOpenOrders) },
+        { label: 'Low Stock', value: String(lowStock) },
+        { label: 'Refunded Orders', value: String(refundedOrders) },
+        { label: 'Canceled Orders', value: String(canceledOrders) },
+      ],
+      focusItems,
+      timeline: commercialTimeline,
+    } satisfies CommercialOpsBrief;
+  }, [customerBrief, durableOperatorMemory?.customer_accounts, durableOperatorMemory?.customer_interactions, durableOperatorMemory?.sales_accounts, durableOperatorMemory?.sales_deals, salesBrief, shopifyBrief, shopifySummary]);
 
   function loadSalesPrompt(mode: 'account-brief' | 'deal-review' | 'follow-up' | 'objection' | 'meeting-prep') {
     if (!salesBrief) {
@@ -2033,9 +2228,9 @@ export default function JarvisHudDashboard() {
   ]);
   const durableMissionLookup = useMemo(() => {
     const entries = durableOperatorMemory?.missions || [];
-    return {
-      selfImprove:
-        entries.find((item) => item.id === 'mission-self-improve' || item.domain === 'self-improve') || null,
+      return {
+        selfImprove:
+          entries.find((item) => item.id === 'mission-self-improve' || item.domain === 'self-improve') || null,
         planner:
           entries.find((item) => item.id === 'planner-executor' || item.id === 'mission-planner-executor' || item.domain === 'planner') ||
           null,
@@ -2049,6 +2244,10 @@ export default function JarvisHudDashboard() {
           entries.find((item) => item.id === 'sales-mission' || item.id === 'mission-sales' || item.domain === 'sales') || null,
         customer:
           entries.find((item) => item.id === 'customer-mission' || item.id === 'mission-customer' || item.domain === 'customer') || null,
+        shopify:
+          entries.find((item) => item.id === 'shopify-mission' || item.id === 'mission-shopify' || item.domain === 'shopify') || null,
+        commercial:
+          entries.find((item) => item.id === 'commercial-mission' || item.id === 'mission-commercial' || item.domain === 'commercial') || null,
       };
     }, [durableOperatorMemory?.missions]);
   const autonomyMissions = useMemo(() => {
@@ -2264,6 +2463,131 @@ export default function JarvisHudDashboard() {
           resultMeta: summarizeMissionMeta(durable?.result_data),
           actionLabel: customerBrief ? 'Load Brief' : 'Open Customer',
           action: () => (customerBrief ? injectCommand(customerBrief.prompt) : setFocusMode(false)),
+        });
+      }
+
+      if (shopifyBrief || durableMissionLookup.shopify) {
+        const durable = durableMissionLookup.shopify;
+        const hasOpenOrders = Number(shopifySummary?.open_orders || 0) > 0;
+        const hasLowStock = Number(shopifySummary?.low_stock_products?.length || 0) > 0;
+        const hasRepeatBase = Number(shopifySummary?.repeat_customers || 0) > 0;
+        missions.push({
+          id: durable?.id || 'mission-shopify',
+          title: durable?.title || shopifyBrief?.title || 'Shopify mission',
+          domain: 'shopify',
+          status: ((durable?.status as MissionStatus | undefined) || (shopifyBrief ? 'active' : 'idle')),
+          phase:
+            ((durable?.phase as MissionPhase | undefined) ||
+              (hasLowStock ? 'act' : hasOpenOrders ? 'verify' : hasRepeatBase ? 'plan' : shopifyBrief ? 'detect' : 'detect')),
+          summary: durable?.summary || shopifyBrief?.summary || 'Shopify lane is ready.',
+          nextStep:
+            durable?.next_step ||
+            (hasLowStock
+              ? 'Review the low-stock watch and decide what needs replenishment first.'
+              : hasOpenOrders
+              ? 'Review open orders and look for fulfillment or support risks.'
+              : hasRepeatBase
+              ? 'Use repeat-customer signals to plan the next retention or campaign move.'
+              : 'Refresh Shopify intel and review store performance.'),
+          result:
+            durable?.result ||
+            (hasLowStock
+              ? 'Low-stock products need attention.'
+              : hasOpenOrders
+              ? 'Open orders are still active in the store.'
+              : hasRepeatBase
+              ? 'Repeat-customer behavior is available for the next ecommerce pass.'
+              : 'Store summary is ready for the next operating review.'),
+          retryHint:
+            durable?.retry_hint ||
+            'Reload Shopify Intel, route the brief to planner, or create a store-ops task for the highest-impact issue.',
+          nextActionLabel: typeof durable?.next_action?.label === 'string' ? durable.next_action.label : undefined,
+          resultData: durable?.result_data || {
+            store: shopifySummary?.store || '',
+            open_orders: shopifySummary?.open_orders || 0,
+            low_stock_products: shopifySummary?.low_stock_products?.length || 0,
+            repeat_customers: shopifySummary?.repeat_customers || 0,
+          },
+          nextAction: durable?.next_action || (shopifyBrief
+            ? {
+                kind: hasLowStock || hasOpenOrders ? 'task' : 'brief',
+                content: hasLowStock || hasOpenOrders ? shopifyBrief.details : shopifyBrief.plannerPrompt,
+                label: hasLowStock ? 'Resolve Store Risk' : hasOpenOrders ? 'Review Open Orders' : 'Shopify Ops Brief',
+                source: 'shopify-mission',
+              }
+            : undefined),
+          resultMeta: durable?.result_data
+            ? summarizeMissionMeta(durable.result_data)
+            : [
+                `open orders: ${shopifySummary?.open_orders || 0}`,
+                `low stock: ${shopifySummary?.low_stock_products?.length || 0}`,
+                `repeat customers: ${shopifySummary?.repeat_customers || 0}`,
+              ],
+          actionLabel: shopifyBrief ? 'Load Brief' : 'Open Shopify',
+          action: () => (shopifyBrief ? injectCommand(shopifyBrief.prompt) : setFocusMode(false)),
+        });
+      }
+
+      if (commercialBrief || durableMissionLookup.commercial) {
+        const durable = durableMissionLookup.commercial;
+        const pipelineRisk = Number(commercialBrief?.counts.find((item) => item.label === 'Pipeline Risk')?.value || 0);
+        const customerPressure = Number(commercialBrief?.counts.find((item) => item.label === 'Customer Pressure')?.value || 0);
+        const storePressure =
+          Number(commercialBrief?.counts.find((item) => item.label === 'Open Orders')?.value || 0) +
+          Number(commercialBrief?.counts.find((item) => item.label === 'Low Stock')?.value || 0);
+        missions.push({
+          id: durable?.id || 'mission-commercial',
+          title: durable?.title || commercialBrief?.title || 'Commercial mission',
+          domain: 'commercial',
+          status: ((durable?.status as MissionStatus | undefined) || (commercialBrief ? 'active' : 'idle')),
+          phase:
+            ((durable?.phase as MissionPhase | undefined) ||
+              (customerPressure > 0 || storePressure > 0 ? 'act' : pipelineRisk > 0 ? 'plan' : commercialBrief ? 'verify' : 'detect')),
+          summary: durable?.summary || commercialBrief?.summary || 'Commercial ops lane is ready.',
+          nextStep:
+            durable?.next_step ||
+            (customerPressure > 0
+              ? 'Resolve the highest customer pressure before it spreads into churn.'
+              : storePressure > 0
+              ? 'Review open orders and stock risk before the next commercial push.'
+              : pipelineRisk > 0
+              ? 'Review the riskiest deal and align the next business move.'
+              : 'Review the combined commercial brief and pick the next cross-functional action.'),
+          result:
+            durable?.result ||
+            (customerPressure > 0
+              ? 'Customer pressure is active.'
+              : storePressure > 0
+              ? 'Store operations need attention.'
+              : pipelineRisk > 0
+              ? 'Pipeline risk is still present.'
+              : 'Commercial signals are stable and ready for the next growth pass.'),
+          retryHint:
+            durable?.retry_hint ||
+            'Reload Commercial Ops, route it to planner, or create a task for the most urgent cross-functional issue.',
+          nextActionLabel: typeof durable?.next_action?.label === 'string' ? durable.next_action.label : undefined,
+          resultData: durable?.result_data || {
+            pipeline_risk: pipelineRisk,
+            customer_pressure: customerPressure,
+            store_pressure: storePressure,
+          },
+          nextAction: durable?.next_action || (commercialBrief
+            ? {
+                kind: customerPressure > 0 || storePressure > 0 ? 'task' : 'brief',
+                content: customerPressure > 0 || storePressure > 0 ? commercialBrief.details : commercialBrief.plannerPrompt,
+                label: customerPressure > 0 ? 'Resolve Customer Pressure' : storePressure > 0 ? 'Review Store Ops' : 'Commercial Ops Brief',
+                source: 'commercial-mission',
+              }
+            : undefined),
+          resultMeta: durable?.result_data
+            ? summarizeMissionMeta(durable.result_data)
+            : [
+                `pipeline risk: ${pipelineRisk}`,
+                `customer pressure: ${customerPressure}`,
+                `store pressure: ${storePressure}`,
+              ],
+          actionLabel: commercialBrief ? 'Load Brief' : 'Open Commercial',
+          action: () => (commercialBrief ? injectCommand(commercialBrief.prompt) : setFocusMode(false)),
         });
       }
 
@@ -2602,6 +2926,17 @@ export default function JarvisHudDashboard() {
         action: () => injectCommand(shopifyBrief.prompt),
       });
     }
+    if (commercialBrief) {
+      items.push({
+        id: 'commercial-ops-brief',
+        priority: 58,
+        label: 'Commercial Ops',
+        title: commercialBrief.title,
+        detail: commercialBrief.summary,
+        actionLabel: 'Load Brief',
+        action: () => injectCommand(commercialBrief.prompt),
+      });
+    }
 
     if (agentArchitecture?.handoff?.brief) {
       items.push({
@@ -2857,7 +3192,7 @@ export default function JarvisHudDashboard() {
     }
 
     return items.sort((left, right) => right.priority - left.priority).slice(0, 6);
-  }, [activeAutomationAlerts, agentArchitecture?.handoff?.brief, agentArchitecture?.handoff?.executor?.task_id, agentArchitecture?.handoff?.planner?.task_id, agentArchitecture?.roles, agentRoleTasks.executor, agentRoleTasks.planner, architectureTaskOutcome, autonomyMissions, customerBrief, documentBrief, editorFilePath, gitCommitMessage, inboxFocusQueue, latestCodeResult?.file_path, latestValidationFailure, latestValidationSuccess, nextCodingTask, nextReviewQueueItem, pendingAction, pendingCodeEdit, pendingWorkbench, prepQueue, salesBrief, screenSnapshot?.capturedAt, screenSnapshot?.label, selfImproveBrief, selfImprovePatchPlan, selfImproveRuns, shopifyBrief, shopifySummary?.store, visionAnalysis?.content, visionQuery?.answer, visionQuery?.question, visionSignals, visionSuggestedActions?.actions, visionTextExtraction?.content, visionUiPlan?.summary, visionUiPlan?.target_label, visionUiTargets?.targets, visionUiVerify?.summary, visionUiVerify?.risk_level, visionUiVerify?.target_label, visualBrief]);
+  }, [activeAutomationAlerts, agentArchitecture?.handoff?.brief, agentArchitecture?.handoff?.executor?.task_id, agentArchitecture?.handoff?.planner?.task_id, agentArchitecture?.roles, agentRoleTasks.executor, agentRoleTasks.planner, architectureTaskOutcome, autonomyMissions, commercialBrief, customerBrief, documentBrief, editorFilePath, gitCommitMessage, inboxFocusQueue, latestCodeResult?.file_path, latestValidationFailure, latestValidationSuccess, nextCodingTask, nextReviewQueueItem, pendingAction, pendingCodeEdit, pendingWorkbench, prepQueue, salesBrief, screenSnapshot?.capturedAt, screenSnapshot?.label, selfImproveBrief, selfImprovePatchPlan, selfImproveRuns, shopifyBrief, shopifySummary?.store, visionAnalysis?.content, visionQuery?.answer, visionQuery?.question, visionSignals, visionSuggestedActions?.actions, visionTextExtraction?.content, visionUiPlan?.summary, visionUiPlan?.target_label, visionUiTargets?.targets, visionUiVerify?.summary, visionUiVerify?.risk_level, visionUiVerify?.target_label, visualBrief]);
   const connectorCapabilities = useMemo(() => {
     const ids = new Set(connectedConnectorIds);
     const gmailConnected = ids.has('gmail') || ids.has('gmail_imap');
@@ -5166,6 +5501,40 @@ export default function JarvisHudDashboard() {
           `Design mission follow-up.\nSaved brief: ${savedDesignBrief.label}\nArchetype: ${savedDesignBrief.archetype || 'design'}\nWeakest HUD area: ${weakestDesignArea.label} (${weakestDesignArea.score}/10)\n\n${savedDesignBrief.details || savedDesignBrief.summary}\n\nPlan the safest next HUD improvement pass to raise this weakest area without breaking working voice features.`,
           'design-auto',
         ).catch(() => null);
+        return;
+      }
+    }
+
+    if (shopifyBrief && shopifySummary) {
+      const needsStoreAttention =
+        Number(shopifySummary.open_orders || 0) > 0 || Number(shopifySummary.low_stock_products?.length || 0) > 0;
+      if (needsStoreAttention) {
+        const shopifyKey = `${shopifySummary.store}:${shopifySummary.open_orders}:${shopifySummary.low_stock_products?.length || 0}:${shopifySummary.repeat_customers}`;
+        if (lastAutoArchitectureShopifyRef.current !== shopifyKey) {
+          lastAutoArchitectureShopifyRef.current = shopifyKey;
+          handoffWithBrief(
+            `${shopifyBrief.prompt}\n\nFocus the next ecommerce operating pass on open orders, low-stock risk, and the safest next store actions.`,
+            'shopify-auto',
+          ).catch(() => null);
+        }
+      }
+    }
+
+    if (commercialBrief) {
+      const customerPressure = Number(commercialBrief.counts.find((item) => item.label === 'Customer Pressure')?.value || 0);
+      const storePressure =
+        Number(commercialBrief.counts.find((item) => item.label === 'Open Orders')?.value || 0) +
+        Number(commercialBrief.counts.find((item) => item.label === 'Low Stock')?.value || 0);
+      const needsCommercialAttention = customerPressure > 0 || storePressure > 0;
+      if (needsCommercialAttention) {
+        const commercialKey = `${commercialBrief.summary}:${customerPressure}:${storePressure}`;
+        if (lastAutoArchitectureCommercialRef.current !== commercialKey) {
+          lastAutoArchitectureCommercialRef.current = commercialKey;
+          handoffWithBrief(
+            `${commercialBrief.plannerPrompt}\n\nFocus the next commercial operating pass on the most urgent cross-functional risk first.`,
+            'commercial-auto',
+          ).catch(() => null);
+        }
       }
     }
   }, [
@@ -5173,14 +5542,18 @@ export default function JarvisHudDashboard() {
     agentArchitecture?.roles,
     architectureBusy,
     buildDailyOpsPrompt,
+    commercialBrief,
     dailyDigest?.generated_at,
     dailyDigest?.text,
     durableOperatorMemory?.design_briefs,
     editorBusy,
+    handoffWithBrief,
     pendingAction,
     pendingCodeEdit,
     pendingWorkbench,
     selfImproveBrief,
+    shopifyBrief,
+    shopifySummary,
     streamState.isStreaming,
     visualBrief,
     workbenchBusy,
@@ -5359,7 +5732,7 @@ export default function JarvisHudDashboard() {
       lastMissionSyncRef.current = '';
       return;
     }
-    const payload = autonomyMissions.slice(0, 4).map((mission) => ({
+    const payload = autonomyMissions.map((mission) => ({
       id: mission.id,
       title: mission.title,
       domain: mission.domain,
@@ -5369,6 +5742,8 @@ export default function JarvisHudDashboard() {
       next_step: mission.nextStep,
       result: mission.result,
       retry_hint: mission.retryHint || '',
+      result_data: mission.resultData,
+      next_action: mission.nextAction,
       updated_at: new Date().toISOString(),
     }));
     const serialized = JSON.stringify(payload);
@@ -6229,9 +6604,32 @@ export default function JarvisHudDashboard() {
                     </Suspense>
                     <Suspense fallback={<DashboardSectionFallback label="Loading shopify intelligence..." />}>
                       <ShopifyIntelPanel
+                        brief={shopifyBrief}
                         summary={shopifySummary}
+                        architectureBusy={architectureBusy}
                         onRefresh={() => void refreshShopifyIntel()}
                         onLoadBrief={() => injectCommand(shopifyBrief?.prompt || '')}
+                        onRouteToPlanner={() => void handoffWithBrief(shopifyBrief?.plannerPrompt || shopifyBrief?.prompt || '', 'shopify-intel')}
+                        onMakeTask={() =>
+                          createFollowUpTask(
+                            'Shopify ops review',
+                            shopifyBrief?.details || shopifyBrief?.summary || 'Review store performance, open orders, stock risk, and the next ecommerce actions.',
+                          )
+                        }
+                      />
+                    </Suspense>
+                    <Suspense fallback={<DashboardSectionFallback label="Loading commercial operations..." />}>
+                      <CommercialOpsPanel
+                        brief={commercialBrief}
+                        architectureBusy={architectureBusy}
+                        onLoadBrief={() => injectCommand(commercialBrief?.prompt || '')}
+                        onRouteToPlanner={() => void handoffWithBrief(commercialBrief?.plannerPrompt || commercialBrief?.prompt || '', 'commercial-ops')}
+                        onMakeTask={() =>
+                          createFollowUpTask(
+                            'Commercial ops review',
+                            commercialBrief?.details || commercialBrief?.summary || 'Review combined sales, customer, and store operations signals.',
+                          )
+                        }
                       />
                     </Suspense>
                     <Suspense fallback={<DashboardSectionFallback label="Loading document intelligence..." />}>

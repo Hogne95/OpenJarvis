@@ -26,14 +26,14 @@ _SHOPIFY_API_VERSION = "2024-10"
 def _parse_store_token(raw_token: str) -> Tuple[str, str]:
     token = raw_token.strip()
     if ":" not in token:
-      raise ValueError("Shopify token must look like store-name.myshopify.com:shpat_xxx")
+        raise ValueError("Shopify token must look like store-name.myshopify.com:shpat_xxx")
     store, access_token = token.split(":", 1)
     store = store.strip()
     access_token = access_token.strip()
     if not store or not access_token:
-      raise ValueError("Shopify token must include both store domain and access token")
+        raise ValueError("Shopify token must include both store domain and access token")
     if not store.endswith(".myshopify.com"):
-      raise ValueError("Shopify store must end with .myshopify.com")
+        raise ValueError("Shopify store must end with .myshopify.com")
     return store, access_token
 
 
@@ -46,6 +46,79 @@ def _shopify_api_get(store: str, access_token: str, path: str, *, params: Option
     )
     response.raise_for_status()
     return response.json()
+
+
+def _shopify_recent_summary(store: str, access_token: str) -> Dict[str, Any]:
+    orders = _shopify_api_get(store, access_token, "orders.json", params={"limit": 25, "status": "any"}).get("orders", [])
+    customers = _shopify_api_get(store, access_token, "customers.json", params={"limit": 25}).get("customers", [])
+    products = _shopify_api_get(store, access_token, "products.json", params={"limit": 25}).get("products", [])
+
+    open_orders = [item for item in orders if item.get("fulfillment_status") not in {"fulfilled", "restocked"}]
+    canceled_orders = [item for item in orders if item.get("cancelled_at")]
+    refunded_orders = []
+    for item in orders:
+        refunds = item.get("refunds") or []
+        financial_status = str(item.get("financial_status", "")).strip().lower()
+        if refunds or financial_status in {"refunded", "partially_refunded"}:
+            refunded_orders.append(item)
+    total_revenue = 0.0
+    for item in orders:
+        try:
+            total_revenue += float(item.get("total_price", 0) or 0)
+        except (TypeError, ValueError):
+            continue
+
+    top_customers = sorted(customers, key=lambda item: float(item.get("total_spent", 0) or 0), reverse=True)[:3]
+    low_stock_products = []
+    for product in products:
+        inventory_total = 0
+        for variant in product.get("variants", []):
+            try:
+                inventory_total += int(variant.get("inventory_quantity", 0) or 0)
+            except (TypeError, ValueError):
+                continue
+        if inventory_total <= 5:
+            low_stock_products.append(
+                {
+                    "title": product.get("title", str(product.get("id", "product"))),
+                    "inventory": inventory_total,
+                }
+            )
+
+    active_products = [item for item in products if str(item.get("status", "")).lower() == "active"]
+    repeat_customer_count = len([item for item in customers if int(item.get("orders_count", 0) or 0) > 1])
+
+    return {
+        "store": store,
+        "orders": len(orders),
+        "open_orders": len(open_orders),
+        "canceled_orders": len(canceled_orders),
+        "refunded_orders": len(refunded_orders),
+        "customers": len(customers),
+        "products": len(products),
+        "active_products": len(active_products),
+        "estimated_revenue": round(total_revenue, 2),
+        "repeat_customers": repeat_customer_count,
+        "low_stock_products": low_stock_products[:5],
+        "top_customers": [
+            {
+                "name": " ".join(part for part in [item.get("first_name", ""), item.get("last_name", "")] if part).strip()
+                or item.get("email", "")
+                or str(item.get("id", "customer")),
+                "total_spent": item.get("total_spent", "0"),
+                "orders_count": int(item.get("orders_count", 0) or 0),
+            }
+            for item in top_customers
+        ],
+        "top_products": [
+            {
+                "title": item.get("title", str(item.get("id", "product"))),
+                "status": item.get("status", "unknown"),
+                "variant_count": len(item.get("variants", [])),
+            }
+            for item in products[:3]
+        ],
+    }
 
 
 def _parse_timestamp(raw: str) -> datetime:
@@ -90,6 +163,14 @@ class ShopifyConnector(BaseConnector):
     def disconnect(self) -> None:
         self._token = ""
         delete_tokens(self._credentials_path)
+
+    def store_summary(self) -> Dict[str, Any]:
+        creds = self._credentials()
+        if not creds:
+            raise ValueError("Shopify connector is not connected")
+        store, access_token = creds
+        save_tokens(self._credentials_path, {"token": f"{store}:{access_token}"})
+        return _shopify_recent_summary(store, access_token)
 
     def sync(
         self,
