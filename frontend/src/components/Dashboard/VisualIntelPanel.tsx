@@ -56,6 +56,8 @@ export function VisualIntelPanel({
   apiBase,
   restoreVisualObservation,
   setWorkbenchNotice,
+  loadDesignAudit,
+  saveDesignBriefFromVisual,
 }: {
   screenSnapshot: any;
   screenDeck: any[];
@@ -114,6 +116,8 @@ export function VisualIntelPanel({
   apiBase: string;
   restoreVisualObservation: (item: any) => void;
   setWorkbenchNotice: (value: string) => void;
+  loadDesignAudit: () => void;
+  saveDesignBriefFromVisual: () => void;
 }) {
   return (
     <>
@@ -311,6 +315,18 @@ export function VisualIntelPanel({
                               className="rounded-[0.85rem] border border-cyan-400/12 bg-cyan-400/[0.08] px-3 py-2 text-[10px] uppercase tracking-[0.22em] text-cyan-100 transition hover:bg-cyan-400/[0.14]"
                             >
                               Load Brief
+                            </button>
+                            <button
+                              onClick={loadDesignAudit}
+                              className="rounded-[0.85rem] border border-violet-300/18 bg-violet-400/[0.08] px-3 py-2 text-[10px] uppercase tracking-[0.22em] text-violet-100 transition hover:bg-violet-400/[0.14]"
+                            >
+                              Design Audit
+                            </button>
+                            <button
+                              onClick={saveDesignBriefFromVisual}
+                              className="rounded-[0.85rem] border border-violet-300/18 bg-violet-400/[0.08] px-3 py-2 text-[10px] uppercase tracking-[0.22em] text-violet-100 transition hover:bg-violet-400/[0.14]"
+                            >
+                              Save Design Brief
                             </button>
                             <button
                               onClick={() => handoffWithBrief(visualBrief.prompt, 'visual-brief')}

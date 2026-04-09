@@ -76,7 +76,10 @@ export interface OperatorProfile {
   priorityContacts: string;
   workdayStart: string;
   workdayEnd: string;
+  hudArchetype: string;
   designStyle: string;
+  designInfluences: string;
+  referenceInterfaces: string;
   designGoals: string;
   prepLeadMinutes: number;
   autoPrepareMeetings: boolean;
@@ -123,7 +126,10 @@ function loadOperatorProfile(): OperatorProfile {
     priorityContacts: '',
     workdayStart: '08:00',
     workdayEnd: '17:00',
+    hudArchetype: 'command center HUD',
     designStyle: 'bold, cinematic, high-clarity',
+    designInfluences: 'sci-fi command decks, premium game HUDs, high-trust control rooms',
+    referenceInterfaces: 'Destiny menus, Dead Space HUD restraint, premium fintech dashboards, pro creative tools',
     designGoals: 'clear hierarchy, strong visual identity, practical usability',
     prepLeadMinutes: 90,
     autoPrepareMeetings: true,

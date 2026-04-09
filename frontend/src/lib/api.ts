@@ -71,6 +71,32 @@ export interface SetupStatus {
   error: string | null;
 }
 
+export interface RuntimeReadinessCheck {
+  id: string;
+  label: string;
+  status: 'ready' | 'warning' | 'blocked';
+  detail: string;
+  recommendation: string;
+}
+
+export interface RuntimeReadiness {
+  summary: {
+    ready: number;
+    blocked: number;
+    total: number;
+  };
+  checks: RuntimeReadinessCheck[];
+  desktop: {
+    report_path: string;
+    scripts: {
+      check: string;
+      policy: string;
+      collect: string;
+    };
+    guide_path: string;
+  };
+}
+
 export async function getSetupStatus(): Promise<SetupStatus | null> {
   if (!isTauri()) return null;
   try {
@@ -198,6 +224,12 @@ export async function checkHealth(): Promise<boolean> {
   } catch {
     return false;
   }
+}
+
+export async function fetchRuntimeReadiness(): Promise<RuntimeReadiness> {
+  const res = await fetch(`${getBase()}/v1/readiness`);
+  if (!res.ok) throw new Error(`Runtime readiness failed: ${res.status}`);
+  return res.json();
 }
 
 export async function analyzeDocumentFiles(params: {
@@ -601,6 +633,19 @@ export interface DurableOperatorMemory {
     mode: string;
     summary: string;
     details: string;
+    created_at: string;
+  }>;
+  design_briefs?: Array<{
+    id: string;
+    label: string;
+    archetype: string;
+    summary: string;
+    details: string;
+    scorecard?: Array<{
+      label: string;
+      score: number;
+      note: string;
+    }>;
     created_at: string;
   }>;
   relationships: Record<
@@ -1559,6 +1604,30 @@ export async function updateOperatorDocumentBrief(body: {
   if (!res.ok) {
     const detail = await res.json().catch(() => ({ detail: res.statusText }));
     throw new Error(detail.detail || `Document brief update failed: ${res.status}`);
+  }
+  return res.json();
+}
+
+export async function updateOperatorDesignBrief(body: {
+  label: string;
+  archetype: string;
+  summary: string;
+  details?: string;
+  scorecard?: Array<{
+    label: string;
+    score: number;
+    note: string;
+  }>;
+  created_at?: string;
+}): Promise<DurableOperatorMemory> {
+  const res = await fetch(`${getBase()}/v1/operator-memory/design-brief`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const detail = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(detail.detail || `Design brief update failed: ${res.status}`);
   }
   return res.json();
 }

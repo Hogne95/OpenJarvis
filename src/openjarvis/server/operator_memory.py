@@ -106,6 +106,17 @@ class DocumentBrief:
 
 
 @dataclass(slots=True)
+class DesignBrief:
+    id: str
+    label: str
+    archetype: str = ""
+    summary: str = ""
+    details: str = ""
+    scorecard: list[dict[str, Any]] = field(default_factory=list)
+    created_at: str = ""
+
+
+@dataclass(slots=True)
 class MissionMemory:
     id: str
     title: str
@@ -137,6 +148,7 @@ class OperatorMemory:
         self._visual_insights: list[VisualInsight] = []
         self._visual_briefs: list[VisualBrief] = []
         self._document_briefs: list[DocumentBrief] = []
+        self._design_briefs: list[DesignBrief] = []
         self._missions: list[MissionMemory] = []
         self._load()
 
@@ -260,6 +272,20 @@ class OperatorMemory:
             for value in document_briefs
             if str(value.get("summary", "")).strip() or str(value.get("details", "")).strip()
         ]
+        design_briefs = data.get("design_briefs", [])
+        self._design_briefs = [
+            DesignBrief(
+                id=str(value.get("id", "")),
+                label=str(value.get("label", "")),
+                archetype=str(value.get("archetype", "")),
+                summary=str(value.get("summary", "")),
+                details=str(value.get("details", "")),
+                scorecard=list(value.get("scorecard", [])) if isinstance(value.get("scorecard", []), list) else [],
+                created_at=str(value.get("created_at", "")),
+            )
+            for value in design_briefs
+            if str(value.get("summary", "")).strip() or str(value.get("details", "")).strip()
+        ]
         missions = data.get("missions", [])
         self._missions = [
             MissionMemory(
@@ -292,6 +318,7 @@ class OperatorMemory:
             "visual_insights": [asdict(value) for value in self._visual_insights],
             "visual_briefs": [asdict(value) for value in self._visual_briefs],
             "document_briefs": [asdict(value) for value in self._document_briefs],
+            "design_briefs": [asdict(value) for value in self._design_briefs],
             "missions": [asdict(value) for value in self._missions],
         }
         self._path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
@@ -308,6 +335,7 @@ class OperatorMemory:
             "visual_insights": [asdict(value) for value in self._visual_insights],
             "visual_briefs": [asdict(value) for value in self._visual_briefs],
             "document_briefs": [asdict(value) for value in self._document_briefs],
+            "design_briefs": [asdict(value) for value in self._design_briefs],
             "missions": [asdict(value) for value in self._missions],
         }
 
@@ -610,6 +638,41 @@ class OperatorMemory:
             ),
         )
         self._document_briefs = self._document_briefs[:24]
+        self._save()
+        return self.snapshot()
+
+    def add_design_brief(
+        self,
+        *,
+        label: str,
+        archetype: str,
+        summary: str,
+        details: str,
+        scorecard: list[dict[str, Any]] | None = None,
+        created_at: str = "",
+    ) -> dict[str, Any]:
+        cleaned_label = label.strip() or "Design Brief"
+        cleaned_archetype = archetype.strip()
+        cleaned_summary = summary.strip()
+        cleaned_details = details.strip()
+        if not cleaned_summary and not cleaned_details:
+            raise ValueError("Design brief content is required")
+        stamp = (created_at or f"{cleaned_label}-{cleaned_archetype or 'design'}").strip().lower().replace(" ", "-")
+        brief_id = f"design-brief-{stamp}"
+        self._design_briefs = [item for item in self._design_briefs if item.id != brief_id]
+        self._design_briefs.insert(
+            0,
+            DesignBrief(
+                id=brief_id,
+                label=cleaned_label,
+                archetype=cleaned_archetype,
+                summary=cleaned_summary,
+                details=cleaned_details,
+                scorecard=list(scorecard or []),
+                created_at=created_at,
+            ),
+        )
+        self._design_briefs = self._design_briefs[:24]
         self._save()
         return self.snapshot()
 

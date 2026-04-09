@@ -97,6 +97,7 @@ import {
   updateOperatorRelationship,
   updateOperatorMission,
   updateOperatorDocumentBrief,
+  updateOperatorDesignBrief,
   updateOperatorVisualBrief,
   updateOperatorVisualInsight,
   updateOperatorVisualObservation,
@@ -133,6 +134,7 @@ import {
   type WorkbenchStatus,
 } from './lib/api';
 import { listConnectors } from './lib/connectors-api';
+import { DESIGN_ARCHETYPES, getDesignArchetype } from './lib/designCanon';
 import { useAppStore } from './lib/store';
 import type { ChatMessage, ToolCallInfo } from './types';
 import { InputArea } from './components/Chat/InputArea';
@@ -178,6 +180,12 @@ function getApiBase() {
 
 type Status = 'Standby' | 'Listening' | 'Analyzing' | 'Responding';
 type MissionPhase = 'detect' | 'plan' | 'act' | 'verify' | 'retry' | 'done';
+
+type HudScorecardItem = {
+  label: string;
+  score: number;
+  note: string;
+};
 type MissionStatus = 'idle' | 'active' | 'blocked' | 'complete';
 
 type ConnectorSummary = {
@@ -625,9 +633,12 @@ export default function JarvisHudDashboard() {
   const lastAutoArchitectureVisualRef = useRef('');
   const lastAutoArchitectureDigestRef = useRef('');
   const lastAutoArchitectureSelfImproveRef = useRef('');
+  const lastAutoArchitectureDesignRef = useRef('');
   const lastSelfImproveOutcomeRef = useRef('');
   const lastSelfImproveFollowupRef = useRef('');
   const lastSelfImprovePatchRef = useRef('');
+  const lastDesignOutcomeRef = useRef('');
+  const lastDesignTaskRef = useRef('');
   const lastMissionSyncRef = useRef('');
 
   const {
@@ -1366,12 +1377,18 @@ export default function JarvisHudDashboard() {
   const architectureTaskOutcome = useMemo(() => {
     const plannerTask = agentRoleTasks.planner?.[0] || null;
     const executorTask = agentRoleTasks.executor?.[0] || null;
+    const handoffSource = agentArchitecture?.handoff?.source || '';
+    const roleLabel = (task: AgentTask) => {
+      const baseLabel = task.agent_id === plannerTask?.agent_id ? 'Planner' : 'Executor';
+      if (handoffSource.startsWith('design')) return `Design ${baseLabel}`;
+      return baseLabel;
+    };
     const tasks = [plannerTask, executorTask].filter(Boolean) as AgentTask[];
     const failed = tasks.find((task) => task.status === 'failed');
     if (failed) {
       return {
         kind: 'failed' as const,
-        label: failed.agent_id === plannerTask?.agent_id ? 'Planner' : 'Executor',
+        label: roleLabel(failed),
         task: failed,
         summary: failed.description,
       };
@@ -1380,13 +1397,17 @@ export default function JarvisHudDashboard() {
     if (completed) {
       return {
         kind: 'completed' as const,
-        label: completed.agent_id === plannerTask?.agent_id ? 'Planner' : 'Executor',
+        label: roleLabel(completed),
         task: completed,
         summary: completed.description,
       };
     }
     return null;
-  }, [agentRoleTasks.executor, agentRoleTasks.planner]);
+  }, [agentArchitecture?.handoff?.source, agentRoleTasks.executor, agentRoleTasks.planner]);
+  const designArchitectureTaskOutcome = useMemo(() => {
+    if (!agentArchitecture?.handoff?.source?.startsWith('design')) return null;
+    return architectureTaskOutcome;
+  }, [agentArchitecture?.handoff?.source, architectureTaskOutcome]);
   const selfImproveBrief = useMemo(() => {
     const sections: string[] = [];
     const summaryParts: string[] = [];
@@ -1523,10 +1544,13 @@ export default function JarvisHudDashboard() {
           entries.find((item) => item.id === 'visual-mission' || item.id === 'mission-visual' || item.domain === 'visual') || null,
         document:
           entries.find((item) => item.id === 'document-mission' || item.id === 'mission-document' || item.domain === 'document') || null,
+        design:
+          entries.find((item) => item.id === 'design-mission' || item.id === 'mission-design' || item.domain === 'design') || null,
       };
     }, [durableOperatorMemory?.missions]);
   const autonomyMissions = useMemo(() => {
       const missions: Array<MissionMatrixItem & { action: () => void }> = [];
+      const savedDesignBrief = durableOperatorMemory?.design_briefs?.[0] || null;
 
       if (selfImproveBrief || activeSelfImproveTask || selfImproveRuns[0]) {
         const latestRun = selfImproveRuns[0] || null;
@@ -1667,6 +1691,55 @@ export default function JarvisHudDashboard() {
       });
     }
 
+      if (savedDesignBrief || durableMissionLookup.design) {
+        const durable = durableMissionLookup.design;
+        const scoreAverage = savedDesignBrief?.scorecard?.length
+          ? savedDesignBrief.scorecard.reduce((sum, item) => sum + item.score, 0) / savedDesignBrief.scorecard.length
+          : null;
+        const weakestArea = savedDesignBrief?.scorecard?.slice().sort((left, right) => left.score - right.score)[0] || null;
+        missions.push({
+          id: durable?.id || 'mission-design',
+          title: durable?.title || 'HUD Design mission',
+          domain: 'design',
+          status: ((durable?.status as MissionStatus | undefined) || (savedDesignBrief ? 'active' : 'idle')),
+          phase:
+            ((durable?.phase as MissionPhase | undefined) ||
+              (weakestArea && weakestArea.score < 8 ? 'plan' : savedDesignBrief ? 'verify' : 'detect')),
+          summary:
+            durable?.summary ||
+            savedDesignBrief?.summary ||
+            'Design intelligence is ready to guide the next HUD improvement pass.',
+          nextStep:
+            durable?.next_step ||
+            (weakestArea
+              ? `Improve ${weakestArea.label.toLowerCase()} in the next HUD pass.`
+              : 'Run a design critique or HUD scorecard review.'),
+          result:
+            durable?.result ||
+            (weakestArea
+              ? `${weakestArea.label}: ${weakestArea.score}/10. ${weakestArea.note}`
+              : 'Awaiting the next design review result.'),
+          retryHint:
+            durable?.retry_hint ||
+            (weakestArea && weakestArea.score < 8
+              ? 'Re-audit the HUD after the next layout or styling pass.'
+              : undefined),
+          nextActionLabel: typeof durable?.next_action?.label === 'string' ? durable.next_action.label : undefined,
+          resultMeta:
+            summarizeMissionMeta(durable?.result_data) ||
+            (scoreAverage !== null
+              ? [`avg ${scoreAverage.toFixed(1)}/10`, weakestArea ? `weakest ${weakestArea.label}` : 'scorecard ready']
+              : undefined),
+          actionLabel: weakestArea ? 'Load Scorecard' : 'Load Design Brief',
+          action: () =>
+            weakestArea
+              ? loadDesignPrompt('scorecard')
+              : savedDesignBrief
+              ? injectCommand(savedDesignBrief.details || savedDesignBrief.summary)
+              : setFocusMode(false),
+      });
+    }
+
     return missions;
   }, [
     activeSelfImproveTask?.status,
@@ -1677,6 +1750,7 @@ export default function JarvisHudDashboard() {
     architectureTaskOutcome,
     documentAnalysis,
     documentBrief,
+    durableOperatorMemory?.design_briefs,
     screenSnapshot?.label,
       selfImproveBrief,
       selfImprovePatchPlan,
@@ -1923,10 +1997,18 @@ export default function JarvisHudDashboard() {
     }
 
     if (architectureTaskOutcome) {
+      const isDesignOutcome = agentArchitecture?.handoff?.source?.startsWith('design');
       items.push({
         id: `agent-outcome-${architectureTaskOutcome.task.id}`,
         priority: architectureTaskOutcome.kind === 'failed' ? 66 : 59,
-        label: architectureTaskOutcome.kind === 'failed' ? 'Agent Blocker' : 'Agent Outcome',
+        label:
+          architectureTaskOutcome.kind === 'failed'
+            ? isDesignOutcome
+              ? 'Design Blocker'
+              : 'Agent Blocker'
+            : isDesignOutcome
+            ? 'Design Outcome'
+            : 'Agent Outcome',
         title: `${architectureTaskOutcome.label} ${architectureTaskOutcome.kind}`,
         detail: architectureTaskOutcome.summary,
         actionLabel: 'Open Core Agents',
@@ -2362,15 +2444,90 @@ export default function JarvisHudDashboard() {
     [workspaceSummary?.branch, workspaceSummary?.root],
   );
   const currentProjectMemory = durableOperatorMemory?.projects?.[currentProjectKey] || null;
+  const designScorecard = useMemo<HudScorecardItem[]>(() => {
+    const hasVisual = !!visualBrief;
+    const hasProject = !!currentProjectMemory;
+    const hasDocument = !!documentBrief;
+    const hasSignals = !!visionSignals || !!visionQuery?.answer?.trim();
+
+    return [
+      {
+        label: 'Hierarchy',
+        score: hasVisual ? 8 : 6,
+        note: hasVisual
+          ? 'Live visual context is present, which makes hierarchy critique more grounded.'
+          : 'Hierarchy can be reasoned about from goals and archetype, but not yet from a captured interface.',
+      },
+      {
+        label: 'Readability',
+        score: hasVisual || hasSignals ? 8 : 6,
+        note: hasSignals
+          ? 'Visual context and extracted signals support a stronger readability review.'
+          : 'Readability guidance is present, but still more inferred than observed.',
+      },
+      {
+        label: 'Distinctiveness',
+        score: operatorProfile.designInfluences.trim() && operatorProfile.referenceInterfaces.trim() ? 9 : 7,
+        note:
+          operatorProfile.designInfluences.trim() && operatorProfile.referenceInterfaces.trim()
+            ? 'Named influences and references give JARVIS stronger creative identity cues.'
+            : 'Distinctiveness is improving, but benefits from more explicit influences and references.',
+      },
+      {
+        label: 'Density Discipline',
+        score: hasProject ? 8 : 7,
+        note: hasProject
+          ? 'Project context helps keep dense HUD decisions tied to operator workflows.'
+          : 'Density guidance is solid, but less workflow-aware without project context.',
+      },
+      {
+        label: 'Motion Discipline',
+        score: 7,
+        note: 'Motion guidance exists in the canon, but there is still limited explicit motion review memory.',
+      },
+      {
+        label: 'Operator Trust',
+        score: hasVisual && hasProject && hasDocument ? 9 : hasVisual || hasProject ? 8 : 7,
+        note:
+          hasVisual && hasProject && hasDocument
+            ? 'Cross-linking visual, project, and document context gives the HUD stronger decision-grade trust.'
+            : 'Trust is strong, but improves further when multiple context lanes are active together.',
+      },
+    ];
+  }, [
+    currentProjectMemory,
+    documentBrief,
+    operatorProfile.designInfluences,
+    operatorProfile.referenceInterfaces,
+    visionQuery?.answer,
+    visionSignals,
+    visualBrief,
+  ]);
   const designBrief = useMemo(() => {
     const sections: string[] = [];
     const summaryParts: string[] = [];
+    const archetype = getDesignArchetype(operatorProfile.hudArchetype);
+    const designInfluences = operatorProfile.designInfluences.trim();
+    const referenceInterfaces = operatorProfile.referenceInterfaces.trim();
     const preferredStyle = operatorProfile.designStyle.trim();
     const designGoals = operatorProfile.designGoals.trim();
+
+    sections.push(`HUD archetype: ${archetype.label}`);
+    sections.push(`Canon summary: ${archetype.summary}`);
+    sections.push(`Design canon principles: ${archetype.principles.join('; ')}`);
+    sections.push(`Recommended moves: ${archetype.dos.join('; ')}`);
+    sections.push(`Watchouts: ${archetype.watchouts.join('; ')}`);
+    summaryParts.push(`${archetype.label}: ${archetype.summary}`);
 
     if (preferredStyle) {
       sections.push(`Preferred design style: ${preferredStyle}`);
       summaryParts.push(`Style: ${preferredStyle}`);
+    }
+    if (designInfluences) {
+      sections.push(`Design influences: ${designInfluences}`);
+    }
+    if (referenceInterfaces) {
+      sections.push(`Reference interfaces: ${referenceInterfaces}`);
     }
     if (designGoals) {
       sections.push(`Design goals: ${designGoals}`);
@@ -2391,22 +2548,46 @@ export default function JarvisHudDashboard() {
 
     return {
       title: 'Design Intelligence',
-      summary: summaryParts[0] || 'Design context is ready.',
+      summary: summaryParts.slice(0, 2).join(' ') || 'Design context is ready.',
       details: sections.join('\n\n'),
+      archetypeLabel: archetype.label,
+      canonSummary: archetype.summary,
+      principles: archetype.principles,
+      watchouts: archetype.watchouts,
+      scorecard: designScorecard,
       critiquePrompt:
         `Act as a senior product designer and creative director.\n${sections.join('\n\n')}\n\n` +
-        'Give a concise design critique covering hierarchy, clarity, interaction, aesthetic direction, and the highest-value improvement.',
+        'Give a concise design critique covering hierarchy, clarity, interaction, aesthetic direction, and the highest-value improvement. Explicitly reference the archetype and whether the current direction is honoring it.',
       systemPrompt:
         `Act as a design systems lead.\n${sections.join('\n\n')}\n\n` +
-        'Turn this into a reusable design direction with principles, components, typography, color and motion guidance, and implementation notes.',
+        'Turn this into a reusable design direction with principles, components, typography, color and motion guidance, implementation notes, and HUD-specific rules for states, chrome, spacing, and scanability.',
       creativePrompt:
         `Act as a strong frontend design partner.\n${sections.join('\n\n')}\n\n` +
-        'Propose a more creative visual direction that still preserves usability. Focus on composition, typography, color, motion, and distinctive identity.',
+        'Propose a more creative visual direction that still preserves usability. Focus on composition, typography, color, motion, distinctive identity, and how to make the interface feel more like a premium game HUD or desktop command deck without becoming noisy.',
       implementationPrompt:
         `Act as a frontend design engineer.\n${sections.join('\n\n')}\n\n` +
-        'Translate this design context into implementation guidance: layout structure, component changes, CSS direction, accessibility checks, and a safe build order.',
+        'Translate this design context into implementation guidance: layout structure, component changes, CSS direction, HUD states, motion rules, accessibility checks, and a safe build order.',
+      screenAuditPrompt:
+        `Act as a principal UI/UX reviewer for premium HUDs, game menus, and desktop command surfaces.\n${sections.join('\n\n')}\n\n` +
+        'Using the current visual context if present, audit the interface for hierarchy, readability, panel balance, state communication, motion discipline, visual identity, and interaction clarity. Call out what feels generic, what feels strong, and the top 3 changes that would make the HUD feel more premium and more intentional.',
+      scorecardPrompt:
+        `Act as a principal UI/UX design reviewer.\n${sections.join('\n\n')}\n\n` +
+        `Current HUD scorecard:\n${designScorecard
+          .map((item) => `- ${item.label}: ${item.score}/10 - ${item.note}`)
+          .join('\n')}\n\n` +
+        'Review these category scores, challenge any weak assumptions, then return an improved scorecard with the top corrective moves for hierarchy, readability, distinctiveness, density discipline, motion discipline, and operator trust.',
     };
-  }, [currentProjectMemory, documentBrief, operatorProfile.designGoals, operatorProfile.designStyle, visualBrief]);
+  }, [
+    currentProjectMemory,
+    designScorecard,
+    documentBrief,
+    operatorProfile.designGoals,
+    operatorProfile.designInfluences,
+    operatorProfile.referenceInterfaces,
+    operatorProfile.designStyle,
+    operatorProfile.hudArchetype,
+    visualBrief,
+  ]);
   const activeWorkspaceRepo = useMemo(
     () => workspaceRepos?.repos.find((repo) => repo.root === workspaceRepos.active_root) || null,
     [workspaceRepos],
@@ -3486,9 +3667,20 @@ export default function JarvisHudDashboard() {
   }
 
   function loadDesignPrompt(
-    mode: 'critique' | 'system' | 'creative' | 'implementation',
+    mode: 'critique' | 'system' | 'creative' | 'implementation' | 'screen-audit' | 'scorecard',
   ) {
+    const archetype = getDesignArchetype(operatorProfile.hudArchetype);
     const fallbackSections = [
+      `HUD archetype: ${archetype.label}`,
+      `Canon summary: ${archetype.summary}`,
+      `Design canon principles: ${archetype.principles.join('; ')}`,
+      `Watchouts: ${archetype.watchouts.join('; ')}`,
+      operatorProfile.designInfluences.trim()
+        ? `Design influences: ${operatorProfile.designInfluences.trim()}`
+        : '',
+      operatorProfile.referenceInterfaces.trim()
+        ? `Reference interfaces: ${operatorProfile.referenceInterfaces.trim()}`
+        : '',
       operatorProfile.designStyle.trim() ? `Preferred design style: ${operatorProfile.designStyle.trim()}` : '',
       operatorProfile.designGoals.trim() ? `Design goals: ${operatorProfile.designGoals.trim()}` : '',
       currentProjectMemory
@@ -3499,15 +3691,21 @@ export default function JarvisHudDashboard() {
     const prompt =
       mode === 'critique'
         ? designBrief?.critiquePrompt ||
-          `Act as a senior product designer and critique the current interface or concept.\n${fallbackBase}\n\nFocus on hierarchy, clarity, usability, and the highest-value improvement.`
+          `Act as a senior product designer and critique the current interface or concept.\n${fallbackBase}\n\nFocus on hierarchy, clarity, usability, whether the work matches the archetype, and the highest-value improvement.`
         : mode === 'system'
         ? designBrief?.systemPrompt ||
-          `Act as a design systems lead.\n${fallbackBase}\n\nDefine reusable principles, components, typography, color, and motion guidance.`
+          `Act as a design systems lead.\n${fallbackBase}\n\nDefine reusable principles, components, typography, color, motion, and HUD-specific layout rules.`
         : mode === 'creative'
         ? designBrief?.creativePrompt ||
-          `Act as a creative frontend design partner.\n${fallbackBase}\n\nPropose a more distinctive visual direction while keeping usability strong.`
+          `Act as a creative frontend design partner.\n${fallbackBase}\n\nPropose a more distinctive visual direction while keeping usability strong and preserving a premium game-menu or command-deck feel.`
+        : mode === 'screen-audit'
+        ? designBrief?.screenAuditPrompt ||
+          `Act as a principal UI/UX reviewer for premium HUDs, game menus, and desktop command surfaces.\n${fallbackBase}\n\nAudit the current interface for hierarchy, readability, panel balance, state communication, and premium feel. Name the top 3 changes that would most improve the HUD.`
+        : mode === 'scorecard'
+        ? designBrief?.scorecardPrompt ||
+          `Act as a principal UI/UX design reviewer.\n${fallbackBase}\n\nCreate a HUD scorecard for hierarchy, readability, distinctiveness, density discipline, motion discipline, and operator trust. Give each category a score out of 10 and the top corrective moves.`
         : designBrief?.implementationPrompt ||
-          `Act as a frontend design engineer.\n${fallbackBase}\n\nTranslate the current design direction into concrete implementation guidance and a safe build order.`;
+          `Act as a frontend design engineer.\n${fallbackBase}\n\nTranslate the current design direction into concrete implementation guidance, HUD-state behavior, and a safe build order.`;
     injectCommand(prompt);
     setWorkbenchNotice(
       mode === 'critique'
@@ -3516,6 +3714,10 @@ export default function JarvisHudDashboard() {
         ? 'Design system prompt loaded.'
         : mode === 'creative'
         ? 'Creative direction prompt loaded.'
+        : mode === 'screen-audit'
+        ? 'Screen audit prompt loaded.'
+        : mode === 'scorecard'
+        ? 'HUD scorecard prompt loaded.'
         : 'Design implementation prompt loaded.',
     );
   }
@@ -4254,6 +4456,10 @@ export default function JarvisHudDashboard() {
   useEffect(() => {
     const plannerReady = agentArchitecture?.roles?.some((role) => role.role === 'planner' && role.ready && !!role.agent_id);
     const executorReady = agentArchitecture?.roles?.some((role) => role.role === 'executor' && role.ready && !!role.agent_id);
+    const savedDesignBrief = durableOperatorMemory?.design_briefs?.[0] || null;
+    const weakestDesignArea = savedDesignBrief?.scorecard?.length
+      ? savedDesignBrief.scorecard.slice().sort((left, right) => left.score - right.score)[0]
+      : null;
     const systemBusy =
       architectureBusy ||
       !!pendingAction ||
@@ -4289,6 +4495,18 @@ export default function JarvisHudDashboard() {
         lastAutoArchitectureSelfImproveRef.current = selfImproveKey;
         ensureSelfImproveTask('in_progress');
         handoffWithBrief(selfImproveBrief.prompt, 'self-improve-auto').catch(() => null);
+        return;
+      }
+    }
+
+    if (savedDesignBrief && weakestDesignArea && weakestDesignArea.score < 8) {
+      const designKey = `${savedDesignBrief.id}:${weakestDesignArea.label}:${weakestDesignArea.score}`;
+      if (lastAutoArchitectureDesignRef.current !== designKey) {
+        lastAutoArchitectureDesignRef.current = designKey;
+        handoffWithBrief(
+          `Design mission follow-up.\nSaved brief: ${savedDesignBrief.label}\nArchetype: ${savedDesignBrief.archetype || 'design'}\nWeakest HUD area: ${weakestDesignArea.label} (${weakestDesignArea.score}/10)\n\n${savedDesignBrief.details || savedDesignBrief.summary}\n\nPlan the safest next HUD improvement pass to raise this weakest area without breaking working voice features.`,
+          'design-auto',
+        ).catch(() => null);
       }
     }
   }, [
@@ -4298,6 +4516,7 @@ export default function JarvisHudDashboard() {
     buildDailyOpsPrompt,
     dailyDigest?.generated_at,
     dailyDigest?.text,
+    durableOperatorMemory?.design_briefs,
     editorBusy,
     pendingAction,
     pendingCodeEdit,
@@ -4323,6 +4542,83 @@ export default function JarvisHudDashboard() {
     );
     ensureSelfImproveTask(architectureTaskOutcome.kind === 'failed' ? 'in_progress' : 'done');
   }, [agentArchitecture?.handoff?.source, architectureTaskOutcome]);
+
+  useEffect(() => {
+    if (!architectureTaskOutcome || !agentArchitecture?.handoff?.source?.startsWith('design')) return;
+    const outcomeKey = `${agentArchitecture.handoff.source}:${architectureTaskOutcome.task.id}:${architectureTaskOutcome.kind}`;
+    if (lastDesignOutcomeRef.current === outcomeKey) return;
+    lastDesignOutcomeRef.current = outcomeKey;
+    void updateOperatorMission({
+      id: 'design-mission',
+      title: 'HUD Design mission',
+      domain: 'design',
+      status: architectureTaskOutcome.kind === 'failed' ? 'blocked' : 'complete',
+      phase: architectureTaskOutcome.kind === 'failed' ? 'retry' : 'done',
+      summary:
+        architectureTaskOutcome.kind === 'failed'
+          ? 'Design mission returned a blocker.'
+          : 'Design mission returned an outcome.',
+      next_step:
+        architectureTaskOutcome.kind === 'failed'
+          ? 'Review the design blocker, re-run the scorecard, and prepare the next HUD refinement pass.'
+          : 'Review the design outcome and decide whether to start the next HUD pass.',
+      result: architectureTaskOutcome.summary,
+      retry_hint:
+        architectureTaskOutcome.kind === 'failed'
+          ? 'Retry after narrowing the HUD change or improving the weakest scored area.'
+          : '',
+      result_data: {
+        source: agentArchitecture.handoff.source,
+        task_id: architectureTaskOutcome.task.id,
+        kind: architectureTaskOutcome.kind,
+        label: architectureTaskOutcome.label,
+      },
+      next_action: {
+        kind: 'prompt',
+        content: architectureTaskOutcome.summary,
+        label: architectureTaskOutcome.kind === 'failed' ? 'Design Repair' : 'Design Review',
+      },
+      updated_at: new Date().toISOString(),
+    })
+      .then((memory) => {
+        setDurableOperatorMemory(memory);
+      })
+      .catch(() => {
+        lastDesignOutcomeRef.current = '';
+      });
+  }, [agentArchitecture?.handoff?.source, architectureTaskOutcome]);
+
+  useEffect(() => {
+    if (!architectureTaskOutcome || !agentArchitecture?.handoff?.source?.startsWith('design')) return;
+    if (architectureTaskOutcome.kind !== 'failed') return;
+    if (pendingAction || pendingCodeEdit || pendingWorkbench || actionBusy !== null) return;
+
+    const savedDesignBrief = durableOperatorMemory?.design_briefs?.[0] || null;
+    const weakestArea = savedDesignBrief?.scorecard?.length
+      ? savedDesignBrief.scorecard.slice().sort((left, right) => left.score - right.score)[0]
+      : null;
+    const taskKey = `${architectureTaskOutcome.task.id}:${weakestArea?.label || 'design'}`;
+    if (lastDesignTaskRef.current === taskKey) return;
+    lastDesignTaskRef.current = taskKey;
+
+    const weakestLabel = weakestArea?.label || 'HUD design quality';
+    const weakestScore = typeof weakestArea?.score === 'number' ? `${weakestArea.score}/10` : 'unscored';
+    const weakestNote = weakestArea?.note || 'Review the latest design blocker and tighten the next HUD pass.';
+    createFollowUpTask(
+      `Improve HUD ${weakestLabel}`,
+      `Design blocker detected.\n\nWeakest area: ${weakestLabel} (${weakestScore})\nGuidance: ${weakestNote}\n\nLatest design blocker:\n${architectureTaskOutcome.summary}\n\nUse the saved design brief and HUD scorecard to prepare the next safe implementation pass without breaking working voice features.`,
+    ).catch(() => {
+      lastDesignTaskRef.current = '';
+    });
+  }, [
+    actionBusy,
+    agentArchitecture?.handoff?.source,
+    architectureTaskOutcome,
+    durableOperatorMemory?.design_briefs,
+    pendingAction,
+    pendingCodeEdit,
+    pendingWorkbench,
+  ]);
 
   useEffect(() => {
     if (!latestCodeResult || !activeSelfImproveTask) return;
@@ -4951,6 +5247,7 @@ export default function JarvisHudDashboard() {
                   architectureBusy={architectureBusy}
                   agentNotice={agentNotice}
                   architectureTaskOutcome={architectureTaskOutcome}
+                  designTaskOutcome={designArchitectureTaskOutcome}
                   roleTasks={agentRoleTasks}
                   onEnsureCoreTeam={ensureCoreArchitecture}
                   onPlannerHandoff={handoffToArchitecture}
@@ -5325,6 +5622,30 @@ ${item.details}`,
                       apiBase={apiBase}
                       restoreVisualObservation={restoreVisualObservation}
                       setWorkbenchNotice={setWorkbenchNotice}
+                      loadDesignAudit={() => loadDesignPrompt('screen-audit')}
+                      saveDesignBriefFromVisual={() => {
+                        if (!designBrief || !visualBrief) {
+                          setWorkbenchNotice('Capture or analyze a visual first so JARVIS has design context to save.');
+                          return;
+                        }
+                        void updateOperatorDesignBrief({
+                          label: `Design Audit · ${visualBrief.title}`,
+                          archetype: designBrief.archetypeLabel,
+                          summary: designBrief.summary,
+                          details: `${designBrief.details}\n\nVisual source: ${visualBrief.title}\n${visualBrief.details}`,
+                          scorecard: designBrief.scorecard,
+                          created_at: new Date().toISOString(),
+                        })
+                          .then((memory) => {
+                            setDurableOperatorMemory(memory);
+                            setWorkbenchNotice('Design brief saved from live visual context.');
+                          })
+                          .catch((error) =>
+                            setWorkbenchNotice(
+                              error instanceof Error ? error.message : 'Failed to save design brief from visual context.',
+                            ),
+                          );
+                      }}
                     />
                   </Suspense>
                 </div>
@@ -5691,9 +6012,35 @@ ${item.details}`,
                   <Suspense fallback={<DashboardSectionFallback label="Loading design intelligence..." />}>
                     <DesignIntelligence
                       designBrief={designBrief}
+                      currentArchetype={getDesignArchetype(operatorProfile.hudArchetype).label}
+                      presetArchetypes={DESIGN_ARCHETYPES.map((item) => ({ id: item.id, label: item.label }))}
+                      recentBriefs={durableOperatorMemory?.design_briefs || []}
+                      onApplyArchetype={(value) => updateOperatorProfile({ hudArchetype: value })}
                       onLoadPrompt={loadDesignPrompt}
                       onLoadBrief={() => injectCommand(designBrief?.creativePrompt || '')}
                       onRouteToPlanner={() => void handoffWithBrief(designBrief?.implementationPrompt || '', 'design-intel')}
+                      onSaveBrief={() => {
+                        if (!designBrief) return;
+                        void updateOperatorDesignBrief({
+                          label: 'Design Intelligence',
+                          archetype: designBrief.archetypeLabel,
+                          summary: designBrief.summary,
+                          details: designBrief.details,
+                          scorecard: designBrief.scorecard,
+                          created_at: new Date().toISOString(),
+                        })
+                          .then((memory) => {
+                            setDurableOperatorMemory(memory);
+                            setWorkbenchNotice('Design brief saved to operator memory.');
+                          })
+                          .catch((error) => setWorkbenchNotice(error instanceof Error ? error.message : 'Failed to save design brief.'));
+                      }}
+                      onLoadSavedBrief={(item) => injectCommand(item.details || item.summary)}
+                      onAuditSavedBrief={(item) =>
+                        injectCommand(
+                          `Act as a principal UI/UX reviewer for premium HUDs, game menus, and desktop command surfaces.\nSaved design brief label: ${item.label}\nArchetype: ${item.archetype || 'design'}\n\n${item.details || item.summary}\n\nReview this direction for hierarchy, premium feel, interaction clarity, and the top 3 changes that would strengthen the HUD.`,
+                        )
+                      }
                     />
                   </Suspense>
                   <div className="mt-3 grid gap-2 sm:grid-cols-2">
@@ -6365,9 +6712,27 @@ ${item.details}`,
                     className="rounded-[0.9rem] border border-cyan-400/10 bg-slate-950/70 px-4 py-3 text-sm text-slate-100 outline-none placeholder:text-slate-500"
                   />
                   <input
+                    value={operatorProfile.hudArchetype}
+                    onChange={(event) => updateOperatorProfile({ hudArchetype: event.target.value })}
+                    placeholder="HUD archetype"
+                    className="rounded-[0.9rem] border border-cyan-400/10 bg-slate-950/70 px-4 py-3 text-sm text-slate-100 outline-none placeholder:text-slate-500"
+                  />
+                  <input
                     value={operatorProfile.designStyle}
                     onChange={(event) => updateOperatorProfile({ designStyle: event.target.value })}
                     placeholder="Preferred design style"
+                    className="rounded-[0.9rem] border border-cyan-400/10 bg-slate-950/70 px-4 py-3 text-sm text-slate-100 outline-none placeholder:text-slate-500"
+                  />
+                  <input
+                    value={operatorProfile.designInfluences}
+                    onChange={(event) => updateOperatorProfile({ designInfluences: event.target.value })}
+                    placeholder="Design influences"
+                    className="rounded-[0.9rem] border border-cyan-400/10 bg-slate-950/70 px-4 py-3 text-sm text-slate-100 outline-none placeholder:text-slate-500"
+                  />
+                  <input
+                    value={operatorProfile.referenceInterfaces}
+                    onChange={(event) => updateOperatorProfile({ referenceInterfaces: event.target.value })}
+                    placeholder="Reference interfaces"
                     className="rounded-[0.9rem] border border-cyan-400/10 bg-slate-950/70 px-4 py-3 text-sm text-slate-100 outline-none placeholder:text-slate-500"
                   />
                   <input

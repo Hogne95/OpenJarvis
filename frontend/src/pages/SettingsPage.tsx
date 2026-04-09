@@ -16,9 +16,11 @@ import {
   Mic,
   Key,
   Search,
+  AlertTriangle,
+  ShieldAlert,
 } from 'lucide-react';
 import { useAppStore, type ThemeMode } from '../lib/store';
-import { checkHealth, fetchSpeechHealth } from '../lib/api';
+import { checkHealth, fetchRuntimeReadiness, fetchSpeechHealth, type RuntimeReadiness } from '../lib/api';
 
 function OllamaModelList() {
   const [models, setModels] = useState<Array<{ name: string; size: number }>>([]);
@@ -120,6 +122,7 @@ export function SettingsPage() {
   const serverInfo = useAppStore((s) => s.serverInfo);
   const [healthy, setHealthy] = useState<boolean | null>(null);
   const [speechBackendAvailable, setSpeechBackendAvailable] = useState<boolean | null>(null);
+  const [runtimeReadiness, setRuntimeReadiness] = useState<RuntimeReadiness | null>(null);
   const [saved, setSaved] = useState(false);
 
   useEffect(() => {
@@ -127,6 +130,9 @@ export function SettingsPage() {
     fetchSpeechHealth()
       .then((h) => setSpeechBackendAvailable(h.available))
       .catch(() => setSpeechBackendAvailable(false));
+    fetchRuntimeReadiness()
+      .then(setRuntimeReadiness)
+      .catch(() => setRuntimeReadiness(null));
   }, []);
 
   const showSaved = () => {
@@ -269,6 +275,66 @@ export function SettingsPage() {
                 }}
               />
             </SettingRow>
+          </Section>
+
+          <Section title="Runtime Readiness">
+            <div className="mb-3 text-xs" style={{ color: 'var(--color-text-tertiary)' }}>
+              JARVIS now reports which advanced systems are actually ready before you rely on them.
+            </div>
+            <SettingRow
+              label="Readiness summary"
+              description={
+                runtimeReadiness
+                  ? `${runtimeReadiness.summary.ready}/${runtimeReadiness.summary.total} checks ready`
+                  : 'Checking runtime readiness'
+              }
+            >
+              <div className="flex items-center gap-2">
+                <span className="text-xs" style={{ color: 'var(--color-text-secondary)' }}>
+                  {runtimeReadiness ? `${runtimeReadiness.summary.blocked} blocked` : '...'}
+                </span>
+              </div>
+            </SettingRow>
+            <div className="mt-2 grid gap-2">
+              {(runtimeReadiness?.checks || []).map((item) => {
+                const Icon = item.status === 'ready' ? Check : item.status === 'blocked' ? ShieldAlert : AlertTriangle;
+                const color =
+                  item.status === 'ready'
+                    ? 'var(--color-success)'
+                    : item.status === 'blocked'
+                    ? 'var(--color-error)'
+                    : '#f59e0b';
+                return (
+                  <div
+                    key={item.id}
+                    className="rounded-lg px-3 py-3"
+                    style={{ background: 'var(--color-bg-secondary)', border: '1px solid var(--color-border)' }}
+                  >
+                    <div className="flex items-center gap-2 text-sm" style={{ color: 'var(--color-text)' }}>
+                      <Icon size={14} style={{ color }} />
+                      {item.label}
+                    </div>
+                    <div className="mt-1 text-xs" style={{ color: 'var(--color-text-secondary)' }}>
+                      {item.detail}
+                    </div>
+                    <div className="mt-1 text-[11px]" style={{ color: 'var(--color-text-tertiary)' }}>
+                      {item.recommendation}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+            {runtimeReadiness?.desktop ? (
+              <div className="mt-3 rounded-lg px-3 py-3 text-xs" style={{ background: 'var(--color-bg-secondary)', border: '1px solid var(--color-border)' }}>
+                <div style={{ color: 'var(--color-text)' }}>Desktop packaging paths</div>
+                <div className="mt-1" style={{ color: 'var(--color-text-tertiary)' }}>
+                  Report: {runtimeReadiness.desktop.report_path}
+                </div>
+                <div style={{ color: 'var(--color-text-tertiary)' }}>
+                  Guide: {runtimeReadiness.desktop.guide_path}
+                </div>
+              </div>
+            ) : null}
           </Section>
 
           {/* Models */}

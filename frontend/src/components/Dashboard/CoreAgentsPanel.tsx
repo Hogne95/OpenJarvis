@@ -7,6 +7,7 @@ export function CoreAgentsPanel({
   architectureBusy,
   agentNotice,
   architectureTaskOutcome,
+  designTaskOutcome,
   roleTasks,
   onEnsureCoreTeam,
   onPlannerHandoff,
@@ -16,6 +17,14 @@ export function CoreAgentsPanel({
   architectureBusy: boolean;
   agentNotice: string;
   architectureTaskOutcome:
+    | {
+        kind: 'failed' | 'completed';
+        label: string;
+        task: AgentTask;
+        summary: string;
+      }
+    | null;
+  designTaskOutcome:
     | {
         kind: 'failed' | 'completed';
         label: string;
@@ -86,6 +95,23 @@ export function CoreAgentsPanel({
             </div>
           </div>
           <div className="mt-2 text-sm text-slate-200/76">{architectureTaskOutcome.summary}</div>
+        </div>
+      ) : null}
+      {designTaskOutcome ? (
+        <div className="mt-3 rounded-[0.95rem] border border-violet-300/16 bg-violet-500/[0.06] px-3 py-3">
+          <div className="flex items-center justify-between gap-3">
+            <div className="text-[10px] uppercase tracking-[0.22em] text-violet-200/72">
+              {designTaskOutcome.kind === 'failed' ? 'Latest Design Blocker' : 'Latest Design Outcome'}
+            </div>
+            <div
+              className={`text-[10px] uppercase tracking-[0.22em] ${
+                designTaskOutcome.kind === 'failed' ? 'text-amber-300/75' : 'text-emerald-300/75'
+              }`}
+            >
+              {designTaskOutcome.label}
+            </div>
+          </div>
+          <div className="mt-2 text-sm text-slate-200/76">{designTaskOutcome.summary}</div>
         </div>
       ) : null}
       <div className="mt-3 grid gap-2">

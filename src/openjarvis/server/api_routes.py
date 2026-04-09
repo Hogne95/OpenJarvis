@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import inspect
+import importlib.util
 import json
 import logging
 import os
@@ -23,6 +24,195 @@ from openjarvis.server.agent_architecture import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _package_ready(module_name: str) -> bool:
+    try:
+        return importlib.util.find_spec(module_name) is not None
+    except Exception:
+        return False
+
+
+def _desktop_report_status(repo_root: Path) -> tuple[str, str, str]:
+    report_path = repo_root / "desktop-readiness-report.txt"
+    if not report_path.exists():
+        return (
+            "warning",
+            "No combined desktop readiness report found yet.",
+            "Run collect_openjarvis_desktop_report.bat or the PowerShell script to generate a fresh report.",
+        )
+    try:
+        content = report_path.read_text(encoding="utf-8", errors="ignore")
+    except Exception:
+        return (
+            "warning",
+            "Desktop readiness report exists but could not be read.",
+            "Re-run the combined desktop report script to refresh the artifact.",
+        )
+    lowered = content.lower()
+    if "wdac" in lowered or "code integrity" in lowered or "app control" in lowered:
+        return (
+            "blocked",
+            "Windows policy is still blocking native desktop packaging.",
+            "Use the policy checker and unblock WDAC / App Control before retrying native packaging.",
+        )
+    if "mostly ready" in lowered or "environment is mostly ready" in lowered:
+        return (
+            "ready",
+            "Desktop environment report looks ready enough for native packaging.",
+            "Retry the desktop build if you want to validate the native path again.",
+        )
+    return (
+        "warning",
+        "Desktop readiness report is present but does not clearly confirm readiness.",
+        "Review the report contents before assuming native packaging is ready.",
+    )
+
+
+def build_runtime_readiness(app_state: Any) -> dict[str, Any]:
+    repo_root = Path.cwd()
+    speech_backend = getattr(app_state, "speech_backend", None)
+    voice_loop = getattr(app_state, "voice_loop", None)
+    api_key_present = bool(os.environ.get("OPENAI_API_KEY", "").strip())
+    openai_ready = _package_ready("openai")
+    docx_ready = _package_ready("docx")
+    openpyxl_ready = _package_ready("openpyxl")
+    pptx_ready = _package_ready("pptx")
+    desktop_script = repo_root / "check_openjarvis_desktop.ps1"
+    desktop_policy_script = repo_root / "check_openjarvis_desktop_policy.ps1"
+    desktop_collect_script = repo_root / "collect_openjarvis_desktop_report.ps1"
+    desktop_docs = repo_root / "docs" / "deployment" / "windows-desktop-unblock.md"
+    report_status, report_detail, report_recommendation = _desktop_report_status(repo_root)
+
+    checks = [
+        {
+            "id": "speech-backend",
+            "label": "Speech Backend",
+            "status": "ready" if speech_backend and speech_backend.health() else "blocked",
+            "detail": (
+                f"Speech backend is available via {getattr(speech_backend, 'backend_id', 'configured backend')}."
+                if speech_backend and speech_backend.health()
+                else "Speech backend is not configured or not healthy."
+            ),
+            "recommendation": (
+                "Speech is ready for voice input."
+                if speech_backend and speech_backend.health()
+                else "Configure a speech backend before relying on voice input."
+            ),
+        },
+        {
+            "id": "voice-loop",
+            "label": "Voice Loop",
+            "status": "ready" if voice_loop is not None else "warning",
+            "detail": "Voice loop manager is configured." if voice_loop is not None else "Voice loop manager is not configured.",
+            "recommendation": (
+                "Voice loop is available for always-listening mode."
+                if voice_loop is not None
+                else "Start the server with voice loop support enabled if you want hands-free use."
+            ),
+        },
+        {
+            "id": "vision-runtime",
+            "label": "Vision Runtime",
+            "status": "ready" if api_key_present and openai_ready else "blocked",
+            "detail": (
+                "OPENAI_API_KEY and OpenAI vision runtime are available."
+                if api_key_present and openai_ready
+                else "Vision analysis needs OPENAI_API_KEY and the openai package."
+            ),
+            "recommendation": (
+                "Vision and screen understanding are ready."
+                if api_key_present and openai_ready
+                else "Add OPENAI_API_KEY and install the OpenAI package to enable full vision flows."
+            ),
+        },
+        {
+            "id": "document-intel",
+            "label": "Document Intelligence",
+            "status": "ready" if api_key_present and openai_ready else "blocked",
+            "detail": (
+                "Document analysis can use the configured model runtime."
+                if api_key_present and openai_ready
+                else "Document analysis is blocked because the model runtime is not fully configured."
+            ),
+            "recommendation": (
+                "Upload and analyze PDF / Office files normally."
+                if api_key_present and openai_ready
+                else "Configure the OpenAI runtime before relying on Document Intel."
+            ),
+        },
+        {
+            "id": "office-exports",
+            "label": "Office Parsers & Export",
+            "status": "ready" if docx_ready and openpyxl_ready and pptx_ready else "warning",
+            "detail": (
+                "DOCX, XLSX, and PPTX packages are installed."
+                if docx_ready and openpyxl_ready and pptx_ready
+                else "One or more Office parsing/export packages are missing."
+            ),
+            "recommendation": (
+                "Office parsing and export paths are ready."
+                if docx_ready and openpyxl_ready and pptx_ready
+                else "Install python-docx, openpyxl, and python-pptx for full Office support."
+            ),
+        },
+        {
+            "id": "desktop-tooling",
+            "label": "Desktop Diagnostics",
+            "status": "ready" if desktop_script.exists() and desktop_policy_script.exists() and desktop_collect_script.exists() else "warning",
+            "detail": (
+                "Desktop readiness, policy, and combined report scripts are present."
+                if desktop_script.exists() and desktop_policy_script.exists() and desktop_collect_script.exists()
+                else "One or more desktop diagnostics scripts are missing from the repo root."
+            ),
+            "recommendation": (
+                "Use the root desktop scripts when native packaging needs debugging."
+                if desktop_script.exists() and desktop_policy_script.exists() and desktop_collect_script.exists()
+                else "Restore the desktop diagnostic scripts before troubleshooting native packaging."
+            ),
+        },
+        {
+            "id": "desktop-report",
+            "label": "Desktop Packaging Status",
+            "status": report_status,
+            "detail": report_detail,
+            "recommendation": report_recommendation,
+        },
+        {
+            "id": "desktop-docs",
+            "label": "Desktop Unblock Guide",
+            "status": "ready" if desktop_docs.exists() else "warning",
+            "detail": (
+                "Windows desktop unblock guide is present in docs."
+                if desktop_docs.exists()
+                else "Windows desktop unblock guide is missing."
+            ),
+            "recommendation": (
+                "Use the unblock guide before changing desktop code."
+                if desktop_docs.exists()
+                else "Restore the desktop unblock guide for native troubleshooting."
+            ),
+        },
+    ]
+    ready_count = sum(1 for item in checks if item["status"] == "ready")
+    blocked_count = sum(1 for item in checks if item["status"] == "blocked")
+    return {
+        "summary": {
+            "ready": ready_count,
+            "blocked": blocked_count,
+            "total": len(checks),
+        },
+        "checks": checks,
+        "desktop": {
+            "report_path": str(repo_root / "desktop-readiness-report.txt"),
+            "scripts": {
+                "check": str(desktop_script),
+                "policy": str(desktop_policy_script),
+                "collect": str(desktop_collect_script),
+            },
+            "guide_path": str(desktop_docs),
+        },
+    }
 
 # ---- Request/Response models ----
 
@@ -233,6 +423,15 @@ class OperatorDocumentBriefRequest(BaseModel):
     created_at: Optional[str] = None
 
 
+class OperatorDesignBriefRequest(BaseModel):
+    label: str
+    archetype: str
+    summary: str
+    details: Optional[str] = None
+    scorecard: Optional[list[Dict[str, Any]]] = None
+    created_at: Optional[str] = None
+
+
 class OperatorMissionUpdateRequest(BaseModel):
     id: str
     title: str
@@ -293,6 +492,11 @@ def _mission_followup_payload(mission: dict[str, Any], action: str) -> dict[str,
         mode = str(result_data.get("mode", "")).strip().lower()
         if mode in {"business_review", "finance_review", "investment_memo", "kpi_extract"}:
             return {"kind": "brief", "content": content, "label": f"{title} Memo"}
+        return {"kind": "prompt", "content": content, "label": title}
+    if domain == "design":
+        content = result or summary or next_step
+        if not content:
+            return None
         return {"kind": "prompt", "content": content, "label": title}
     return None
 
@@ -980,6 +1184,7 @@ async def learning_policy(request: Request):
 # ---- Speech routes ----
 
 speech_router = APIRouter(prefix="/v1/speech", tags=["speech"])
+system_router = APIRouter(prefix="/v1", tags=["system"])
 voice_loop_router = APIRouter(prefix="/v1/voice-loop", tags=["voice-loop"])
 workbench_router = APIRouter(prefix="/v1/workbench", tags=["workbench"])
 action_center_router = APIRouter(prefix="/v1/action-center", tags=["action-center"])
@@ -1029,6 +1234,11 @@ async def speech_health(request: Request):
         "available": backend.health(),
         "backend": backend.backend_id,
     }
+
+
+@system_router.get("/readiness")
+async def runtime_readiness(request: Request):
+    return build_runtime_readiness(request.app.state)
 
 
 @speech_router.get("/profile")
@@ -1700,6 +1910,70 @@ async def operator_memory_add_document_brief(
             details=req.details or "",
             created_at=req.created_at or "",
         )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@operator_memory_router.post("/design-brief")
+async def operator_memory_add_design_brief(
+    req: OperatorDesignBriefRequest,
+    request: Request,
+):
+    manager = getattr(request.app.state, "operator_memory", None)
+    if manager is None:
+        raise HTTPException(status_code=503, detail="Operator memory not configured")
+    try:
+        updated = manager.add_design_brief(
+            label=req.label,
+            archetype=req.archetype,
+            summary=req.summary,
+            details=req.details or "",
+            scorecard=req.scorecard or [],
+            created_at=req.created_at or "",
+        )
+        weakest = None
+        if req.scorecard:
+            sorted_items = sorted(
+                [item for item in req.scorecard if isinstance(item, dict)],
+                key=lambda item: float(item.get("score", 0)),
+            )
+            weakest = sorted_items[0] if sorted_items else None
+        next_step = (
+            f"Improve {str(weakest.get('label', 'the weakest HUD area')).strip().lower()} in the next HUD pass."
+            if weakest
+            else "Run the next HUD scorecard or design critique after the next layout pass."
+        )
+        result = (
+            f"{str(weakest.get('label', 'HUD score')).strip()}: {weakest.get('score', 0)}/10. {str(weakest.get('note', '')).strip()}"
+            if weakest
+            else (req.summary or req.details or "").strip()
+        )
+        manager.update_mission(
+            "design-mission",
+            {
+                "title": "HUD Design mission",
+                "domain": "design",
+                "status": "active",
+                "phase": "plan" if weakest and float(weakest.get("score", 0)) < 8 else "verify",
+                "summary": req.summary.strip() or "Design brief saved and ready for the next HUD refinement pass.",
+                "next_step": next_step,
+                "result": result,
+                "retry_hint": "Re-score the HUD after the next visual refinement pass." if weakest else "",
+                "result_data": {
+                    "archetype": req.archetype,
+                    "brief_label": req.label,
+                    "scorecard_size": len(req.scorecard or []),
+                    "weakest_area": str(weakest.get("label", "")).strip() if weakest else "",
+                },
+                "next_action": {
+                    "kind": "prompt",
+                    "content": req.details or req.summary,
+                    "label": "Design Follow-up",
+                },
+                "updated_at": req.created_at or "",
+            },
+        )
+        return updated
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
 
@@ -3144,6 +3418,7 @@ def include_all_routes(app) -> None:
     app.include_router(metrics_router)
     app.include_router(websocket_router)
     app.include_router(learning_router)
+    app.include_router(system_router)
     app.include_router(speech_router)
     app.include_router(voice_loop_router)
     app.include_router(agent_architecture_router)
