@@ -712,6 +712,18 @@ export interface DurableOperatorMemory {
     risk_tags?: string[];
     created_at: string;
   }>;
+  learning_experiences?: Array<{
+    id: string;
+    label: string;
+    domain: string;
+    context_key: string;
+    outcome_type: string;
+    summary: string;
+    lesson: string;
+    reuse_hint: string;
+    tags: string[];
+    created_at: string;
+  }>;
   relationships: Record<
     string,
     {
@@ -1931,6 +1943,61 @@ export async function updateOperatorFivemBrief(body: {
     throw new Error(detail.detail || `FiveM brief update failed: ${res.status}`);
   }
   return res.json();
+}
+
+export async function updateOperatorLearningExperience(body: {
+  label: string;
+  domain: string;
+  context_key?: string;
+  outcome_type?: string;
+  summary: string;
+  lesson?: string;
+  reuse_hint?: string;
+  tags?: string[];
+  created_at?: string;
+}): Promise<DurableOperatorMemory> {
+  const res = await fetch(`${getBase()}/v1/operator-memory/learning`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const detail = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(detail.detail || `Learning experience update failed: ${res.status}`);
+  }
+  return res.json();
+}
+
+export async function fetchOperatorLearningExperiences(params: {
+  domain?: string;
+  context_key?: string;
+  limit?: number;
+} = {}): Promise<
+  Array<{
+    id: string;
+    label: string;
+    domain: string;
+    context_key: string;
+    outcome_type: string;
+    summary: string;
+    lesson: string;
+    reuse_hint: string;
+    tags: string[];
+    created_at: string;
+  }>
+> {
+  const query = new URLSearchParams();
+  if (params.domain) query.set('domain', params.domain);
+  if (params.context_key) query.set('context_key', params.context_key);
+  if (params.limit) query.set('limit', String(params.limit));
+  const suffix = query.toString() ? `?${query.toString()}` : '';
+  const res = await fetch(`${getBase()}/v1/operator-memory/learning${suffix}`);
+  if (!res.ok) {
+    const detail = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(detail.detail || `Learning experiences fetch failed: ${res.status}`);
+  }
+  const data = await res.json();
+  return data.items || [];
 }
 
 export async function updateOperatorMission(body: {

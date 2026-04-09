@@ -102,6 +102,8 @@ import {
   updateOperatorDocumentBrief,
   updateOperatorDesignBrief,
   updateOperatorFivemBrief,
+  fetchOperatorLearningExperiences,
+  updateOperatorLearningExperience,
   updateOperatorVisualBrief,
   updateOperatorVisualInsight,
   updateOperatorVisualObservation,
@@ -628,6 +630,20 @@ export default function JarvisHudDashboard() {
   const [documentAnalysisTitle, setDocumentAnalysisTitle] = useState('');
   const [documentAnalysis, setDocumentAnalysis] = useState<DocumentAnalysisResult | null>(null);
   const [documentBusy, setDocumentBusy] = useState(false);
+  const [rankedLearningItems, setRankedLearningItems] = useState<
+    Array<{
+      id: string;
+      label: string;
+      domain: string;
+      context_key: string;
+      outcome_type: string;
+      summary: string;
+      lesson: string;
+      reuse_hint: string;
+      tags: string[];
+      created_at: string;
+    }>
+  >([]);
   const [shopifySummary, setShopifySummary] = useState<ShopifySummary | null>(null);
   const [screenSnapshot, setScreenSnapshot] = useState<{
     dataUrl: string;
@@ -670,7 +686,9 @@ export default function JarvisHudDashboard() {
   const lastDesignTaskRef = useRef('');
   const lastFivemOutcomeRef = useRef('');
   const lastFivemTaskRef = useRef('');
+  const lastCommercialOutcomeRef = useRef('');
   const lastMissionSyncRef = useRef('');
+  const lastLearningRecordRef = useRef('');
   const lastSpeechDetectedAtRef = useRef(0);
   const lastVoicePlaybackAtRef = useRef(0);
 
@@ -1228,6 +1246,16 @@ export default function JarvisHudDashboard() {
     }
 
     if (!streamState.isStreaming && !pendingAction && !pendingCodeEdit && !pendingWorkbench) {
+      void rememberLearningExperience({
+        label: likelyFile ? `Validation failure · ${likelyFile}` : 'Validation failure',
+        domain: isSelfImproveFailure ? 'self-improve' : 'coding',
+        context_key: likelyFile || '',
+        outcome_type: 'mistake',
+        summary: `Validation failed for ${latestValidationFailure.command}.`,
+        lesson: latestValidationFailure.output || 'The latest validation run failed and needs root-cause isolation.',
+        reuse_hint: 'Reduce the patch scope, inspect the failing boundary first, and rerun the same check before widening the fix.',
+        tags: ['validation', 'failure', likelyFile ? 'file-scoped' : 'repo'],
+      }).catch(() => null);
       if (isSelfImproveFailure) {
         recordSelfImproveRun(
           'blocker',
@@ -1308,6 +1336,16 @@ export default function JarvisHudDashboard() {
       );
       ensureSelfImproveTask('done');
     }
+    void rememberLearningExperience({
+      label: likelyFile ? `Validation green · ${likelyFile}` : 'Validation green',
+      domain: isSelfImproveSuccess ? 'self-improve' : 'coding',
+      context_key: likelyFile || '',
+      outcome_type: 'success',
+      summary: `Validation passed for ${latestValidationSuccess.command}.`,
+      lesson: 'The current patch shape held through the active validation command.',
+      reuse_hint: 'Reuse this patch/check pattern when the same file or failure family appears again, then commit or continue with a narrowly scoped follow-up.',
+      tags: ['validation', 'success', likelyFile ? 'file-scoped' : 'repo'],
+    }).catch(() => null);
 
     if (!pendingAction && !pendingCodeEdit && !pendingWorkbench) {
       prepareCommitCommand(suggestedMessage, 'Validation passed. Commit command prepared and ready for approval.');
@@ -2095,6 +2133,38 @@ export default function JarvisHudDashboard() {
       focusItems,
     } satisfies FivemCodingBrief;
   }, [durableOperatorMemory?.projects, editorFilePath, workspaceSummary?.changed_files, workspaceSummary?.root]);
+  const recentLearningExperiences = useMemo(() => durableOperatorMemory?.learning_experiences || [], [durableOperatorMemory?.learning_experiences]);
+  const codingLearningContext = useMemo(() => {
+    const baseItems = rankedLearningItems.length ? rankedLearningItems : recentLearningExperiences;
+    const items = baseItems.filter((item) =>
+      ['coding', 'self-improve', 'fivem'].includes((item.domain || '').toLowerCase()),
+    );
+    return items.slice(0, 4);
+  }, [rankedLearningItems, recentLearningExperiences]);
+  const fivemLearningContext = useMemo(() => {
+    const resourceKey = fivemCodingBrief?.resourceKey || '';
+    const baseItems = rankedLearningItems.length ? rankedLearningItems : recentLearningExperiences;
+    const items = baseItems.filter((item) => {
+      const domain = (item.domain || '').toLowerCase();
+      if (domain !== 'fivem' && domain !== 'coding') return false;
+      if (!resourceKey) return true;
+      return !item.context_key || item.context_key === resourceKey;
+    });
+    return items.slice(0, 4);
+  }, [fivemCodingBrief?.resourceKey, rankedLearningItems, recentLearningExperiences]);
+  useEffect(() => {
+    const domain = fivemCodingBrief ? 'fivem' : 'coding';
+    const contextKey =
+      fivemCodingBrief?.resourceKey ||
+      latestCodeResult?.file_path ||
+      editorFilePath ||
+      nextReviewQueueItem?.filePath ||
+      workspaceSummary?.changed_files?.[0] ||
+      '';
+    fetchOperatorLearningExperiences({ domain, context_key: contextKey, limit: 4 })
+      .then((items) => setRankedLearningItems(items))
+      .catch(() => setRankedLearningItems([]));
+  }, [editorFilePath, fivemCodingBrief, latestCodeResult?.file_path, nextReviewQueueItem?.filePath, workspaceSummary?.changed_files]);
 
   function loadSalesPrompt(mode: 'account-brief' | 'deal-review' | 'follow-up' | 'objection' | 'meeting-prep') {
     if (!salesBrief) {
@@ -4214,6 +4284,16 @@ export default function JarvisHudDashboard() {
         created_at: new Date().toISOString(),
       });
       setDurableOperatorMemory(next);
+      void rememberLearningExperience({
+        label: documentBrief.title,
+        domain: 'document',
+        context_key: documentAnalysis.files.join(','),
+        outcome_type: 'success',
+        summary: documentBrief.summary,
+        lesson: documentBrief.details.split('\n').slice(0, 3).join(' '),
+        reuse_hint: 'Reuse this document mode and summary structure when similar files or review tasks appear again.',
+        tags: ['document', documentAnalysis.mode],
+      }).catch(() => null);
       setWorkbenchNotice('Document brief saved to durable memory.');
     } catch (error) {
       setWorkbenchNotice(error instanceof Error ? error.message : 'Unable to save document brief.');
@@ -4241,6 +4321,38 @@ export default function JarvisHudDashboard() {
       setWorkbenchNotice('FiveM brief saved to durable memory.');
     } catch (error) {
       setWorkbenchNotice(error instanceof Error ? error.message : 'Unable to save FiveM brief.');
+    }
+  }
+
+  async function rememberLearningExperience(body: {
+    label: string;
+    domain: string;
+    context_key?: string;
+    outcome_type?: string;
+    summary: string;
+    lesson?: string;
+    reuse_hint?: string;
+    tags?: string[];
+  }) {
+    const key = [
+      body.domain,
+      body.context_key || '',
+      body.outcome_type || 'lesson',
+      body.summary,
+      body.lesson || '',
+    ].join('::');
+    if (lastLearningRecordRef.current === key) return durableOperatorMemory;
+    lastLearningRecordRef.current = key;
+    try {
+      const next = await updateOperatorLearningExperience({
+        ...body,
+        created_at: new Date().toISOString(),
+      });
+      setDurableOperatorMemory(next);
+      return next;
+    } catch (error) {
+      lastLearningRecordRef.current = '';
+      throw error;
     }
   }
 
@@ -4658,6 +4770,16 @@ export default function JarvisHudDashboard() {
         created_at: new Date().toISOString(),
       });
       setDurableOperatorMemory(memory);
+      void rememberLearningExperience({
+        label: visualBrief.title,
+        domain: 'visual',
+        context_key: screenSnapshot?.label || screenDeck[0]?.label || visualBrief.title,
+        outcome_type: 'success',
+        summary: visualBrief.summary,
+        lesson: visualBrief.details.split('\n').slice(0, 3).join(' '),
+        reuse_hint: 'Reuse these visual signals and next-action cues when similar screen state appears again.',
+        tags: ['visual', 'brief'],
+      }).catch(() => null);
       setWorkbenchNotice('Visual brief saved to durable memory.');
     } catch (error) {
       setWorkbenchNotice(error instanceof Error ? error.message : 'Unable to save visual brief.');
@@ -4912,20 +5034,28 @@ export default function JarvisHudDashboard() {
   function loadCodingPrompt(
     mode: 'inspect' | 'debug' | 'review' | 'refactor' | 'logic',
   ) {
+    const learningContext = codingLearningContext.length
+      ? `\nRecent learned lessons:\n${codingLearningContext
+          .map(
+            (item, index) =>
+              `${index + 1}. [${item.domain}/${item.outcome_type}] ${item.summary}${item.lesson ? `\nLesson: ${item.lesson}` : ''}${item.reuse_hint ? `\nReuse hint: ${item.reuse_hint}` : ''}`,
+          )
+          .join('\n\n')}`
+      : '';
     const projectContext = currentProjectMemory
       ? `\nKnown project focus: ${currentProjectMemory.focus || 'none'}\nProject status: ${currentProjectMemory.status || 'unknown'}\nNext step: ${currentProjectMemory.next_step || 'not recorded'}\nProject notes: ${currentProjectMemory.notes || 'none'}`
       : '';
     const prompts = {
       inspect:
-        `Act as my repository copilot. Inspect the current project state, identify the most important active area, summarize risks, and propose the next concrete step.${projectContext}`,
+        `Act as my repository copilot. Inspect the current project state, identify the most important active area, summarize risks, and propose the next concrete step.${projectContext}${learningContext}`,
       debug:
-        `Act as my debugging copilot. Inspect the current repo state, identify the most likely failure points, propose a short diagnostic plan, and only then suggest the first safe fix.${projectContext}`,
+        `Act as my debugging copilot. Inspect the current repo state, identify the most likely failure points, propose a short diagnostic plan, and only then suggest the first safe fix.${projectContext}${learningContext}`,
       review:
-        `Act as my code reviewer. Focus on bugs, regressions, missing tests, and risky behavior. Start with the highest-severity findings and keep summaries brief.${projectContext}`,
+        `Act as my code reviewer. Focus on bugs, regressions, missing tests, and risky behavior. Start with the highest-severity findings and keep summaries brief.${projectContext}${learningContext}`,
       refactor:
-        `Act as my refactoring copilot. Identify one safe, high-value cleanup that improves maintainability without changing intended behavior, then propose the smallest implementation plan.${projectContext}`,
+        `Act as my refactoring copilot. Identify one safe, high-value cleanup that improves maintainability without changing intended behavior, then propose the smallest implementation plan.${projectContext}${learningContext}`,
       logic:
-        `Act as my logic reviewer. Focus on control flow, hidden assumptions, invalid state transitions, nil/undefined handling, race conditions, event ordering, and places where the code can silently do the wrong thing.${projectContext}`,
+        `Act as my logic reviewer. Focus on control flow, hidden assumptions, invalid state transitions, nil/undefined handling, race conditions, event ordering, and places where the code can silently do the wrong thing.${projectContext}${learningContext}`,
     } as const;
     injectCommand(prompts[mode]);
     setWorkbenchNotice(
@@ -4959,6 +5089,14 @@ export default function JarvisHudDashboard() {
       | 'topology-review',
   ) {
     const changedFiles = (workspaceSummary?.changed_files || []).slice(0, 8).join(', ') || 'None';
+    const learningContext = fivemLearningContext.length
+      ? `Recent learned FiveM lessons\n${fivemLearningContext
+          .map(
+            (item, index) =>
+              `${index + 1}. [${item.outcome_type}] ${item.summary}${item.lesson ? `\nLesson: ${item.lesson}` : ''}${item.reuse_hint ? `\nReuse hint: ${item.reuse_hint}` : ''}`,
+          )
+          .join('\n\n')}`
+      : '';
     const context = [
       `Repo root: ${workspaceSummary?.root || 'Unknown'}`,
       `Current file: ${editorFilePath || 'None loaded'}`,
@@ -4966,6 +5104,7 @@ export default function JarvisHudDashboard() {
       currentProjectMemory
         ? `Project context\nFocus: ${currentProjectMemory.focus || 'None'}\nStatus: ${currentProjectMemory.status || 'Unknown'}\nNext step: ${currentProjectMemory.next_step || 'None'}\nNotes: ${currentProjectMemory.notes || 'None'}`
         : '',
+      learningContext,
       fivemCodingBrief
         ? `FiveM/Lua intel\n${fivemCodingBrief.details}\nCanon summary: ${fivemCodingBrief.canonSummary}\nCanon priorities: ${fivemCodingBrief.canonPriorities.join('; ')}\nCanon watchouts: ${fivemCodingBrief.canonWatchouts.join('; ')}\nExploit patterns: ${fivemCodingBrief.canonExploitPatterns.join('; ')}\nConsole checks: ${fivemCodingBrief.canonConsoleChecks.join('; ')}`
         : '',
@@ -5381,19 +5520,69 @@ export default function JarvisHudDashboard() {
     return '';
   }
 
+  function buildLearningContextForSource(source: string) {
+    const normalized = source.trim().toLowerCase();
+    const currentFile =
+      latestCodeResult?.file_path ||
+      editorFilePath ||
+      nextReviewQueueItem?.filePath ||
+      workspaceSummary?.changed_files?.[0] ||
+      '';
+    const currentResourceKey = fivemCodingBrief?.resourceKey || '';
+    return (durableOperatorMemory?.learning_experiences || [])
+      .filter((item) => {
+        const domain = (item.domain || '').toLowerCase();
+        const contextKey = item.context_key || '';
+        if (normalized.startsWith('fivem')) {
+          return (domain === 'fivem' || domain === 'coding') && (!currentResourceKey || !contextKey || contextKey === currentResourceKey);
+        }
+        if (normalized.startsWith('design')) {
+          return domain === 'design';
+        }
+        if (normalized.startsWith('self-improve') || normalized.includes('coding')) {
+          return ['coding', 'self-improve', 'fivem'].includes(domain) && (!currentFile || !contextKey || contextKey === currentFile);
+        }
+        if (normalized.startsWith('visual')) {
+          return domain === 'visual' || domain === 'design';
+        }
+        if (normalized.startsWith('document')) {
+          return domain === 'document';
+        }
+        if (
+          normalized.startsWith('commercial') ||
+          normalized.startsWith('sales') ||
+          normalized.startsWith('customer') ||
+          normalized.startsWith('shopify')
+        ) {
+          return ['commercial', 'sales', 'customer', 'shopify'].includes(domain);
+        }
+        return true;
+      })
+      .slice(0, 4);
+  }
+
   async function handoffWithBrief(brief: string, source = 'hud') {
     const cleanedBrief = brief.trim();
     if (!cleanedBrief) {
       setAgentNotice('There is no current command, visual brief, or queue item to hand off.');
       return;
     }
+    const learningItems = buildLearningContextForSource(source);
+    const enrichedBrief = learningItems.length
+      ? `${cleanedBrief}\n\nRecent learned lessons\n${learningItems
+          .map(
+            (item, index) =>
+              `${index + 1}. [${item.domain}/${item.outcome_type}] ${item.summary}${item.lesson ? `\nLesson: ${item.lesson}` : ''}${item.reuse_hint ? `\nReuse hint: ${item.reuse_hint}` : ''}`,
+          )
+          .join('\n\n')}`
+      : cleanedBrief;
     setArchitectureBusy(true);
     setAgentNotice('');
     if (source.startsWith('self-improve')) {
-      recordSelfImproveRun('route', 'Self-improvement brief routed to planner and executor.', cleanedBrief, source);
+      recordSelfImproveRun('route', 'Self-improvement brief routed to planner and executor.', enrichedBrief, source);
     }
     try {
-      const next = await handoffAgentArchitecture(cleanedBrief, source);
+      const next = await handoffAgentArchitecture(enrichedBrief, source);
       setAgentArchitecture(next);
       const plannerAgentId = next.handoff?.planner?.agent_id;
       const executorAgentId = next.handoff?.executor?.agent_id;
@@ -5408,7 +5597,7 @@ export default function JarvisHudDashboard() {
       const plannerTaskId = next.handoff?.planner?.task_id;
       const executorTaskId = next.handoff?.executor?.task_id;
       setAgentNotice(
-        `Planner delegated the current brief to the executor${plannerTaskId || executorTaskId ? ` (planner ${plannerTaskId || 'queued'}, executor ${executorTaskId || 'queued'})` : ''}.`,
+        `Planner delegated the current brief to the executor${plannerTaskId || executorTaskId ? ` (planner ${plannerTaskId || 'queued'}, executor ${executorTaskId || 'queued'})` : ''}${learningItems.length ? ` with ${learningItems.length} learned hint${learningItems.length === 1 ? '' : 's'}` : ''}.`,
       );
     } catch (error) {
       setAgentNotice(error instanceof Error ? error.message : 'Unable to create planner handoff.');
@@ -6009,6 +6198,22 @@ export default function JarvisHudDashboard() {
     })
       .then((memory) => {
         setDurableOperatorMemory(memory);
+        void rememberLearningExperience({
+          label: architectureTaskOutcome.kind === 'failed' ? 'Design blocker' : 'Design outcome',
+          domain: 'design',
+          context_key: 'hud',
+          outcome_type: architectureTaskOutcome.kind === 'failed' ? 'mistake' : 'success',
+          summary: architectureTaskOutcome.summary,
+          lesson:
+            architectureTaskOutcome.kind === 'failed'
+              ? 'The current HUD direction still has a weak area that needs a smaller, more targeted refinement pass.'
+              : 'The current HUD pass produced a design result worth reusing in the next interface iteration.',
+          reuse_hint:
+            architectureTaskOutcome.kind === 'failed'
+              ? 'Start from the weakest scored area and avoid broad visual changes until that surface is corrected.'
+              : 'Carry the strongest hierarchy and clarity decisions forward into the next HUD pass.',
+          tags: ['design', architectureTaskOutcome.kind],
+        }).catch(() => null);
       })
       .catch(() => {
         lastDesignOutcomeRef.current = '';
@@ -6058,11 +6263,56 @@ export default function JarvisHudDashboard() {
     })
       .then((memory) => {
         setDurableOperatorMemory(memory);
+        void rememberLearningExperience({
+          label: architectureTaskOutcome.kind === 'failed' ? 'FiveM blocker' : 'FiveM outcome',
+          domain: 'fivem',
+          context_key: savedFivemBrief?.resource_key || fivemCodingBrief?.resourceKey || '',
+          outcome_type: architectureTaskOutcome.kind === 'failed' ? 'mistake' : 'success',
+          summary: architectureTaskOutcome.summary,
+          lesson:
+            architectureTaskOutcome.kind === 'failed'
+              ? 'The current FiveM resource pass hit a risky boundary in framework, topology, or native flow.'
+              : 'The current FiveM review/patch direction produced a result worth reusing on similar resources.',
+          reuse_hint:
+            architectureTaskOutcome.kind === 'failed'
+              ? 'Narrow the next pass to one authority boundary, native family, or startup assumption before patching again.'
+              : 'Reuse the same framework/topology reasoning pattern when similar resource surfaces appear again.',
+          tags: [
+            'fivem',
+            architectureTaskOutcome.kind,
+            savedFivemBrief?.framework || fivemCodingBrief?.framework || 'framework-unknown',
+          ],
+        }).catch(() => null);
       })
       .catch(() => {
         lastFivemOutcomeRef.current = '';
       });
   }, [agentArchitecture?.handoff?.source, architectureTaskOutcome, durableOperatorMemory?.fivem_briefs, fivemCodingBrief]);
+
+  useEffect(() => {
+    if (!architectureTaskOutcome || !agentArchitecture?.handoff?.source?.startsWith('commercial')) return;
+    const outcomeKey = `${agentArchitecture.handoff.source}:${architectureTaskOutcome.task.id}:${architectureTaskOutcome.kind}`;
+    if (lastCommercialOutcomeRef.current === outcomeKey) return;
+    lastCommercialOutcomeRef.current = outcomeKey;
+    void rememberLearningExperience({
+      label: architectureTaskOutcome.kind === 'failed' ? 'Commercial blocker' : 'Commercial outcome',
+      domain: 'commercial',
+      context_key: 'commercial-ops',
+      outcome_type: architectureTaskOutcome.kind === 'failed' ? 'mistake' : 'success',
+      summary: architectureTaskOutcome.summary,
+      lesson:
+        architectureTaskOutcome.kind === 'failed'
+          ? 'The current commercial plan still has unresolved cross-functional pressure.'
+          : 'The current commercial plan produced a reusable business operating move.',
+      reuse_hint:
+        architectureTaskOutcome.kind === 'failed'
+          ? 'Narrow the next commercial pass to the highest combined customer/store/pipeline risk first.'
+          : 'Reuse this sequencing when the same mix of pipeline, customer, and ecommerce signals appears again.',
+      tags: ['commercial', architectureTaskOutcome.kind],
+    }).catch(() => {
+      lastCommercialOutcomeRef.current = '';
+    });
+  }, [agentArchitecture?.handoff?.source, architectureTaskOutcome]);
 
   useEffect(() => {
     if (!architectureTaskOutcome || !agentArchitecture?.handoff?.source?.startsWith('design')) return;
@@ -7633,6 +7883,36 @@ ${item.details}`,
                       }
                     />
                   </Suspense>
+                  <div className="mt-3 rounded-[1rem] border border-cyan-400/10 bg-black/20 px-3 py-3">
+                    <div className="text-[10px] uppercase tracking-[0.22em] text-cyan-300/55">Recent Learnings</div>
+                    {(rankedLearningItems.length || recentLearningExperiences.length) ? (
+                      <div className="mt-3 space-y-2">
+                        {(rankedLearningItems.length ? rankedLearningItems : recentLearningExperiences).slice(0, 4).map((item) => (
+                          <div key={item.id} className="rounded-[0.85rem] border border-cyan-400/10 bg-slate-950/45 px-3 py-3">
+                            <div className="flex flex-wrap items-center gap-2 text-[10px] uppercase tracking-[0.18em] text-cyan-300/55">
+                              <span>{item.domain || 'general'}</span>
+                              <span>·</span>
+                              <span>{item.outcome_type || 'lesson'}</span>
+                              {item.context_key ? (
+                                <>
+                                  <span>·</span>
+                                  <span className="truncate">{item.context_key}</span>
+                                </>
+                              ) : null}
+                            </div>
+                            <div className="mt-1 text-sm text-cyan-50/92">{item.label}</div>
+                            <div className="mt-1 text-sm leading-6 text-slate-200/76">{item.summary}</div>
+                            {item.lesson ? <div className="mt-1 text-xs leading-6 text-slate-300/72">Lesson: {item.lesson}</div> : null}
+                            {item.reuse_hint ? <div className="mt-1 text-xs leading-6 text-cyan-200/72">Reuse hint: {item.reuse_hint}</div> : null}
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <div className="mt-2 text-sm leading-6 text-slate-200/76">
+                        JARVIS will start storing reusable lessons here when validation, FiveM, design, and mission outcomes succeed or fail.
+                      </div>
+                    )}
+                  </div>
                   <Suspense fallback={<DashboardSectionFallback label="Loading design intelligence..." />}>
                     <DesignIntelligence
                       designBrief={designBrief}

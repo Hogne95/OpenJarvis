@@ -513,6 +513,18 @@ class OperatorFivemBriefRequest(BaseModel):
     created_at: Optional[str] = None
 
 
+class OperatorLearningExperienceRequest(BaseModel):
+    label: str
+    domain: str
+    context_key: Optional[str] = None
+    outcome_type: Optional[str] = "lesson"
+    summary: str
+    lesson: Optional[str] = None
+    reuse_hint: Optional[str] = None
+    tags: Optional[list[str]] = None
+    created_at: Optional[str] = None
+
+
 class OperatorMissionUpdateRequest(BaseModel):
     id: str
     title: str
@@ -2335,6 +2347,49 @@ async def operator_memory_add_fivem_brief(
         return updated
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
+
+
+@operator_memory_router.post("/learning")
+async def operator_memory_add_learning_experience(
+    req: OperatorLearningExperienceRequest,
+    request: Request,
+):
+    manager = getattr(request.app.state, "operator_memory", None)
+    if manager is None:
+        raise HTTPException(status_code=503, detail="Operator memory not configured")
+    try:
+        return manager.add_learning_experience(
+            label=req.label,
+            domain=req.domain,
+            context_key=req.context_key or "",
+            outcome_type=req.outcome_type or "lesson",
+            summary=req.summary,
+            lesson=req.lesson or "",
+            reuse_hint=req.reuse_hint or "",
+            tags=req.tags or [],
+            created_at=req.created_at or "",
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@operator_memory_router.get("/learning")
+async def operator_memory_top_learning_experiences(
+    request: Request,
+    domain: str = "",
+    context_key: str = "",
+    limit: int = 5,
+):
+    manager = getattr(request.app.state, "operator_memory", None)
+    if manager is None:
+        raise HTTPException(status_code=503, detail="Operator memory not configured")
+    return {
+        "items": manager.top_learning_experiences(
+            domain=domain,
+            context_key=context_key,
+            limit=max(1, min(limit, 10)),
+        )
+    }
 
 
 @operator_memory_router.post("/mission")

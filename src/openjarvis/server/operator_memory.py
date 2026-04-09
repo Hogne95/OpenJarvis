@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 import json
 from dataclasses import asdict, dataclass, field
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -202,6 +203,20 @@ class FivemBrief:
 
 
 @dataclass(slots=True)
+class LearningExperience:
+    id: str
+    label: str
+    domain: str = ""
+    context_key: str = ""
+    outcome_type: str = "lesson"
+    summary: str = ""
+    lesson: str = ""
+    reuse_hint: str = ""
+    tags: list[str] = field(default_factory=list)
+    created_at: str = ""
+
+
+@dataclass(slots=True)
 class MissionMemory:
     id: str
     title: str
@@ -240,6 +255,7 @@ class OperatorMemory:
         self._document_briefs: list[DocumentBrief] = []
         self._design_briefs: list[DesignBrief] = []
         self._fivem_briefs: list[FivemBrief] = []
+        self._learning_experiences: list[LearningExperience] = []
         self._missions: list[MissionMemory] = []
         self._load()
 
@@ -475,6 +491,23 @@ class OperatorMemory:
             for value in fivem_briefs
             if str(value.get("summary", "")).strip() or str(value.get("details", "")).strip()
         ]
+        learning_experiences = data.get("learning_experiences", [])
+        self._learning_experiences = [
+            LearningExperience(
+                id=str(value.get("id", "")),
+                label=str(value.get("label", "")),
+                domain=str(value.get("domain", "")),
+                context_key=str(value.get("context_key", "")),
+                outcome_type=str(value.get("outcome_type", "lesson")),
+                summary=str(value.get("summary", "")),
+                lesson=str(value.get("lesson", "")),
+                reuse_hint=str(value.get("reuse_hint", "")),
+                tags=[str(tag).strip().lower() for tag in value.get("tags", []) if str(tag).strip()],
+                created_at=str(value.get("created_at", "")),
+            )
+            for value in learning_experiences
+            if str(value.get("summary", "")).strip() or str(value.get("lesson", "")).strip()
+        ]
         missions = data.get("missions", [])
         self._missions = [
             MissionMemory(
@@ -514,6 +547,7 @@ class OperatorMemory:
             "document_briefs": [asdict(value) for value in self._document_briefs],
             "design_briefs": [asdict(value) for value in self._design_briefs],
             "fivem_briefs": [asdict(value) for value in self._fivem_briefs],
+            "learning_experiences": [asdict(value) for value in self._learning_experiences],
             "missions": [asdict(value) for value in self._missions],
         }
         self._path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
@@ -537,6 +571,7 @@ class OperatorMemory:
             "document_briefs": [asdict(value) for value in self._document_briefs],
             "design_briefs": [asdict(value) for value in self._design_briefs],
             "fivem_briefs": [asdict(value) for value in self._fivem_briefs],
+            "learning_experiences": [asdict(value) for value in self._learning_experiences],
             "missions": [asdict(value) for value in self._missions],
         }
 
@@ -1056,6 +1091,91 @@ class OperatorMemory:
         self._fivem_briefs = self._fivem_briefs[:24]
         self._save()
         return self.snapshot()
+
+    def add_learning_experience(
+        self,
+        *,
+        label: str,
+        domain: str,
+        context_key: str = "",
+        outcome_type: str = "lesson",
+        summary: str,
+        lesson: str = "",
+        reuse_hint: str = "",
+        tags: list[str] | None = None,
+        created_at: str = "",
+    ) -> dict[str, Any]:
+        cleaned_label = label.strip() or "Learning"
+        cleaned_domain = domain.strip().lower() or "general"
+        cleaned_context_key = context_key.strip()
+        cleaned_summary = summary.strip()
+        cleaned_lesson = lesson.strip()
+        cleaned_reuse_hint = reuse_hint.strip()
+        if not cleaned_summary and not cleaned_lesson:
+            raise ValueError("Learning summary or lesson is required")
+        stamp = (created_at or f"{cleaned_domain}-{cleaned_label}").strip().lower().replace(" ", "-")
+        experience_id = f"learning-{stamp}"
+        self._learning_experiences = [item for item in self._learning_experiences if item.id != experience_id]
+        self._learning_experiences.insert(
+            0,
+            LearningExperience(
+                id=experience_id,
+                label=cleaned_label,
+                domain=cleaned_domain,
+                context_key=cleaned_context_key,
+                outcome_type=outcome_type.strip().lower() or "lesson",
+                summary=cleaned_summary,
+                lesson=cleaned_lesson,
+                reuse_hint=cleaned_reuse_hint,
+                tags=[tag.strip().lower() for tag in (tags or []) if tag.strip()],
+                created_at=created_at,
+            ),
+        )
+        self._learning_experiences = self._learning_experiences[:60]
+        self._save()
+        return self.snapshot()
+
+    def top_learning_experiences(
+        self,
+        *,
+        domain: str = "",
+        context_key: str = "",
+        limit: int = 5,
+    ) -> list[dict[str, Any]]:
+        cleaned_domain = domain.strip().lower()
+        cleaned_context_key = context_key.strip()
+
+        def _timestamp(value: LearningExperience) -> float:
+            try:
+                return datetime.fromisoformat(value.created_at.replace("Z", "+00:00")).timestamp()
+            except Exception:
+                return 0.0
+
+        ranked: list[tuple[float, LearningExperience]] = []
+        for item in self._learning_experiences:
+            score = 0.0
+            if cleaned_domain:
+                if item.domain == cleaned_domain:
+                    score += 4.0
+                elif cleaned_domain in item.tags:
+                    score += 1.5
+                else:
+                    continue
+            if cleaned_context_key:
+                if item.context_key == cleaned_context_key:
+                    score += 5.0
+                elif item.context_key and cleaned_context_key in item.context_key:
+                    score += 2.5
+                elif item.context_key:
+                    score -= 0.5
+            if item.outcome_type == "success":
+                score += 0.4
+            elif item.outcome_type == "mistake":
+                score += 0.7
+            score += min(_timestamp(item) / 10_000_000_000, 2.0)
+            ranked.append((score, item))
+        ranked.sort(key=lambda pair: pair[0], reverse=True)
+        return [asdict(item) for _, item in ranked[: max(1, limit)]]
 
     def update_mission(self, mission_id: str, partial: dict[str, Any]) -> dict[str, Any]:
         cleaned_id = mission_id.strip()
