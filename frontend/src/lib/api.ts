@@ -704,6 +704,82 @@ export interface DurableOperatorMemory {
       notes: string;
     }
   >;
+  sales_accounts?: Record<
+    string,
+    {
+      key: string;
+      name: string;
+      owner: string;
+      segment: string;
+      status: string;
+      next_step: string;
+      risk_level: string;
+      last_interaction: string;
+      notes: string;
+    }
+  >;
+  sales_leads?: Record<
+    string,
+    {
+      key: string;
+      name: string;
+      company: string;
+      owner: string;
+      stage: string;
+      source: string;
+      next_step: string;
+      risk_level: string;
+      last_interaction: string;
+      notes: string;
+    }
+  >;
+  sales_deals?: Record<
+    string,
+    {
+      key: string;
+      title: string;
+      account_key: string;
+      owner: string;
+      stage: string;
+      value: string;
+      close_target: string;
+      next_step: string;
+      risk_level: string;
+      last_interaction: string;
+      notes: string;
+    }
+  >;
+  customer_accounts?: Record<
+    string,
+    {
+      key: string;
+      name: string;
+      owner: string;
+      segment: string;
+      health: string;
+      sentiment: string;
+      churn_risk: string;
+      next_step: string;
+      last_interaction: string;
+      notes: string;
+    }
+  >;
+  customer_interactions?: Record<
+    string,
+    {
+      key: string;
+      account_key: string;
+      contact: string;
+      channel: string;
+      topic: string;
+      sentiment: string;
+      urgency: string;
+      status: string;
+      promised_follow_up: string;
+      last_interaction: string;
+      notes: string;
+    }
+  >;
 }
 
 export interface JarvisIntent {
@@ -1563,6 +1639,127 @@ export async function updateOperatorProject(body: {
   if (!res.ok) {
     const detail = await res.json().catch(() => ({ detail: res.statusText }));
     throw new Error(detail.detail || `Operator project update failed: ${res.status}`);
+  }
+  return res.json();
+}
+
+export async function updateOperatorSalesAccount(body: {
+  key: string;
+  name?: string;
+  owner?: string;
+  segment?: string;
+  status?: string;
+  next_step?: string;
+  risk_level?: string;
+  last_interaction?: string;
+  notes?: string;
+}): Promise<DurableOperatorMemory> {
+  const res = await fetch(`${getBase()}/v1/operator-memory/sales-account`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const detail = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(detail.detail || `Sales account update failed: ${res.status}`);
+  }
+  return res.json();
+}
+
+export async function updateOperatorSalesLead(body: {
+  key: string;
+  name?: string;
+  company?: string;
+  owner?: string;
+  stage?: string;
+  source?: string;
+  next_step?: string;
+  risk_level?: string;
+  last_interaction?: string;
+  notes?: string;
+}): Promise<DurableOperatorMemory> {
+  const res = await fetch(`${getBase()}/v1/operator-memory/sales-lead`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const detail = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(detail.detail || `Sales lead update failed: ${res.status}`);
+  }
+  return res.json();
+}
+
+export async function updateOperatorSalesDeal(body: {
+  key: string;
+  title?: string;
+  account_key?: string;
+  owner?: string;
+  stage?: string;
+  value?: string;
+  close_target?: string;
+  next_step?: string;
+  risk_level?: string;
+  last_interaction?: string;
+  notes?: string;
+}): Promise<DurableOperatorMemory> {
+  const res = await fetch(`${getBase()}/v1/operator-memory/sales-deal`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const detail = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(detail.detail || `Sales deal update failed: ${res.status}`);
+  }
+  return res.json();
+}
+
+export async function updateOperatorCustomerAccount(body: {
+  key: string;
+  name?: string;
+  owner?: string;
+  segment?: string;
+  health?: string;
+  sentiment?: string;
+  churn_risk?: string;
+  next_step?: string;
+  last_interaction?: string;
+  notes?: string;
+}): Promise<DurableOperatorMemory> {
+  const res = await fetch(`${getBase()}/v1/operator-memory/customer-account`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const detail = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(detail.detail || `Customer account update failed: ${res.status}`);
+  }
+  return res.json();
+}
+
+export async function updateOperatorCustomerInteraction(body: {
+  key: string;
+  account_key?: string;
+  contact?: string;
+  channel?: string;
+  topic?: string;
+  sentiment?: string;
+  urgency?: string;
+  status?: string;
+  promised_follow_up?: string;
+  last_interaction?: string;
+  notes?: string;
+}): Promise<DurableOperatorMemory> {
+  const res = await fetch(`${getBase()}/v1/operator-memory/customer-interaction`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const detail = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(detail.detail || `Customer interaction update failed: ${res.status}`);
   }
   return res.json();
 }

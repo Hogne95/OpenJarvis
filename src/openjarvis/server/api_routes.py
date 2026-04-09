@@ -395,6 +395,72 @@ class OperatorProjectUpdateRequest(BaseModel):
     notes: Optional[str] = None
 
 
+class OperatorSalesAccountUpdateRequest(BaseModel):
+    key: str
+    name: Optional[str] = None
+    owner: Optional[str] = None
+    segment: Optional[str] = None
+    status: Optional[str] = None
+    next_step: Optional[str] = None
+    risk_level: Optional[str] = None
+    last_interaction: Optional[str] = None
+    notes: Optional[str] = None
+
+
+class OperatorSalesLeadUpdateRequest(BaseModel):
+    key: str
+    name: Optional[str] = None
+    company: Optional[str] = None
+    owner: Optional[str] = None
+    stage: Optional[str] = None
+    source: Optional[str] = None
+    next_step: Optional[str] = None
+    risk_level: Optional[str] = None
+    last_interaction: Optional[str] = None
+    notes: Optional[str] = None
+
+
+class OperatorSalesDealUpdateRequest(BaseModel):
+    key: str
+    title: Optional[str] = None
+    account_key: Optional[str] = None
+    owner: Optional[str] = None
+    stage: Optional[str] = None
+    value: Optional[str] = None
+    close_target: Optional[str] = None
+    next_step: Optional[str] = None
+    risk_level: Optional[str] = None
+    last_interaction: Optional[str] = None
+    notes: Optional[str] = None
+
+
+class OperatorCustomerAccountUpdateRequest(BaseModel):
+    key: str
+    name: Optional[str] = None
+    owner: Optional[str] = None
+    segment: Optional[str] = None
+    health: Optional[str] = None
+    sentiment: Optional[str] = None
+    churn_risk: Optional[str] = None
+    next_step: Optional[str] = None
+    last_interaction: Optional[str] = None
+    notes: Optional[str] = None
+
+
+class OperatorCustomerInteractionUpdateRequest(BaseModel):
+    key: str
+    account_key: Optional[str] = None
+    contact: Optional[str] = None
+    channel: Optional[str] = None
+    topic: Optional[str] = None
+    sentiment: Optional[str] = None
+    urgency: Optional[str] = None
+    status: Optional[str] = None
+    promised_follow_up: Optional[str] = None
+    last_interaction: Optional[str] = None
+    notes: Optional[str] = None
+
+
 class OperatorVisualObservationRequest(BaseModel):
     label: str
     source: Optional[str] = "screen"
@@ -1887,6 +1953,76 @@ async def operator_memory_update_project(
         raise HTTPException(status_code=503, detail="Operator memory not configured")
     try:
         return manager.update_project(req.key, req.model_dump(exclude_none=True))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@operator_memory_router.post("/sales-account")
+async def operator_memory_update_sales_account(
+    req: OperatorSalesAccountUpdateRequest,
+    request: Request,
+):
+    manager = getattr(request.app.state, "operator_memory", None)
+    if manager is None:
+        raise HTTPException(status_code=503, detail="Operator memory not configured")
+    try:
+        return manager.update_sales_account(req.key, req.model_dump(exclude_none=True))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@operator_memory_router.post("/sales-lead")
+async def operator_memory_update_sales_lead(
+    req: OperatorSalesLeadUpdateRequest,
+    request: Request,
+):
+    manager = getattr(request.app.state, "operator_memory", None)
+    if manager is None:
+        raise HTTPException(status_code=503, detail="Operator memory not configured")
+    try:
+        return manager.update_sales_lead(req.key, req.model_dump(exclude_none=True))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@operator_memory_router.post("/sales-deal")
+async def operator_memory_update_sales_deal(
+    req: OperatorSalesDealUpdateRequest,
+    request: Request,
+):
+    manager = getattr(request.app.state, "operator_memory", None)
+    if manager is None:
+        raise HTTPException(status_code=503, detail="Operator memory not configured")
+    try:
+        return manager.update_sales_deal(req.key, req.model_dump(exclude_none=True))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@operator_memory_router.post("/customer-account")
+async def operator_memory_update_customer_account(
+    req: OperatorCustomerAccountUpdateRequest,
+    request: Request,
+):
+    manager = getattr(request.app.state, "operator_memory", None)
+    if manager is None:
+        raise HTTPException(status_code=503, detail="Operator memory not configured")
+    try:
+        return manager.update_customer_account(req.key, req.model_dump(exclude_none=True))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@operator_memory_router.post("/customer-interaction")
+async def operator_memory_update_customer_interaction(
+    req: OperatorCustomerInteractionUpdateRequest,
+    request: Request,
+):
+    manager = getattr(request.app.state, "operator_memory", None)
+    if manager is None:
+        raise HTTPException(status_code=503, detail="Operator memory not configured")
+    try:
+        return manager.update_customer_interaction(req.key, req.model_dump(exclude_none=True))
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
 

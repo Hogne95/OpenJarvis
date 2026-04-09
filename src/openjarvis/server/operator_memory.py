@@ -60,6 +60,77 @@ class ProjectMemory:
 
 
 @dataclass(slots=True)
+class SalesAccountMemory:
+    key: str
+    name: str = ""
+    owner: str = ""
+    segment: str = ""
+    status: str = ""
+    next_step: str = ""
+    risk_level: str = ""
+    last_interaction: str = ""
+    notes: str = ""
+
+
+@dataclass(slots=True)
+class SalesLeadMemory:
+    key: str
+    name: str = ""
+    company: str = ""
+    owner: str = ""
+    stage: str = ""
+    source: str = ""
+    next_step: str = ""
+    risk_level: str = ""
+    last_interaction: str = ""
+    notes: str = ""
+
+
+@dataclass(slots=True)
+class SalesDealMemory:
+    key: str
+    title: str = ""
+    account_key: str = ""
+    owner: str = ""
+    stage: str = ""
+    value: str = ""
+    close_target: str = ""
+    next_step: str = ""
+    risk_level: str = ""
+    last_interaction: str = ""
+    notes: str = ""
+
+
+@dataclass(slots=True)
+class CustomerAccountMemory:
+    key: str
+    name: str = ""
+    owner: str = ""
+    segment: str = ""
+    health: str = ""
+    sentiment: str = ""
+    churn_risk: str = ""
+    next_step: str = ""
+    last_interaction: str = ""
+    notes: str = ""
+
+
+@dataclass(slots=True)
+class CustomerInteractionMemory:
+    key: str
+    account_key: str = ""
+    contact: str = ""
+    channel: str = ""
+    topic: str = ""
+    sentiment: str = ""
+    urgency: str = ""
+    status: str = ""
+    promised_follow_up: str = ""
+    last_interaction: str = ""
+    notes: str = ""
+
+
+@dataclass(slots=True)
 class ExplicitMemory:
     id: str
     content: str
@@ -143,6 +214,11 @@ class OperatorMemory:
         self._relationships: dict[str, ContactMemory] = {}
         self._meetings: dict[str, MeetingMemory] = {}
         self._projects: dict[str, ProjectMemory] = {}
+        self._sales_accounts: dict[str, SalesAccountMemory] = {}
+        self._sales_leads: dict[str, SalesLeadMemory] = {}
+        self._sales_deals: dict[str, SalesDealMemory] = {}
+        self._customer_accounts: dict[str, CustomerAccountMemory] = {}
+        self._customer_interactions: dict[str, CustomerInteractionMemory] = {}
         self._explicit_memories: list[ExplicitMemory] = []
         self._visual_observations: list[VisualObservation] = []
         self._visual_insights: list[VisualInsight] = []
@@ -210,6 +286,87 @@ class OperatorMemory:
                 notes=str(value.get("notes", "")),
             )
             for key, value in projects.items()
+        }
+        sales_accounts = data.get("sales_accounts", {})
+        self._sales_accounts = {
+            key: SalesAccountMemory(
+                key=key,
+                name=str(value.get("name", "")),
+                owner=str(value.get("owner", "")),
+                segment=str(value.get("segment", "")),
+                status=str(value.get("status", "")),
+                next_step=str(value.get("next_step", "")),
+                risk_level=str(value.get("risk_level", "")),
+                last_interaction=str(value.get("last_interaction", "")),
+                notes=str(value.get("notes", "")),
+            )
+            for key, value in sales_accounts.items()
+        }
+        sales_leads = data.get("sales_leads", {})
+        self._sales_leads = {
+            key: SalesLeadMemory(
+                key=key,
+                name=str(value.get("name", "")),
+                company=str(value.get("company", "")),
+                owner=str(value.get("owner", "")),
+                stage=str(value.get("stage", "")),
+                source=str(value.get("source", "")),
+                next_step=str(value.get("next_step", "")),
+                risk_level=str(value.get("risk_level", "")),
+                last_interaction=str(value.get("last_interaction", "")),
+                notes=str(value.get("notes", "")),
+            )
+            for key, value in sales_leads.items()
+        }
+        sales_deals = data.get("sales_deals", {})
+        self._sales_deals = {
+            key: SalesDealMemory(
+                key=key,
+                title=str(value.get("title", "")),
+                account_key=str(value.get("account_key", "")),
+                owner=str(value.get("owner", "")),
+                stage=str(value.get("stage", "")),
+                value=str(value.get("value", "")),
+                close_target=str(value.get("close_target", "")),
+                next_step=str(value.get("next_step", "")),
+                risk_level=str(value.get("risk_level", "")),
+                last_interaction=str(value.get("last_interaction", "")),
+                notes=str(value.get("notes", "")),
+            )
+            for key, value in sales_deals.items()
+        }
+        customer_accounts = data.get("customer_accounts", {})
+        self._customer_accounts = {
+            key: CustomerAccountMemory(
+                key=key,
+                name=str(value.get("name", "")),
+                owner=str(value.get("owner", "")),
+                segment=str(value.get("segment", "")),
+                health=str(value.get("health", "")),
+                sentiment=str(value.get("sentiment", "")),
+                churn_risk=str(value.get("churn_risk", "")),
+                next_step=str(value.get("next_step", "")),
+                last_interaction=str(value.get("last_interaction", "")),
+                notes=str(value.get("notes", "")),
+            )
+            for key, value in customer_accounts.items()
+        }
+        customer_interactions = data.get("customer_interactions", {})
+        self._customer_interactions = {
+            key: CustomerInteractionMemory(
+                key=key,
+                account_key=str(value.get("account_key", "")),
+                contact=str(value.get("contact", "")),
+                channel=str(value.get("channel", "")),
+                topic=str(value.get("topic", "")),
+                sentiment=str(value.get("sentiment", "")),
+                urgency=str(value.get("urgency", "")),
+                status=str(value.get("status", "")),
+                promised_follow_up=str(value.get("promised_follow_up", "")),
+                last_interaction=str(value.get("last_interaction", "")),
+                notes=str(value.get("notes", "")),
+            )
+            for key, value in customer_interactions.items()
         }
         explicit_memories = data.get("explicit_memories", [])
         self._explicit_memories = [
@@ -313,6 +470,11 @@ class OperatorMemory:
             "relationships": {key: asdict(value) for key, value in self._relationships.items()},
             "meetings": {key: asdict(value) for key, value in self._meetings.items()},
             "projects": {key: asdict(value) for key, value in self._projects.items()},
+            "sales_accounts": {key: asdict(value) for key, value in self._sales_accounts.items()},
+            "sales_leads": {key: asdict(value) for key, value in self._sales_leads.items()},
+            "sales_deals": {key: asdict(value) for key, value in self._sales_deals.items()},
+            "customer_accounts": {key: asdict(value) for key, value in self._customer_accounts.items()},
+            "customer_interactions": {key: asdict(value) for key, value in self._customer_interactions.items()},
             "explicit_memories": [asdict(value) for value in self._explicit_memories],
             "visual_observations": [asdict(value) for value in self._visual_observations],
             "visual_insights": [asdict(value) for value in self._visual_insights],
@@ -330,6 +492,11 @@ class OperatorMemory:
             "relationships": {key: asdict(value) for key, value in self._relationships.items()},
             "meetings": {key: asdict(value) for key, value in self._meetings.items()},
             "projects": {key: asdict(value) for key, value in self._projects.items()},
+            "sales_accounts": {key: asdict(value) for key, value in self._sales_accounts.items()},
+            "sales_leads": {key: asdict(value) for key, value in self._sales_leads.items()},
+            "sales_deals": {key: asdict(value) for key, value in self._sales_deals.items()},
+            "customer_accounts": {key: asdict(value) for key, value in self._customer_accounts.items()},
+            "customer_interactions": {key: asdict(value) for key, value in self._customer_interactions.items()},
             "explicit_memories": [asdict(value) for value in self._explicit_memories],
             "visual_observations": [asdict(value) for value in self._visual_observations],
             "visual_insights": [asdict(value) for value in self._visual_insights],
@@ -426,6 +593,143 @@ class OperatorMemory:
         if "notes" in partial:
             current.notes = str(partial["notes"]).strip()
         self._projects[cleaned_key] = current
+        self._save()
+        return self.snapshot()
+
+    def update_sales_account(self, key: str, partial: dict[str, Any]) -> dict[str, Any]:
+        cleaned_key = key.strip().lower()
+        if not cleaned_key:
+            raise ValueError("Sales account key is required")
+        current = self._sales_accounts.get(cleaned_key, SalesAccountMemory(key=cleaned_key))
+        if "name" in partial:
+            current.name = str(partial["name"]).strip()
+        if "owner" in partial:
+            current.owner = str(partial["owner"]).strip()
+        if "segment" in partial:
+            current.segment = str(partial["segment"]).strip()
+        if "status" in partial:
+            current.status = str(partial["status"]).strip()
+        if "next_step" in partial:
+            current.next_step = str(partial["next_step"]).strip()
+        if "risk_level" in partial:
+            current.risk_level = str(partial["risk_level"]).strip()
+        if "last_interaction" in partial:
+            current.last_interaction = str(partial["last_interaction"]).strip()
+        if "notes" in partial:
+            current.notes = str(partial["notes"]).strip()
+        self._sales_accounts[cleaned_key] = current
+        self._save()
+        return self.snapshot()
+
+    def update_sales_lead(self, key: str, partial: dict[str, Any]) -> dict[str, Any]:
+        cleaned_key = key.strip().lower()
+        if not cleaned_key:
+            raise ValueError("Sales lead key is required")
+        current = self._sales_leads.get(cleaned_key, SalesLeadMemory(key=cleaned_key))
+        if "name" in partial:
+            current.name = str(partial["name"]).strip()
+        if "company" in partial:
+            current.company = str(partial["company"]).strip()
+        if "owner" in partial:
+            current.owner = str(partial["owner"]).strip()
+        if "stage" in partial:
+            current.stage = str(partial["stage"]).strip()
+        if "source" in partial:
+            current.source = str(partial["source"]).strip()
+        if "next_step" in partial:
+            current.next_step = str(partial["next_step"]).strip()
+        if "risk_level" in partial:
+            current.risk_level = str(partial["risk_level"]).strip()
+        if "last_interaction" in partial:
+            current.last_interaction = str(partial["last_interaction"]).strip()
+        if "notes" in partial:
+            current.notes = str(partial["notes"]).strip()
+        self._sales_leads[cleaned_key] = current
+        self._save()
+        return self.snapshot()
+
+    def update_sales_deal(self, key: str, partial: dict[str, Any]) -> dict[str, Any]:
+        cleaned_key = key.strip().lower()
+        if not cleaned_key:
+            raise ValueError("Sales deal key is required")
+        current = self._sales_deals.get(cleaned_key, SalesDealMemory(key=cleaned_key))
+        if "title" in partial:
+            current.title = str(partial["title"]).strip()
+        if "account_key" in partial:
+            current.account_key = str(partial["account_key"]).strip().lower()
+        if "owner" in partial:
+            current.owner = str(partial["owner"]).strip()
+        if "stage" in partial:
+            current.stage = str(partial["stage"]).strip()
+        if "value" in partial:
+            current.value = str(partial["value"]).strip()
+        if "close_target" in partial:
+            current.close_target = str(partial["close_target"]).strip()
+        if "next_step" in partial:
+            current.next_step = str(partial["next_step"]).strip()
+        if "risk_level" in partial:
+            current.risk_level = str(partial["risk_level"]).strip()
+        if "last_interaction" in partial:
+            current.last_interaction = str(partial["last_interaction"]).strip()
+        if "notes" in partial:
+            current.notes = str(partial["notes"]).strip()
+        self._sales_deals[cleaned_key] = current
+        self._save()
+        return self.snapshot()
+
+    def update_customer_account(self, key: str, partial: dict[str, Any]) -> dict[str, Any]:
+        cleaned_key = key.strip().lower()
+        if not cleaned_key:
+            raise ValueError("Customer account key is required")
+        current = self._customer_accounts.get(cleaned_key, CustomerAccountMemory(key=cleaned_key))
+        if "name" in partial:
+            current.name = str(partial["name"]).strip()
+        if "owner" in partial:
+            current.owner = str(partial["owner"]).strip()
+        if "segment" in partial:
+            current.segment = str(partial["segment"]).strip()
+        if "health" in partial:
+            current.health = str(partial["health"]).strip()
+        if "sentiment" in partial:
+            current.sentiment = str(partial["sentiment"]).strip()
+        if "churn_risk" in partial:
+            current.churn_risk = str(partial["churn_risk"]).strip()
+        if "next_step" in partial:
+            current.next_step = str(partial["next_step"]).strip()
+        if "last_interaction" in partial:
+            current.last_interaction = str(partial["last_interaction"]).strip()
+        if "notes" in partial:
+            current.notes = str(partial["notes"]).strip()
+        self._customer_accounts[cleaned_key] = current
+        self._save()
+        return self.snapshot()
+
+    def update_customer_interaction(self, key: str, partial: dict[str, Any]) -> dict[str, Any]:
+        cleaned_key = key.strip().lower()
+        if not cleaned_key:
+            raise ValueError("Customer interaction key is required")
+        current = self._customer_interactions.get(cleaned_key, CustomerInteractionMemory(key=cleaned_key))
+        if "account_key" in partial:
+            current.account_key = str(partial["account_key"]).strip().lower()
+        if "contact" in partial:
+            current.contact = str(partial["contact"]).strip()
+        if "channel" in partial:
+            current.channel = str(partial["channel"]).strip()
+        if "topic" in partial:
+            current.topic = str(partial["topic"]).strip()
+        if "sentiment" in partial:
+            current.sentiment = str(partial["sentiment"]).strip()
+        if "urgency" in partial:
+            current.urgency = str(partial["urgency"]).strip()
+        if "status" in partial:
+            current.status = str(partial["status"]).strip()
+        if "promised_follow_up" in partial:
+            current.promised_follow_up = str(partial["promised_follow_up"]).strip()
+        if "last_interaction" in partial:
+            current.last_interaction = str(partial["last_interaction"]).strip()
+        if "notes" in partial:
+            current.notes = str(partial["notes"]).strip()
+        self._customer_interactions[cleaned_key] = current
         self._save()
         return self.snapshot()
 

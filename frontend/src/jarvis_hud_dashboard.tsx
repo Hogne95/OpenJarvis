@@ -91,11 +91,13 @@ import {
   synthesizeSpeech,
   updateAutomationRoutine,
   updateDigestSchedule,
-    updateOperatorMeeting,
-    actOnOperatorMission,
-    updateOperatorProject,
+  updateOperatorMeeting,
+  actOnOperatorMission,
+  updateOperatorProject,
   updateOperatorRelationship,
   updateOperatorMission,
+  updateOperatorSalesAccount,
+  updateOperatorSalesDeal,
   updateOperatorDocumentBrief,
   updateOperatorDesignBrief,
   updateOperatorVisualBrief,
@@ -151,6 +153,9 @@ const ActionCenterPanel = lazy(() =>
 const CoreAgentsPanel = lazy(() =>
   import('./components/Dashboard/CoreAgentsPanel').then((module) => ({ default: module.CoreAgentsPanel })),
 );
+const CustomerIntelPanel = lazy(() =>
+  import('./components/Dashboard/CustomerIntelPanel').then((module) => ({ default: module.CustomerIntelPanel })),
+);
 const DesignIntelligence = lazy(() =>
   import('./components/Dashboard/DesignIntelligence').then((module) => ({ default: module.DesignIntelligence })),
 );
@@ -165,6 +170,9 @@ const MissionMatrix = lazy(() =>
 );
 const RepoDockPanel = lazy(() =>
   import('./components/Dashboard/RepoDockPanel').then((module) => ({ default: module.RepoDockPanel })),
+);
+const SalesIntelPanel = lazy(() =>
+  import('./components/Dashboard/SalesIntelPanel').then((module) => ({ default: module.SalesIntelPanel })),
 );
 const TerminalWorkbenchPanel = lazy(() =>
   import('./components/Dashboard/TerminalWorkbenchPanel').then((module) => ({ default: module.TerminalWorkbenchPanel })),
@@ -1389,6 +1397,398 @@ export default function JarvisHudDashboard() {
         'Turn this into the next best action, decisions, risks, and open questions.',
     };
   }, [documentAnalysis, documentAnalysisTitle]);
+  const salesBrief = useMemo(() => {
+    const accounts = Object.values(durableOperatorMemory?.sales_accounts || {});
+    const leads = Object.values(durableOperatorMemory?.sales_leads || {});
+    const deals = Object.values(durableOperatorMemory?.sales_deals || {});
+    if (!accounts.length && !leads.length && !deals.length) return null;
+
+    const dealStages = deals.reduce<Record<string, number>>((map, item) => {
+      const stage = item.stage.trim().toLowerCase() || 'unclassified';
+      map[stage] = (map[stage] || 0) + 1;
+      return map;
+    }, {});
+    const highRiskDeals = deals.filter((item) => item.risk_level.trim().toLowerCase().includes('high'));
+    const highRiskAccounts = accounts.filter((item) => item.risk_level.trim().toLowerCase().includes('high'));
+    const followUpPressure = [
+      ...deals.filter((item) => !item.next_step.trim()),
+      ...leads.filter((item) => !item.next_step.trim()),
+    ];
+    const latestSalesInbox = inboxSummary.find((item) => {
+      const text = `${item.title} ${item.snippet} ${item.author}`.toLowerCase();
+      return (
+        deals.some((deal) => deal.title && text.includes(deal.title.toLowerCase())) ||
+        leads.some((lead) => lead.name && text.includes(lead.name.toLowerCase())) ||
+        accounts.some((account) => account.name && text.includes(account.name.toLowerCase()))
+      );
+    });
+    const primaryDeal = highRiskDeals[0] || deals[0] || null;
+    const primaryAccount = highRiskAccounts[0] || accounts[0] || null;
+    const primaryLead = leads[0] || null;
+    const followUpTarget = followUpPressure[0] || primaryDeal || primaryLead || primaryAccount || null;
+    const latestInboxDetail = latestSalesInbox
+      ? `Latest inbox signal\nSubject: ${latestSalesInbox.title}\nFrom: ${latestSalesInbox.author}\nSnippet: ${latestSalesInbox.snippet}`
+      : 'Latest inbox signal\nNo matching sales email was found in the latest inbox summary.';
+    const followUpTargetName = !followUpTarget
+      ? 'No target selected'
+      : 'title' in followUpTarget
+      ? followUpTarget.title || followUpTarget.key
+      : followUpTarget.name || followUpTarget.key;
+    const followUpTargetCompany =
+      !followUpTarget || !('company' in followUpTarget)
+        ? 'account_key' in (followUpTarget || {}) && followUpTarget?.account_key
+          ? followUpTarget.account_key
+          : primaryAccount?.name || 'Unknown'
+        : followUpTarget.company || primaryAccount?.name || 'Unknown';
+    const followUpTargetStatus =
+      !followUpTarget
+        ? 'Unknown'
+        : 'status' in followUpTarget
+        ? followUpTarget.status || 'Unknown'
+        : 'stage' in followUpTarget
+        ? followUpTarget.stage || 'Unknown'
+        : 'Unknown';
+    const topStages = Object.entries(dealStages)
+      .sort((left, right) => right[1] - left[1])
+      .slice(0, 3)
+      .map(([stage, count]) => `${stage}: ${count}`)
+      .join(' | ');
+    const focusItems = [
+      highRiskDeals[0]
+        ? {
+            label: 'Highest Risk Deal',
+            detail: `${highRiskDeals[0].title || highRiskDeals[0].key} / ${highRiskDeals[0].stage || 'unknown stage'} / next: ${highRiskDeals[0].next_step || 'missing'} / risk: ${highRiskDeals[0].risk_level || 'high'}`,
+          }
+        : null,
+      highRiskAccounts[0]
+        ? {
+            label: 'At-Risk Account',
+            detail: `${highRiskAccounts[0].name || highRiskAccounts[0].key} / owner: ${highRiskAccounts[0].owner || 'unassigned'} / next: ${highRiskAccounts[0].next_step || 'missing'} / risk: ${highRiskAccounts[0].risk_level || 'high'}`,
+          }
+        : null,
+      followUpPressure[0]
+        ? {
+            label: 'Follow-Up Gap',
+            detail: `${'title' in followUpPressure[0] ? followUpPressure[0].title : followUpPressure[0].name || followUpPressure[0].key} has no clear next step. Load outreach or assign follow-up ownership.`,
+          }
+        : null,
+      latestSalesInbox
+        ? {
+            label: 'Latest Commercial Signal',
+            detail: `${latestSalesInbox.author} / ${latestSalesInbox.title} / ${latestSalesInbox.snippet}`,
+          }
+        : null,
+    ].filter(Boolean) as Array<{ label: string; detail: string }>;
+
+    const summaryParts = [
+      `${deals.length} deal${deals.length === 1 ? '' : 's'} in view`,
+      highRiskDeals.length || highRiskAccounts.length
+        ? `${highRiskDeals.length + highRiskAccounts.length} risk signal${highRiskDeals.length + highRiskAccounts.length === 1 ? '' : 's'}`
+        : 'no major risk signals',
+      followUpPressure.length ? `${followUpPressure.length} follow-up gap${followUpPressure.length === 1 ? '' : 's'}` : 'follow-ups mostly defined',
+    ];
+    const sections = [
+      `Accounts: ${accounts.length}`,
+      `Leads: ${leads.length}`,
+      `Deals: ${deals.length}`,
+      `Top deal stages: ${topStages || 'None yet'}`,
+      `High-risk deals: ${highRiskDeals.map((item) => item.title || item.key).join(', ') || 'None'}`,
+      `High-risk accounts: ${highRiskAccounts.map((item) => item.name || item.key).join(', ') || 'None'}`,
+      `Missing next steps: ${followUpPressure
+        .map((item) => ('title' in item ? item.title || item.key : item.name || item.key))
+        .join(', ') || 'None'}`,
+      latestSalesInbox
+        ? `Latest inbox signal: ${latestSalesInbox.author} / ${latestSalesInbox.title}\n${latestSalesInbox.snippet}`
+        : 'Latest inbox signal: None matched to sales memory.',
+    ];
+
+    return {
+      title: 'Sales Intel',
+      summary: summaryParts.join(' · '),
+      details: sections.join('\n\n'),
+      counts: [
+        { label: 'Accounts', value: String(accounts.length) },
+        { label: 'Leads', value: String(leads.length) },
+        { label: 'Deals', value: String(deals.length) },
+        { label: 'Risk Signals', value: String(highRiskDeals.length + highRiskAccounts.length) },
+      ],
+      focusItems,
+      prompt:
+        `I have a sales pipeline briefing.\n${sections.join('\n\n')}\n\n` +
+        'Turn this into the next best commercial actions, identify stalled or risky opportunities, and suggest the sharpest follow-up moves.',
+      plannerPrompt:
+        `Sales mission briefing.\n${sections.join('\n\n')}\n\n` +
+        'Plan the next safe commercial execution pass: account focus, follow-ups, risks, and the best next actions without losing context.',
+      accountBriefPrompt:
+        `Act as a senior account strategist.\n${sections.join('\n\n')}\n\n` +
+        `Primary account focus\nName: ${primaryAccount?.name || primaryDeal?.account_key || primaryLead?.company || 'No account selected'}\n` +
+        `Owner: ${primaryAccount?.owner || primaryDeal?.owner || primaryLead?.owner || 'Unknown'}\n` +
+        `Status: ${primaryAccount?.status || primaryDeal?.stage || primaryLead?.stage || 'Unknown'}\n` +
+        `Next step: ${primaryAccount?.next_step || primaryDeal?.next_step || primaryLead?.next_step || 'Missing'}\n` +
+        `Risk: ${primaryAccount?.risk_level || primaryDeal?.risk_level || primaryLead?.risk_level || 'Unknown'}\n\n` +
+        'Write a sharp account brief with relationship state, risks, likely blockers, and the best next commercial move.',
+      dealReviewPrompt:
+        `Act as a deal review partner.\n${sections.join('\n\n')}\n\n` +
+        `Deal to review\nTitle: ${primaryDeal?.title || 'No deal selected'}\n` +
+        `Account: ${primaryDeal?.account_key || primaryAccount?.name || 'Unknown'}\n` +
+        `Stage: ${primaryDeal?.stage || 'Unknown'}\n` +
+        `Value: ${primaryDeal?.value || 'Unknown'}\n` +
+        `Close target: ${primaryDeal?.close_target || 'Unknown'}\n` +
+        `Next step: ${primaryDeal?.next_step || 'Missing'}\n` +
+        `Risk: ${primaryDeal?.risk_level || 'Unknown'}\n\n` +
+        'Review this deal for stall risk, missing information, likely objections, and the exact next action needed to move it forward safely.',
+      followUpPrompt:
+        `Act as a sales follow-up strategist.\n${sections.join('\n\n')}\n\n` +
+        `Follow-up target\nName: ${followUpTargetName}\n` +
+        `Company/Account: ${followUpTargetCompany}\n` +
+        `Owner: ${followUpTarget?.owner || 'Unknown'}\n` +
+        `Stage/Status: ${followUpTargetStatus}\n` +
+        `Next step: ${followUpTarget?.next_step || 'Missing'}\n` +
+        `Last interaction: ${followUpTarget?.last_interaction || 'Unknown'}\n\n` +
+        `${latestInboxDetail}\n\n` +
+        'Recommend the best follow-up timing, channel, and message strategy. Then draft a short high-quality follow-up outline.',
+      objectionPrompt:
+        `Act as a B2B sales coach focused on objections and deal friction.\n${sections.join('\n\n')}\n\n` +
+        `Primary risk focus\nDeal: ${primaryDeal?.title || 'Unknown'}\n` +
+        `Account: ${primaryDeal?.account_key || primaryAccount?.name || 'Unknown'}\n` +
+        `Risk signal: ${primaryDeal?.risk_level || primaryAccount?.risk_level || 'Unknown'}\n` +
+        `Current next step: ${primaryDeal?.next_step || primaryAccount?.next_step || 'Missing'}\n\n` +
+        `${latestInboxDetail}\n\n` +
+        'Infer the most likely objections, trust gaps, or internal blockers. Recommend how to respond without sounding defensive or generic.',
+      meetingPrepPrompt:
+        `Act as a sales meeting prep assistant.\n${sections.join('\n\n')}\n\n` +
+        `Meeting focus\nAccount: ${primaryAccount?.name || primaryDeal?.account_key || primaryLead?.company || 'Unknown'}\n` +
+        `Deal: ${primaryDeal?.title || 'No active deal selected'}\n` +
+        `Stage: ${primaryDeal?.stage || primaryLead?.stage || primaryAccount?.status || 'Unknown'}\n` +
+        `Key next step: ${primaryDeal?.next_step || primaryLead?.next_step || primaryAccount?.next_step || 'Missing'}\n` +
+        `Risk: ${primaryDeal?.risk_level || primaryAccount?.risk_level || primaryLead?.risk_level || 'Unknown'}\n\n` +
+        `${latestInboxDetail}\n\n` +
+        'Prepare a concise meeting brief with goals, likely objections, discovery questions, proof points, and the decision or commitment we should leave with.',
+      draftRecipient: latestSalesInbox?.author_email || '',
+      draftSubject: primaryDeal?.title
+        ? `Follow-up on ${primaryDeal.title}`
+        : primaryAccount?.name
+        ? `Follow-up for ${primaryAccount.name}`
+        : primaryLead?.name
+        ? `Following up, ${primaryLead.name}`
+        : 'Sales follow-up',
+      draftBody:
+        `Hi,\n\n` +
+        `I wanted to follow up regarding ${primaryDeal?.title || primaryAccount?.name || primaryLead?.company || 'our recent discussion'}.\n\n` +
+        `Current context:\n` +
+        `- Stage/status: ${primaryDeal?.stage || primaryLead?.stage || primaryAccount?.status || 'Unknown'}\n` +
+        `- Next step: ${primaryDeal?.next_step || primaryLead?.next_step || primaryAccount?.next_step || 'To be confirmed'}\n` +
+        `- Risk focus: ${primaryDeal?.risk_level || primaryAccount?.risk_level || primaryLead?.risk_level || 'None noted'}\n\n` +
+        `I would like to keep momentum and align on the best next step. Please let me know what is most useful from our side, or if there is anything blocking progress.\n\n` +
+        `Best,\nJARVIS`,
+      primaryAccountLabel: primaryAccount
+        ? `${primaryAccount.name || primaryAccount.key} / owner: ${primaryAccount.owner || 'unassigned'} / next: ${primaryAccount.next_step || 'missing'}`
+        : 'No primary account selected yet.',
+      primaryDealLabel: primaryDeal
+        ? `${primaryDeal.title || primaryDeal.key} / stage: ${primaryDeal.stage || 'unknown'} / next: ${primaryDeal.next_step || 'missing'}`
+        : 'No primary deal selected yet.',
+    };
+  }, [durableOperatorMemory?.sales_accounts, durableOperatorMemory?.sales_deals, durableOperatorMemory?.sales_leads, inboxSummary]);
+
+  const customerBrief = useMemo(() => {
+    const accounts = Object.values(durableOperatorMemory?.customer_accounts || {});
+    const interactions = Object.values(durableOperatorMemory?.customer_interactions || {});
+    if (!accounts.length && !interactions.length) return null;
+
+    const churnAccounts = accounts.filter((item) => item.churn_risk.trim().toLowerCase().includes('high'));
+    const unhappyAccounts = accounts.filter((item) => item.sentiment.trim().toLowerCase().includes('negative'));
+    const urgentInteractions = interactions.filter((item) => item.urgency.trim().toLowerCase().includes('high'));
+    const openFollowUps = interactions.filter(
+      (item) => item.promised_follow_up.trim() && item.status.trim().toLowerCase() !== 'closed',
+    );
+    const latestCustomerInbox = inboxSummary.find((item) => {
+      const text = `${item.title} ${item.snippet} ${item.author}`.toLowerCase();
+      return (
+        accounts.some((account) => account.name && text.includes(account.name.toLowerCase())) ||
+        interactions.some((interaction) => interaction.contact && text.includes(interaction.contact.toLowerCase()))
+      );
+    });
+    const primaryAccount = churnAccounts[0] || unhappyAccounts[0] || accounts[0] || null;
+    const primaryInteraction = urgentInteractions[0] || openFollowUps[0] || interactions[0] || null;
+    const focusItems = [
+      primaryAccount
+        ? {
+            label: 'Customer Health Risk',
+            detail: `${primaryAccount.name || primaryAccount.key} / health: ${primaryAccount.health || 'unknown'} / sentiment: ${primaryAccount.sentiment || 'unknown'} / churn risk: ${primaryAccount.churn_risk || 'unknown'} / next: ${primaryAccount.next_step || 'missing'}`,
+          }
+        : null,
+      primaryInteraction
+        ? {
+            label: 'Interaction To Resolve',
+            detail: `${primaryInteraction.contact || primaryInteraction.key} / ${primaryInteraction.channel || 'unknown channel'} / ${primaryInteraction.topic || 'no topic'} / urgency: ${primaryInteraction.urgency || 'unknown'} / follow-up: ${primaryInteraction.promised_follow_up || 'missing'}`,
+          }
+        : null,
+      latestCustomerInbox
+        ? {
+            label: 'Latest Customer Signal',
+            detail: `${latestCustomerInbox.author} / ${latestCustomerInbox.title} / ${latestCustomerInbox.snippet}`,
+          }
+        : null,
+      openFollowUps[0]
+        ? {
+            label: 'Promised Follow-Up',
+            detail: `${openFollowUps[0].contact || openFollowUps[0].key} is still waiting on: ${openFollowUps[0].promised_follow_up}`,
+          }
+        : null,
+    ].filter(Boolean) as Array<{ label: string; detail: string }>;
+
+    const summaryParts = [
+      `${accounts.length} customer account${accounts.length === 1 ? '' : 's'} tracked`,
+      churnAccounts.length
+        ? `${churnAccounts.length} churn risk${churnAccounts.length === 1 ? '' : 's'}`
+        : 'no major churn risks',
+      urgentInteractions.length
+        ? `${urgentInteractions.length} urgent interaction${urgentInteractions.length === 1 ? '' : 's'}`
+        : 'no urgent interactions',
+    ];
+    const sections = [
+      `Customer accounts: ${accounts.length}`,
+      `Customer interactions: ${interactions.length}`,
+      `High churn risk: ${churnAccounts.map((item) => item.name || item.key).join(', ') || 'None'}`,
+      `Negative sentiment: ${unhappyAccounts.map((item) => item.name || item.key).join(', ') || 'None'}`,
+      `Urgent interactions: ${urgentInteractions.map((item) => item.contact || item.key).join(', ') || 'None'}`,
+      `Open promised follow-ups: ${openFollowUps.map((item) => item.contact || item.key).join(', ') || 'None'}`,
+      latestCustomerInbox
+        ? `Latest inbox signal: ${latestCustomerInbox.author} / ${latestCustomerInbox.title}\n${latestCustomerInbox.snippet}`
+        : 'Latest inbox signal: None matched to customer memory.',
+    ];
+
+    return {
+      title: 'Customer Intel',
+      summary: summaryParts.join(' · '),
+      details: sections.join('\n\n'),
+      counts: [
+        { label: 'Accounts', value: String(accounts.length) },
+        { label: 'Interactions', value: String(interactions.length) },
+        { label: 'Churn Risk', value: String(churnAccounts.length) },
+        { label: 'Urgent', value: String(urgentInteractions.length) },
+      ],
+      focusItems,
+      prompt:
+        `I have a customer health briefing.\n${sections.join('\n\n')}\n\n` +
+        'Turn this into the next best customer success and support actions, identify churn risk, and recommend the safest follow-up moves.',
+      plannerPrompt:
+        `Customer mission briefing.\n${sections.join('\n\n')}\n\n` +
+        'Plan the next safe customer-success execution pass: who needs attention, what should be escalated, and which follow-ups matter most.',
+    };
+  }, [durableOperatorMemory?.customer_accounts, durableOperatorMemory?.customer_interactions, inboxSummary]);
+
+  function loadSalesPrompt(mode: 'account-brief' | 'deal-review' | 'follow-up' | 'objection' | 'meeting-prep') {
+    if (!salesBrief) {
+      setWorkbenchNotice('Build a sales brief first.');
+      return;
+    }
+    const promptByMode = {
+      'account-brief': salesBrief.accountBriefPrompt,
+      'deal-review': salesBrief.dealReviewPrompt,
+      'follow-up': salesBrief.followUpPrompt,
+      objection: salesBrief.objectionPrompt,
+      'meeting-prep': salesBrief.meetingPrepPrompt,
+    } as const;
+    const noticeByMode = {
+      'account-brief': 'Sales account brief prompt loaded.',
+      'deal-review': 'Sales deal review prompt loaded.',
+      'follow-up': 'Sales follow-up strategy prompt loaded.',
+      objection: 'Sales objection-handling prompt loaded.',
+      'meeting-prep': 'Sales meeting prep prompt loaded.',
+    } as const;
+    injectCommand(promptByMode[mode]);
+    setWorkbenchNotice(noticeByMode[mode]);
+  }
+
+  function loadSalesFollowUpDraft() {
+    if (!salesBrief) {
+      setWorkbenchNotice('Build a sales brief first.');
+      return;
+    }
+    setActionMode('email');
+    setEmailRecipient(salesBrief.draftRecipient);
+    setEmailSubject(salesBrief.draftSubject);
+    setEmailBody(salesBrief.draftBody);
+    setActionNotice(
+      salesBrief.draftRecipient
+        ? 'Sales follow-up draft loaded into Action Center.'
+        : 'Sales follow-up draft loaded into Action Center. Add a recipient before staging approval.',
+    );
+  }
+
+  async function savePrimarySalesAccountNote() {
+    if (!salesBrief) {
+      setWorkbenchNotice('Build a sales brief first.');
+      return;
+    }
+    const accounts = Object.values(durableOperatorMemory?.sales_accounts || {});
+    const deals = Object.values(durableOperatorMemory?.sales_deals || {});
+    const primaryAccount =
+      accounts.find((item) => item.risk_level.trim().toLowerCase().includes('high')) ||
+      accounts[0] ||
+      null;
+    const primaryDeal =
+      deals.find((item) => item.risk_level.trim().toLowerCase().includes('high')) ||
+      deals[0] ||
+      null;
+    if (!primaryAccount) {
+      setWorkbenchNotice('No sales account available to annotate yet.');
+      return;
+    }
+    const note =
+      `[${new Date().toISOString()}] Sales Intel note\n` +
+      `${salesBrief.summary}\n\n` +
+      `Primary deal: ${primaryDeal?.title || 'None'}\n` +
+      `Suggested follow-up: ${primaryDeal?.next_step || primaryAccount.next_step || 'Review next move'}\n` +
+      `Source: HUD sales lane`;
+    try {
+      const next = await updateOperatorSalesAccount({
+        key: primaryAccount.key,
+        notes: [primaryAccount.notes?.trim(), note].filter(Boolean).join('\n\n'),
+        last_interaction: new Date().toISOString(),
+      });
+      setDurableOperatorMemory(next);
+      setWorkbenchNotice(`Saved a sales note for ${primaryAccount.name || primaryAccount.key}.`);
+    } catch (error) {
+      setWorkbenchNotice(error instanceof Error ? error.message : 'Unable to save the sales account note.');
+    }
+  }
+
+  async function markPrimaryDealRisk() {
+    if (!salesBrief) {
+      setWorkbenchNotice('Build a sales brief first.');
+      return;
+    }
+    const deals = Object.values(durableOperatorMemory?.sales_deals || {});
+    const primaryDeal =
+      deals.find((item) => item.risk_level.trim().toLowerCase().includes('high')) ||
+      deals[0] ||
+      null;
+    if (!primaryDeal) {
+      setWorkbenchNotice('No sales deal available to mark right now.');
+      return;
+    }
+    const nextStep = primaryDeal.next_step?.trim() || 'Needs explicit follow-up plan and owner confirmation.';
+    const note =
+      `[${new Date().toISOString()}] Sales Intel risk escalation\n` +
+      `${salesBrief.summary}\n\n` +
+      `Escalated from HUD sales lane.\n` +
+      `Next step: ${nextStep}`;
+    try {
+      const next = await updateOperatorSalesDeal({
+        key: primaryDeal.key,
+        risk_level: 'high',
+        notes: [primaryDeal.notes?.trim(), note].filter(Boolean).join('\n\n'),
+        next_step: nextStep,
+        last_interaction: new Date().toISOString(),
+      });
+      setDurableOperatorMemory(next);
+      setWorkbenchNotice(`Marked ${primaryDeal.title || primaryDeal.key} as high risk in sales memory.`);
+    } catch (error) {
+      setWorkbenchNotice(error instanceof Error ? error.message : 'Unable to update the sales deal risk.');
+    }
+  }
   const architectureTaskOutcome = useMemo(() => {
     const plannerTask = agentRoleTasks.planner?.[0] || null;
     const executorTask = agentRoleTasks.executor?.[0] || null;
@@ -1561,6 +1961,8 @@ export default function JarvisHudDashboard() {
           entries.find((item) => item.id === 'document-mission' || item.id === 'mission-document' || item.domain === 'document') || null,
         design:
           entries.find((item) => item.id === 'design-mission' || item.id === 'mission-design' || item.domain === 'design') || null,
+        sales:
+          entries.find((item) => item.id === 'sales-mission' || item.id === 'mission-sales' || item.domain === 'sales') || null,
       };
     }, [durableOperatorMemory?.missions]);
   const autonomyMissions = useMemo(() => {
@@ -1703,8 +2105,44 @@ export default function JarvisHudDashboard() {
           resultMeta: summarizeMissionMeta(durable?.result_data),
           actionLabel: documentAnalysis ? 'Load Brief' : 'Open Intel',
           action: () => (documentBrief ? injectCommand(documentBrief.prompt) : setFocusMode(false)),
-      });
-    }
+        });
+      }
+
+      if (salesBrief || durableMissionLookup.sales) {
+        const durable = durableMissionLookup.sales;
+        const hasRisk = salesBrief?.counts.find((item) => item.label === 'Risk Signals' && Number(item.value) > 0);
+        const hasFollowUpGap = salesBrief?.summary.toLowerCase().includes('follow-up gap');
+        missions.push({
+          id: durable?.id || 'mission-sales',
+          title: durable?.title || salesBrief?.title || 'Sales mission',
+          domain: 'sales',
+          status: ((durable?.status as MissionStatus | undefined) || (salesBrief ? 'active' : 'idle')),
+          phase:
+            ((durable?.phase as MissionPhase | undefined) ||
+              (hasRisk ? 'plan' : hasFollowUpGap ? 'act' : salesBrief ? 'verify' : 'detect')),
+          summary: durable?.summary || salesBrief?.summary || 'Sales lane is ready.',
+          nextStep:
+            durable?.next_step ||
+            (hasRisk
+              ? 'Review the riskiest deal and assign the next move.'
+              : hasFollowUpGap
+              ? 'Resolve the next follow-up gap.'
+              : 'Audit the current pipeline and prepare the sharpest outreach.'),
+          result:
+            durable?.result ||
+            (hasRisk
+              ? 'Risk signals detected in the pipeline.'
+              : hasFollowUpGap
+              ? 'One or more sales records still lack a clear next step.'
+              : 'Sales memory is stable and ready for the next commercial pass.'),
+          retryHint:
+            durable?.retry_hint ||
+            'Reload Sales Intel, draft the next follow-up, or route the brief to planner for a deeper commercial pass.',
+          resultMeta: summarizeMissionMeta(durable?.result_data),
+          actionLabel: salesBrief ? 'Load Brief' : 'Open Sales',
+          action: () => (salesBrief ? injectCommand(salesBrief.prompt) : setFocusMode(false)),
+        });
+      }
 
       if (savedDesignBrief || durableMissionLookup.design) {
         const durable = durableMissionLookup.design;
@@ -2006,6 +2444,30 @@ export default function JarvisHudDashboard() {
       });
     }
 
+    if (salesBrief) {
+      items.push({
+        id: `sales-brief-${salesBrief.title}`,
+        priority: 59,
+        label: 'Sales Intel',
+        title: salesBrief.title,
+        detail: salesBrief.summary,
+        actionLabel: 'Load Brief',
+        action: () => injectCommand(salesBrief.prompt),
+      });
+    }
+
+    if (customerBrief) {
+      items.push({
+        id: `customer-brief-${customerBrief.title}`,
+        priority: 58,
+        label: 'Customer Intel',
+        title: customerBrief.title,
+        detail: customerBrief.summary,
+        actionLabel: 'Load Brief',
+        action: () => injectCommand(customerBrief.prompt),
+      });
+    }
+
     if (agentArchitecture?.handoff?.brief) {
       items.push({
         id: `agent-handoff-${agentArchitecture.handoff.planner?.task_id || agentArchitecture.handoff.executor?.task_id || 'current'}`,
@@ -2260,7 +2722,7 @@ export default function JarvisHudDashboard() {
     }
 
     return items.sort((left, right) => right.priority - left.priority).slice(0, 6);
-  }, [activeAutomationAlerts, agentArchitecture?.handoff?.brief, agentArchitecture?.handoff?.executor?.task_id, agentArchitecture?.handoff?.planner?.task_id, agentArchitecture?.roles, agentRoleTasks.executor, agentRoleTasks.planner, architectureTaskOutcome, autonomyMissions, documentBrief, editorFilePath, gitCommitMessage, inboxFocusQueue, latestCodeResult?.file_path, latestValidationFailure, latestValidationSuccess, nextCodingTask, nextReviewQueueItem, pendingAction, pendingCodeEdit, pendingWorkbench, prepQueue, screenSnapshot?.capturedAt, screenSnapshot?.label, selfImproveBrief, selfImprovePatchPlan, selfImproveRuns, visionAnalysis?.content, visionQuery?.answer, visionQuery?.question, visionSignals, visionSuggestedActions?.actions, visionTextExtraction?.content, visionUiPlan?.summary, visionUiPlan?.target_label, visionUiTargets?.targets, visionUiVerify?.summary, visionUiVerify?.risk_level, visionUiVerify?.target_label, visualBrief]);
+  }, [activeAutomationAlerts, agentArchitecture?.handoff?.brief, agentArchitecture?.handoff?.executor?.task_id, agentArchitecture?.handoff?.planner?.task_id, agentArchitecture?.roles, agentRoleTasks.executor, agentRoleTasks.planner, architectureTaskOutcome, autonomyMissions, customerBrief, documentBrief, editorFilePath, gitCommitMessage, inboxFocusQueue, latestCodeResult?.file_path, latestValidationFailure, latestValidationSuccess, nextCodingTask, nextReviewQueueItem, pendingAction, pendingCodeEdit, pendingWorkbench, prepQueue, salesBrief, screenSnapshot?.capturedAt, screenSnapshot?.label, selfImproveBrief, selfImprovePatchPlan, selfImproveRuns, visionAnalysis?.content, visionQuery?.answer, visionQuery?.question, visionSignals, visionSuggestedActions?.actions, visionTextExtraction?.content, visionUiPlan?.summary, visionUiPlan?.target_label, visionUiTargets?.targets, visionUiVerify?.summary, visionUiVerify?.risk_level, visionUiVerify?.target_label, visualBrief]);
   const connectorCapabilities = useMemo(() => {
     const ids = new Set(connectedConnectorIds);
     const gmailConnected = ids.has('gmail') || ids.has('gmail_imap');
@@ -5596,9 +6058,41 @@ export default function JarvisHudDashboard() {
                       </div>
                     </div>
                   </div>
-                  <Suspense fallback={<DashboardSectionFallback label="Loading document intelligence..." />}>
-                    <DocumentIntel
-                        title={documentAnalysisTitle}
+                    <Suspense fallback={<DashboardSectionFallback label="Loading sales intelligence..." />}>
+                      <SalesIntelPanel
+                        brief={salesBrief}
+                        architectureBusy={architectureBusy}
+                        onLoadBrief={() => injectCommand(salesBrief?.prompt || '')}
+                        onRouteToPlanner={() => void handoffWithBrief(salesBrief?.plannerPrompt || salesBrief?.prompt || '', 'sales-intel')}
+                        onMakeTask={() =>
+                          createFollowUpTask(
+                            'Sales follow-up review',
+                            salesBrief?.details || salesBrief?.summary || 'Review the current pipeline, risks, and next follow-ups.',
+                          )
+                        }
+                        onLoadPrompt={loadSalesPrompt}
+                        onDraftFollowUp={loadSalesFollowUpDraft}
+                        onSaveAccountNote={() => void savePrimarySalesAccountNote()}
+                        onMarkDealRisk={() => void markPrimaryDealRisk()}
+                      />
+                    </Suspense>
+                    <Suspense fallback={<DashboardSectionFallback label="Loading customer intelligence..." />}>
+                      <CustomerIntelPanel
+                        brief={customerBrief}
+                        architectureBusy={architectureBusy}
+                        onLoadBrief={() => injectCommand(customerBrief?.prompt || '')}
+                        onRouteToPlanner={() => void handoffWithBrief(customerBrief?.plannerPrompt || customerBrief?.prompt || '', 'customer-intel')}
+                        onMakeTask={() =>
+                          createFollowUpTask(
+                            'Customer health review',
+                            customerBrief?.details || customerBrief?.summary || 'Review customer health, churn risk, and the next follow-up actions.',
+                          )
+                        }
+                      />
+                    </Suspense>
+                    <Suspense fallback={<DashboardSectionFallback label="Loading document intelligence..." />}>
+                      <DocumentIntel
+                          title={documentAnalysisTitle}
                         onTitleChange={setDocumentAnalysisTitle}
                         mode={documentAnalysisMode}
                         onModeChange={setDocumentAnalysisMode}
