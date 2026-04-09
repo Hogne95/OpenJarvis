@@ -188,6 +188,20 @@ class DesignBrief:
 
 
 @dataclass(slots=True)
+class FivemBrief:
+    id: str
+    label: str
+    resource_key: str = ""
+    framework: str = ""
+    topology: str = ""
+    summary: str = ""
+    details: str = ""
+    native_families: list[str] = field(default_factory=list)
+    risk_tags: list[str] = field(default_factory=list)
+    created_at: str = ""
+
+
+@dataclass(slots=True)
 class MissionMemory:
     id: str
     title: str
@@ -225,6 +239,7 @@ class OperatorMemory:
         self._visual_briefs: list[VisualBrief] = []
         self._document_briefs: list[DocumentBrief] = []
         self._design_briefs: list[DesignBrief] = []
+        self._fivem_briefs: list[FivemBrief] = []
         self._missions: list[MissionMemory] = []
         self._load()
 
@@ -443,6 +458,23 @@ class OperatorMemory:
             for value in design_briefs
             if str(value.get("summary", "")).strip() or str(value.get("details", "")).strip()
         ]
+        fivem_briefs = data.get("fivem_briefs", [])
+        self._fivem_briefs = [
+            FivemBrief(
+                id=str(value.get("id", "")),
+                label=str(value.get("label", "")),
+                resource_key=str(value.get("resource_key", "")),
+                framework=str(value.get("framework", "")),
+                topology=str(value.get("topology", "")),
+                summary=str(value.get("summary", "")),
+                details=str(value.get("details", "")),
+                native_families=list(value.get("native_families", [])) if isinstance(value.get("native_families", []), list) else [],
+                risk_tags=list(value.get("risk_tags", [])) if isinstance(value.get("risk_tags", []), list) else [],
+                created_at=str(value.get("created_at", "")),
+            )
+            for value in fivem_briefs
+            if str(value.get("summary", "")).strip() or str(value.get("details", "")).strip()
+        ]
         missions = data.get("missions", [])
         self._missions = [
             MissionMemory(
@@ -481,6 +513,7 @@ class OperatorMemory:
             "visual_briefs": [asdict(value) for value in self._visual_briefs],
             "document_briefs": [asdict(value) for value in self._document_briefs],
             "design_briefs": [asdict(value) for value in self._design_briefs],
+            "fivem_briefs": [asdict(value) for value in self._fivem_briefs],
             "missions": [asdict(value) for value in self._missions],
         }
         self._path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
@@ -503,6 +536,7 @@ class OperatorMemory:
             "visual_briefs": [asdict(value) for value in self._visual_briefs],
             "document_briefs": [asdict(value) for value in self._document_briefs],
             "design_briefs": [asdict(value) for value in self._design_briefs],
+            "fivem_briefs": [asdict(value) for value in self._fivem_briefs],
             "missions": [asdict(value) for value in self._missions],
         }
 
@@ -977,6 +1011,49 @@ class OperatorMemory:
             ),
         )
         self._design_briefs = self._design_briefs[:24]
+        self._save()
+        return self.snapshot()
+
+    def add_fivem_brief(
+        self,
+        *,
+        label: str,
+        resource_key: str,
+        framework: str,
+        topology: str,
+        summary: str,
+        details: str,
+        native_families: list[str] | None = None,
+        risk_tags: list[str] | None = None,
+        created_at: str = "",
+    ) -> dict[str, Any]:
+        cleaned_label = label.strip() or "FiveM Brief"
+        cleaned_resource_key = resource_key.strip()
+        cleaned_framework = framework.strip()
+        cleaned_topology = topology.strip()
+        cleaned_summary = summary.strip()
+        cleaned_details = details.strip()
+        if not cleaned_summary and not cleaned_details:
+            raise ValueError("FiveM brief content is required")
+        stamp = (created_at or f"{cleaned_label}-{cleaned_framework or 'fivem'}").strip().lower().replace(" ", "-")
+        brief_id = f"fivem-brief-{stamp}"
+        self._fivem_briefs = [item for item in self._fivem_briefs if item.id != brief_id]
+        self._fivem_briefs.insert(
+            0,
+            FivemBrief(
+                id=brief_id,
+                label=cleaned_label,
+                resource_key=cleaned_resource_key,
+                framework=cleaned_framework,
+                topology=cleaned_topology,
+                summary=cleaned_summary,
+                details=cleaned_details,
+                native_families=list(native_families or []),
+                risk_tags=list(risk_tags or []),
+                created_at=created_at,
+            ),
+        )
+        self._fivem_briefs = self._fivem_briefs[:24]
         self._save()
         return self.snapshot()
 

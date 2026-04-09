@@ -101,6 +101,7 @@ import {
   updateOperatorSalesDeal,
   updateOperatorDocumentBrief,
   updateOperatorDesignBrief,
+  updateOperatorFivemBrief,
   updateOperatorVisualBrief,
   updateOperatorVisualInsight,
   updateOperatorVisualObservation,
@@ -144,8 +145,10 @@ import { useAppStore } from './lib/store';
 import type { ChatMessage, ToolCallInfo } from './types';
 import { InputArea } from './components/Chat/InputArea';
 import type { CommercialOpsBrief } from './components/Dashboard/CommercialOpsPanel';
+import type { FivemCodingBrief } from './components/Dashboard/FivemCodingPanel';
 import type { MissionMatrixItem } from './components/Dashboard/MissionMatrix';
 import type { ShopifyIntelBrief } from './components/Dashboard/ShopifyIntelPanel';
+import { getFivemFrameworkCanon } from './lib/fivemCanon';
 import { useSpeech } from './hooks/useSpeech';
 
 const CommanderQueue = lazy(() =>
@@ -171,6 +174,9 @@ const DesignIntelligence = lazy(() =>
 );
 const DocumentIntel = lazy(() =>
   import('./components/Dashboard/DocumentIntel').then((module) => ({ default: module.DocumentIntel })),
+);
+const FivemCodingPanel = lazy(() =>
+  import('./components/Dashboard/FivemCodingPanel').then((module) => ({ default: module.FivemCodingPanel })),
 );
 const IntentConsoleFeedback = lazy(() =>
   import('./components/Dashboard/IntentConsoleFeedback').then((module) => ({ default: module.IntentConsoleFeedback })),
@@ -656,11 +662,14 @@ export default function JarvisHudDashboard() {
   const lastAutoArchitectureDesignRef = useRef('');
   const lastAutoArchitectureShopifyRef = useRef('');
   const lastAutoArchitectureCommercialRef = useRef('');
+  const lastAutoArchitectureFivemRef = useRef('');
   const lastSelfImproveOutcomeRef = useRef('');
   const lastSelfImproveFollowupRef = useRef('');
   const lastSelfImprovePatchRef = useRef('');
   const lastDesignOutcomeRef = useRef('');
   const lastDesignTaskRef = useRef('');
+  const lastFivemOutcomeRef = useRef('');
+  const lastFivemTaskRef = useRef('');
   const lastMissionSyncRef = useRef('');
   const lastSpeechDetectedAtRef = useRef(0);
   const lastVoicePlaybackAtRef = useRef(0);
@@ -1920,6 +1929,173 @@ export default function JarvisHudDashboard() {
     } satisfies CommercialOpsBrief;
   }, [customerBrief, durableOperatorMemory?.customer_accounts, durableOperatorMemory?.customer_interactions, durableOperatorMemory?.sales_accounts, durableOperatorMemory?.sales_deals, salesBrief, shopifyBrief, shopifySummary]);
 
+  const fivemCodingBrief = useMemo(() => {
+    const changedFiles = workspaceSummary?.changed_files || [];
+    const projectMemories = Object.values(durableOperatorMemory?.projects || {});
+    const likelyProjectMemory = projectMemories[0] || null;
+    const projectText = [
+      likelyProjectMemory?.focus || '',
+      likelyProjectMemory?.status || '',
+      likelyProjectMemory?.next_step || '',
+      likelyProjectMemory?.notes || '',
+      workspaceSummary?.root || '',
+      editorFilePath || '',
+      ...changedFiles,
+    ]
+      .join('\n')
+      .toLowerCase();
+    const hasLua = changedFiles.some((file) => file.toLowerCase().endsWith('.lua')) || editorFilePath.toLowerCase().endsWith('.lua');
+    const hasManifest =
+      projectText.includes('fxmanifest.lua') ||
+      projectText.includes('__resource.lua') ||
+      changedFiles.some((file) => /fxmanifest\.lua|__resource\.lua/i.test(file));
+    const hasClientScripts = /client\.lua|client\/|client_script|client_scripts|registercommand|setnuifocus|sendnuimessage/.test(projectText);
+    const hasServerScripts = /server\.lua|server\/|server_script|server_scripts|registernetevent|triggerserverevent|triggerclientevent/.test(projectText);
+    const hasSharedScripts = /shared\.lua|shared\/|shared_script|shared_scripts|config\.lua/.test(projectText);
+    const hasNui = /nui|sendnuimessage|setnuifocus|ui_page/.test(projectText);
+    const hasStateSignals = /statebag|localplayer\.state|player\(.*\)\.state|globalstate|entity\(.+\)\.state/.test(projectText);
+    const hasServerCfgSignals =
+      /server\.cfg|ensure\s+\w+|start\s+\w+|set\s+sv_|endpoint_add_tcp|endpoint_add_udp|onesync|mysql_connection_string/.test(projectText);
+    const hasDependencySignals = /dependency|dependencies|shared_script|server_script|client_script|provide\s+/.test(projectText);
+    const hasFivemSignals =
+      hasManifest ||
+      /fivem|citizenfx|citizen\.|registernetevent|triggerclientevent|triggerserverevent|setnuifocus|sendnuimessage|playerpedid|getentitycoords|qb-core|qbcore|esx|ox_lib|ox_target|statebag/.test(
+        projectText,
+      );
+    const nativeFamilies = [
+      /playerpedid|getplayer|networkisplayeractive|playerid|getplayerserverid/.test(projectText) ? 'player' : null,
+      /getentitycoords|doesentityexist|setentitycoords|freezeentityposition|deleteentity|networkgetnetworkidfromentity/.test(projectText)
+        ? 'entity'
+        : null,
+      /getvehiclepedisin|createvehicle|setvehicle|taskvehicle|isvehicle/.test(projectText) ? 'vehicle' : null,
+      /getped|setped|isped|taskstartscenario|clearpedtasks/.test(projectText) ? 'ped' : null,
+      /registernetevent|trigger(server|client)event|triggerlatentevent|addstatebagchangehandler/.test(projectText) ? 'network' : null,
+      /sendnuimessage|setnuifocus|registernuicallback|ui_page/.test(projectText) ? 'ui' : null,
+      hasStateSignals ? 'state' : null,
+    ].filter((item): item is string => Boolean(item));
+    const detectedFramework = /qb-core|qbcore/.test(projectText)
+      ? 'QBCore'
+      : /\besx\b/.test(projectText)
+      ? 'ESX'
+      : /ox_lib|ox_target|ox_inventory|oxmysql/.test(projectText)
+      ? 'ox_*'
+      : hasFivemSignals
+      ? 'Custom / native FiveM'
+      : 'Lua';
+    const frameworkCanon = getFivemFrameworkCanon(detectedFramework);
+    const resourceKey = `${workspaceSummary?.root || 'unknown-root'}::${editorFilePath || changedFiles[0] || 'resource'}`;
+    const topology = [
+      hasClientScripts ? 'client' : null,
+      hasServerScripts ? 'server' : null,
+      hasSharedScripts ? 'shared' : null,
+      hasNui ? 'nui' : null,
+    ].filter(Boolean).join(' / ') || 'single-surface';
+    if (!hasLua && !hasFivemSignals) return null;
+    const serverStructure =
+      [
+        hasServerScripts ? 'server scripts present' : null,
+        hasClientScripts ? 'client scripts present' : null,
+        hasSharedScripts ? 'shared/config surface present' : null,
+        hasNui ? 'NUI surface present' : null,
+        hasServerCfgSignals ? 'server.cfg/runtime config signals present' : null,
+        hasDependencySignals ? 'manifest/dependency wiring present' : null,
+      ].filter(Boolean).join(' | ') || 'single-surface resource with limited runtime signals';
+    const riskTags = [
+      nativeFamilies.includes('network') ? 'network-trust' : null,
+      nativeFamilies.includes('state') ? 'state-desync' : null,
+      hasClientScripts && hasServerScripts ? 'cross-boundary' : null,
+      hasNui ? 'nui-coupling' : null,
+      detectedFramework === 'QBCore' || detectedFramework === 'ESX' || detectedFramework === 'ox_*' ? 'framework-coupling' : null,
+      frameworkCanon.watchouts[0] || null,
+    ].filter((item): item is string => Boolean(item));
+    const focusItems = [
+      hasManifest
+        ? {
+            label: 'Resource Manifest',
+            detail: 'The workspace looks like a FiveM resource. Review fxmanifest or __resource wiring, dependency declarations, and client/server script boundaries first.',
+          }
+        : null,
+      hasLua
+        ? {
+            label: 'Lua Surface',
+            detail: `${[editorFilePath, ...changedFiles].filter((file) => /\.lua$/i.test(file)).slice(0, 4).join(', ') || 'Lua files detected'} should be reviewed for state flow, event safety, nil handling, and return-value discipline.`,
+          }
+        : null,
+      /registernetevent|triggerclientevent|triggerserverevent|statebag|playerpedid|getentitycoords/.test(projectText)
+        ? {
+            label: 'Native / Event Usage',
+            detail: 'Network events or FiveM natives are in play. Check authority boundaries, parameter validation, entity ownership, and client/server trust assumptions.',
+          }
+        : null,
+      nativeFamilies.length
+        ? {
+            label: 'Native Families',
+            detail: `Detected native surfaces: ${nativeFamilies.join(', ')}. Review each family for authority, null-safety, and whether the script is calling the right side of the engine.`,
+          }
+        : null,
+      hasStateSignals
+        ? {
+            label: 'State Flow',
+            detail: 'State bags or shared state patterns are present. Audit replication assumptions, stale reads, and whether writes are happening on the authoritative side.',
+          }
+        : null,
+      /qb-core|qbcore|esx|ox_lib|ox_target/.test(projectText)
+        ? {
+            label: 'Framework Coupling',
+            detail: `Framework detected: ${detectedFramework}. Audit exports, callback usage, player/state APIs, and dependency assumptions before refactoring.`,
+          }
+        : null,
+      hasClientScripts || hasServerScripts || hasSharedScripts || hasNui
+        ? {
+            label: 'Resource Topology',
+            detail: `Detected topology: ${topology}. Review event flow, ownership boundaries, and whether logic is living on the safest side of the resource.`,
+          }
+        : null,
+      hasServerCfgSignals || hasDependencySignals
+        ? {
+            label: 'Server Structure',
+            detail: `Detected structure: ${serverStructure}. Review resource start order, dependency assumptions, framework boot order, and whether runtime config matches how the scripts initialize.`,
+          }
+        : null,
+    ].filter((item): item is { label: string; detail: string } => Boolean(item));
+    const details = [
+      `Repo root: ${workspaceSummary?.root || 'Unknown'}`,
+      `Current file: ${editorFilePath || 'None loaded'}`,
+      `Changed files: ${changedFiles.slice(0, 8).join(', ') || 'None'}`,
+      `Project focus: ${likelyProjectMemory?.focus || 'Unknown'}`,
+      `Project status: ${likelyProjectMemory?.status || 'Unknown'}`,
+      `Project next step: ${likelyProjectMemory?.next_step || 'Unknown'}`,
+      `Framework: ${detectedFramework}`,
+      `Topology: ${topology}`,
+      `Server structure: ${serverStructure}`,
+      `Native families: ${nativeFamilies.join(', ') || 'Unknown'}`,
+      `Canon priorities: ${frameworkCanon.priorities.join(' | ')}`,
+      `Canon watchouts: ${frameworkCanon.watchouts.join(' | ')}`,
+      `Exploit patterns: ${frameworkCanon.exploitPatterns.join(' | ')}`,
+      `Console checks: ${frameworkCanon.consoleChecks.join(' | ')}`,
+      `Detected mode: ${hasFivemSignals ? 'FiveM / Lua resource' : 'Lua project'}`,
+    ].join('\n');
+    return {
+      title: hasFivemSignals ? 'FiveM Coding Intel' : 'Lua Coding Intel',
+      summary: hasFivemSignals
+        ? 'FiveM resource signals detected. JARVIS can now reason about natives, events, resource architecture, and exploit-resistant Lua patterns more directly.'
+        : 'Lua signals detected. JARVIS can now review logic, state flow, safety, and maintainability with a stronger Lua-focused lens.',
+      details,
+      resourceKey,
+      framework: detectedFramework,
+      topology,
+      serverStructure,
+      nativeFamilies,
+      riskTags,
+      canonSummary: frameworkCanon.summary,
+      canonPriorities: frameworkCanon.priorities,
+      canonWatchouts: frameworkCanon.watchouts,
+      canonExploitPatterns: frameworkCanon.exploitPatterns,
+      canonConsoleChecks: frameworkCanon.consoleChecks,
+      focusItems,
+    } satisfies FivemCodingBrief;
+  }, [durableOperatorMemory?.projects, editorFilePath, workspaceSummary?.changed_files, workspaceSummary?.root]);
+
   function loadSalesPrompt(mode: 'account-brief' | 'deal-review' | 'follow-up' | 'objection' | 'meeting-prep') {
     if (!salesBrief) {
       setWorkbenchNotice('Build a sales brief first.');
@@ -2075,6 +2251,7 @@ export default function JarvisHudDashboard() {
     const roleLabel = (task: AgentTask) => {
       const baseLabel = task.agent_id === plannerTask?.agent_id ? 'Planner' : 'Executor';
       if (handoffSource.startsWith('design')) return `Design ${baseLabel}`;
+      if (handoffSource.startsWith('fivem')) return `FiveM ${baseLabel}`;
       return baseLabel;
     };
     const tasks = [plannerTask, executorTask].filter(Boolean) as AgentTask[];
@@ -2100,6 +2277,10 @@ export default function JarvisHudDashboard() {
   }, [agentArchitecture?.handoff?.source, agentRoleTasks.executor, agentRoleTasks.planner]);
   const designArchitectureTaskOutcome = useMemo(() => {
     if (!agentArchitecture?.handoff?.source?.startsWith('design')) return null;
+    return architectureTaskOutcome;
+  }, [agentArchitecture?.handoff?.source, architectureTaskOutcome]);
+  const fivemArchitectureTaskOutcome = useMemo(() => {
+    if (!agentArchitecture?.handoff?.source?.startsWith('fivem')) return null;
     return architectureTaskOutcome;
   }, [agentArchitecture?.handoff?.source, architectureTaskOutcome]);
   const selfImproveBrief = useMemo(() => {
@@ -2248,6 +2429,8 @@ export default function JarvisHudDashboard() {
           entries.find((item) => item.id === 'shopify-mission' || item.id === 'mission-shopify' || item.domain === 'shopify') || null,
         commercial:
           entries.find((item) => item.id === 'commercial-mission' || item.id === 'mission-commercial' || item.domain === 'commercial') || null,
+        fivem:
+          entries.find((item) => item.id === 'fivem-mission' || item.id === 'mission-fivem' || item.domain === 'fivem') || null,
       };
     }, [durableOperatorMemory?.missions]);
   const autonomyMissions = useMemo(() => {
@@ -2588,6 +2771,65 @@ export default function JarvisHudDashboard() {
               ],
           actionLabel: commercialBrief ? 'Load Brief' : 'Open Commercial',
           action: () => (commercialBrief ? injectCommand(commercialBrief.prompt) : setFocusMode(false)),
+        });
+      }
+
+      if (fivemCodingBrief || durableMissionLookup.fivem) {
+        const durable = durableMissionLookup.fivem;
+        const isFrameworkSpecific =
+          fivemCodingBrief?.framework === 'QBCore' || fivemCodingBrief?.framework === 'ESX' || fivemCodingBrief?.framework === 'ox_*';
+        const hasComplexTopology =
+          (fivemCodingBrief?.topology || '').includes('client') && (fivemCodingBrief?.topology || '').includes('server');
+        missions.push({
+          id: durable?.id || 'mission-fivem',
+          title: durable?.title || fivemCodingBrief?.title || 'FiveM mission',
+          domain: 'fivem',
+          status: ((durable?.status as MissionStatus | undefined) || (fivemCodingBrief ? 'active' : 'idle')),
+          phase:
+            ((durable?.phase as MissionPhase | undefined) ||
+              (hasComplexTopology ? 'plan' : isFrameworkSpecific ? 'verify' : fivemCodingBrief ? 'detect' : 'detect')),
+          summary:
+            durable?.summary ||
+            fivemCodingBrief?.summary ||
+            'FiveM/Lua coding lane is ready.',
+          nextStep:
+            durable?.next_step ||
+            (hasComplexTopology
+              ? 'Review client/server/shared boundaries and event flow before the next patch.'
+              : isFrameworkSpecific
+              ? `Audit ${fivemCodingBrief?.framework} usage and exports before changing logic.`
+              : 'Load the FiveM/Lua review brief and inspect the current script flow.'),
+          result:
+            durable?.result ||
+            fivemCodingBrief?.focusItems[0]?.detail ||
+            'FiveM/Lua context is ready for deeper review.',
+          retryHint:
+            durable?.retry_hint ||
+            'Reload FiveM/Lua intel, run the most relevant framework/security review, or route the brief into planner for a safer implementation pass.',
+          nextActionLabel: typeof durable?.next_action?.label === 'string' ? durable.next_action.label : undefined,
+          resultData: durable?.result_data || {
+            framework: fivemCodingBrief?.framework || 'Unknown',
+            topology: fivemCodingBrief?.topology || 'Unknown',
+            focus_area: fivemCodingBrief?.focusItems[0]?.label || 'FiveM review',
+            native_families: (fivemCodingBrief?.nativeFamilies || []).join(', '),
+          },
+          nextAction: durable?.next_action || (fivemCodingBrief
+            ? {
+                kind: hasComplexTopology || isFrameworkSpecific ? 'task' : 'prompt',
+                content: fivemCodingBrief.details,
+                label: hasComplexTopology ? 'Review Resource Boundaries' : isFrameworkSpecific ? `Review ${fivemCodingBrief.framework}` : 'FiveM Review',
+                source: 'fivem-mission',
+              }
+            : undefined),
+          resultMeta: durable?.result_data
+            ? summarizeMissionMeta(durable.result_data)
+            : [
+                `framework: ${fivemCodingBrief?.framework || 'Unknown'}`,
+                `topology: ${fivemCodingBrief?.topology || 'Unknown'}`,
+                `native families: ${(fivemCodingBrief?.nativeFamilies || []).join(', ') || 'Unknown'}`,
+              ],
+          actionLabel: fivemCodingBrief ? 'Open FiveM Intel' : 'Open Coding',
+          action: () => (fivemCodingBrief ? loadFivemCodingPrompt('fivem-review') : setFocusMode(false)),
         });
       }
 
@@ -2935,6 +3177,18 @@ export default function JarvisHudDashboard() {
         detail: commercialBrief.summary,
         actionLabel: 'Load Brief',
         action: () => injectCommand(commercialBrief.prompt),
+      });
+    }
+    if (fivemCodingBrief) {
+      const nativeLabel = fivemCodingBrief.nativeFamilies.length ? ` / ${fivemCodingBrief.nativeFamilies.join(', ')}` : '';
+      items.push({
+        id: 'fivem-coding-brief',
+        priority: 56,
+        label: 'FiveM Intel',
+        title: fivemCodingBrief.title,
+        detail: `${fivemCodingBrief.framework} / ${fivemCodingBrief.topology}${nativeLabel}`,
+        actionLabel: 'Review',
+        action: () => loadFivemCodingPrompt('fivem-review'),
       });
     }
 
@@ -3966,6 +4220,30 @@ export default function JarvisHudDashboard() {
     }
   }
 
+  async function saveFivemBrief() {
+    if (!fivemCodingBrief) {
+      setWorkbenchNotice('Build a FiveM or Lua brief first.');
+      return;
+    }
+    try {
+      const next = await updateOperatorFivemBrief({
+        label: fivemCodingBrief.title,
+        resource_key: fivemCodingBrief.resourceKey,
+        framework: fivemCodingBrief.framework,
+        topology: fivemCodingBrief.topology,
+        summary: fivemCodingBrief.summary,
+        details: fivemCodingBrief.details,
+        native_families: fivemCodingBrief.nativeFamilies,
+        risk_tags: fivemCodingBrief.riskTags,
+        created_at: new Date().toISOString(),
+      });
+      setDurableOperatorMemory(next);
+      setWorkbenchNotice('FiveM brief saved to durable memory.');
+    } catch (error) {
+      setWorkbenchNotice(error instanceof Error ? error.message : 'Unable to save FiveM brief.');
+    }
+  }
+
   async function exportCurrentDocumentAnalysis(format: 'docx' | 'xlsx' | 'txt') {
     if (!documentAnalysis || !documentBrief) {
       setWorkbenchNotice('Build a document analysis first.');
@@ -4632,7 +4910,7 @@ export default function JarvisHudDashboard() {
   }
 
   function loadCodingPrompt(
-    mode: 'inspect' | 'debug' | 'review' | 'refactor',
+    mode: 'inspect' | 'debug' | 'review' | 'refactor' | 'logic',
   ) {
     const projectContext = currentProjectMemory
       ? `\nKnown project focus: ${currentProjectMemory.focus || 'none'}\nProject status: ${currentProjectMemory.status || 'unknown'}\nNext step: ${currentProjectMemory.next_step || 'not recorded'}\nProject notes: ${currentProjectMemory.notes || 'none'}`
@@ -4646,6 +4924,8 @@ export default function JarvisHudDashboard() {
         `Act as my code reviewer. Focus on bugs, regressions, missing tests, and risky behavior. Start with the highest-severity findings and keep summaries brief.${projectContext}`,
       refactor:
         `Act as my refactoring copilot. Identify one safe, high-value cleanup that improves maintainability without changing intended behavior, then propose the smallest implementation plan.${projectContext}`,
+      logic:
+        `Act as my logic reviewer. Focus on control flow, hidden assumptions, invalid state transitions, nil/undefined handling, race conditions, event ordering, and places where the code can silently do the wrong thing.${projectContext}`,
     } as const;
     injectCommand(prompts[mode]);
     setWorkbenchNotice(
@@ -4655,7 +4935,102 @@ export default function JarvisHudDashboard() {
         ? 'Debug prompt loaded.'
         : mode === 'review'
         ? 'Review prompt loaded.'
+        : mode === 'logic'
+        ? 'Logic audit prompt loaded.'
         : 'Refactor prompt loaded.',
+    );
+  }
+
+  function loadFivemCodingPrompt(
+    mode:
+      | 'fivem-review'
+      | 'lua-logic'
+      | 'native-usage'
+      | 'native-reference'
+      | 'event-flow'
+      | 'state-audit'
+      | 'console-debug'
+      | 'server-structure'
+      | 'resource-architecture'
+      | 'fivem-security'
+      | 'qbcore-review'
+      | 'esx-review'
+      | 'ox-review'
+      | 'topology-review',
+  ) {
+    const changedFiles = (workspaceSummary?.changed_files || []).slice(0, 8).join(', ') || 'None';
+    const context = [
+      `Repo root: ${workspaceSummary?.root || 'Unknown'}`,
+      `Current file: ${editorFilePath || 'None loaded'}`,
+      `Changed files: ${changedFiles}`,
+      currentProjectMemory
+        ? `Project context\nFocus: ${currentProjectMemory.focus || 'None'}\nStatus: ${currentProjectMemory.status || 'Unknown'}\nNext step: ${currentProjectMemory.next_step || 'None'}\nNotes: ${currentProjectMemory.notes || 'None'}`
+        : '',
+      fivemCodingBrief
+        ? `FiveM/Lua intel\n${fivemCodingBrief.details}\nCanon summary: ${fivemCodingBrief.canonSummary}\nCanon priorities: ${fivemCodingBrief.canonPriorities.join('; ')}\nCanon watchouts: ${fivemCodingBrief.canonWatchouts.join('; ')}\nExploit patterns: ${fivemCodingBrief.canonExploitPatterns.join('; ')}\nConsole checks: ${fivemCodingBrief.canonConsoleChecks.join('; ')}`
+        : '',
+    ]
+      .filter(Boolean)
+      .join('\n\n');
+    const prompts = {
+      'fivem-review':
+        `Act as a senior FiveM script reviewer.\n${context}\n\nReview this resource for client/server boundary mistakes, unsafe network events, native misuse, framework coupling, missing validation, and likely gameplay regressions. Start with the highest-severity findings.`,
+      'lua-logic':
+        `Act as a senior Lua engineer.\n${context}\n\nAudit the logic carefully for invalid state flow, nil handling, hidden assumptions, return-value misuse, event sequencing issues, and maintainability risks. Prefer concrete bug risks over style comments.`,
+      'native-usage':
+        `Act as a FiveM native and gameplay-systems specialist.\n${context}\n\nReview all likely native usage patterns, entity ownership assumptions, ped/vehicle/object lifecycle handling, and whether the script is using the safest and clearest native patterns for production gameplay code.`,
+      'native-reference':
+        `Act as a FiveM native reference guide and gameplay systems reviewer.\n${context}\n\nGroup the detected native families, explain what each family is likely doing in this resource, call out the main misuse risks, and list the safest review checkpoints before editing the script.`,
+      'event-flow':
+        `Act as a FiveM event-flow reviewer.\n${context}\n\nTrace the likely client, server, shared, and NUI event flow. Identify trust-boundary mistakes, missing validation, duplicated responsibility, and places where the wrong side of the resource appears to own the logic.`,
+      'state-audit':
+        `Act as a senior Lua gameplay engineer.\n${context}\n\nAudit shared state, state bag usage, lifecycle ordering, cache invalidation, and nil/undefined risk. Focus on logic bugs and desync risks instead of style commentary.`,
+      'console-debug':
+        `Act as a FiveM runtime debugging specialist.\n${context}\n\nAssume this needs to be debugged from the FiveM server/client console first. Identify the most likely runtime failures, the log lines or console symptoms to inspect, the safest debug sequence, and the first low-risk instrumentation step before editing code.`,
+      'server-structure':
+        `Act as a FiveM server structure reviewer.\n${context}\n\nMap the likely server.cfg/runtime configuration, resource ensure/start order, dependency wiring, framework boot order, and shared/client/server initialization flow. Point out brittle startup assumptions and the safest structural fixes.`,
+      'resource-architecture':
+        `Act as a FiveM resource architect.\n${context}\n\nReview resource structure, fxmanifest or __resource organization, shared/client/server separation, exports, callbacks, NUI boundaries, and dependency layout. Propose the safest architectural improvements without breaking behavior.`,
+      'fivem-security':
+        `Act as a FiveM security reviewer.\n${context}\n\nAudit for exploit risks, client-trust mistakes, insecure event handlers, missing permission checks, unsanitized payloads, item/money/state abuse risks, and weak server authority. Prioritize real abuse paths.`,
+      'qbcore-review':
+        `Act as a senior QBCore reviewer.\n${context}\n\nReview this script for QBCore-specific coupling, exports, player object usage, callback flow, item/money/state handling, and common framework migration or exploit mistakes.`,
+      'esx-review':
+        `Act as a senior ESX reviewer.\n${context}\n\nReview this script for ESX-specific patterns, shared object usage, callback flow, job/account/item handling, and common framework misuse or fragile assumptions.`,
+      'ox-review':
+        `Act as an ox_* ecosystem reviewer.\n${context}\n\nReview this script for ox_lib, ox_target, ox_inventory, oxmysql, and related usage. Focus on API correctness, callback/events, UI integration, targeting flow, and dependency assumptions.`,
+      'topology-review':
+        `Act as a FiveM resource topology reviewer.\n${context}\n\nMap the resource topology across client, server, shared, and NUI surfaces. Identify misplaced logic, insecure trust boundaries, duplicated state, and the safest restructuring order.`,
+    } as const;
+    injectCommand(prompts[mode]);
+    setWorkbenchNotice(
+      mode === 'fivem-review'
+        ? 'FiveM review prompt loaded.'
+        : mode === 'lua-logic'
+        ? 'Lua logic prompt loaded.'
+        : mode === 'native-usage'
+        ? 'FiveM native-usage prompt loaded.'
+        : mode === 'native-reference'
+        ? 'FiveM native reference prompt loaded.'
+        : mode === 'event-flow'
+        ? 'FiveM event-flow prompt loaded.'
+        : mode === 'state-audit'
+        ? 'FiveM state-audit prompt loaded.'
+        : mode === 'console-debug'
+        ? 'FiveM console-debug prompt loaded.'
+        : mode === 'server-structure'
+        ? 'FiveM server-structure prompt loaded.'
+        : mode === 'resource-architecture'
+        ? 'FiveM resource-architecture prompt loaded.'
+        : mode === 'qbcore-review'
+        ? 'QBCore review prompt loaded.'
+        : mode === 'esx-review'
+        ? 'ESX review prompt loaded.'
+        : mode === 'ox-review'
+        ? 'ox_* review prompt loaded.'
+        : mode === 'topology-review'
+        ? 'Resource topology prompt loaded.'
+        : 'FiveM security prompt loaded.',
     );
   }
 
@@ -5537,6 +5912,25 @@ export default function JarvisHudDashboard() {
         }
       }
     }
+
+    if (fivemCodingBrief) {
+      const complexTopology =
+        fivemCodingBrief.topology.includes('client') && fivemCodingBrief.topology.includes('server');
+      const frameworkHeavy =
+        fivemCodingBrief.framework === 'QBCore' || fivemCodingBrief.framework === 'ESX' || fivemCodingBrief.framework === 'ox_*';
+      const hasNetworkOrState =
+        fivemCodingBrief.nativeFamilies.includes('network') || fivemCodingBrief.nativeFamilies.includes('state');
+      if (complexTopology || frameworkHeavy || hasNetworkOrState) {
+        const fivemKey = `${fivemCodingBrief.framework}:${fivemCodingBrief.topology}:${fivemCodingBrief.nativeFamilies.join(',')}`;
+        if (lastAutoArchitectureFivemRef.current !== fivemKey) {
+          lastAutoArchitectureFivemRef.current = fivemKey;
+          handoffWithBrief(
+            `${fivemCodingBrief.details}\n\nFocus the next FiveM pass on safe client/server ownership, native usage, event validation, and exploit-resistant Lua logic.`,
+            'fivem-auto',
+          ).catch(() => null);
+        }
+      }
+    }
   }, [
     actionBusy,
     agentArchitecture?.roles,
@@ -5547,6 +5941,7 @@ export default function JarvisHudDashboard() {
     dailyDigest?.text,
     durableOperatorMemory?.design_briefs,
     editorBusy,
+    fivemCodingBrief,
     handoffWithBrief,
     pendingAction,
     pendingCodeEdit,
@@ -5621,6 +6016,55 @@ export default function JarvisHudDashboard() {
   }, [agentArchitecture?.handoff?.source, architectureTaskOutcome]);
 
   useEffect(() => {
+    if (!architectureTaskOutcome || !agentArchitecture?.handoff?.source?.startsWith('fivem')) return;
+    const outcomeKey = `${agentArchitecture.handoff.source}:${architectureTaskOutcome.task.id}:${architectureTaskOutcome.kind}`;
+    if (lastFivemOutcomeRef.current === outcomeKey) return;
+    lastFivemOutcomeRef.current = outcomeKey;
+    const savedFivemBrief = durableOperatorMemory?.fivem_briefs?.[0] || null;
+    void updateOperatorMission({
+      id: 'fivem-mission',
+      title: 'FiveM mission',
+      domain: 'fivem',
+      status: architectureTaskOutcome.kind === 'failed' ? 'blocked' : 'complete',
+      phase: architectureTaskOutcome.kind === 'failed' ? 'retry' : 'done',
+      summary:
+        architectureTaskOutcome.kind === 'failed'
+          ? 'FiveM mission returned a blocker.'
+          : 'FiveM mission returned an outcome.',
+      next_step:
+        architectureTaskOutcome.kind === 'failed'
+          ? 'Review the blocker, reload the saved FiveM brief, and isolate the safest resource boundary or native fix.'
+          : 'Review the FiveM outcome and decide whether the next resource pass should be implementation or validation.',
+      result: architectureTaskOutcome.summary,
+      retry_hint:
+        architectureTaskOutcome.kind === 'failed'
+          ? 'Retry after narrowing the risky event, authority, or framework boundary.'
+          : '',
+      result_data: {
+        source: agentArchitecture.handoff.source,
+        task_id: architectureTaskOutcome.task.id,
+        kind: architectureTaskOutcome.kind,
+        label: architectureTaskOutcome.label,
+        framework: savedFivemBrief?.framework || fivemCodingBrief?.framework || '',
+        topology: savedFivemBrief?.topology || fivemCodingBrief?.topology || '',
+        native_families: (savedFivemBrief?.native_families || fivemCodingBrief?.nativeFamilies || []).join(', '),
+      },
+      next_action: {
+        kind: 'prompt',
+        content: architectureTaskOutcome.summary,
+        label: architectureTaskOutcome.kind === 'failed' ? 'FiveM Repair' : 'FiveM Review',
+      },
+      updated_at: new Date().toISOString(),
+    })
+      .then((memory) => {
+        setDurableOperatorMemory(memory);
+      })
+      .catch(() => {
+        lastFivemOutcomeRef.current = '';
+      });
+  }, [agentArchitecture?.handoff?.source, architectureTaskOutcome, durableOperatorMemory?.fivem_briefs, fivemCodingBrief]);
+
+  useEffect(() => {
     if (!architectureTaskOutcome || !agentArchitecture?.handoff?.source?.startsWith('design')) return;
     if (architectureTaskOutcome.kind !== 'failed') return;
     if (pendingAction || pendingCodeEdit || pendingWorkbench || actionBusy !== null) return;
@@ -5648,6 +6092,39 @@ export default function JarvisHudDashboard() {
     agentArchitecture?.handoff?.source,
     architectureTaskOutcome,
     durableOperatorMemory?.design_briefs,
+    pendingAction,
+    pendingCodeEdit,
+    pendingWorkbench,
+  ]);
+
+  useEffect(() => {
+    if (!architectureTaskOutcome || !agentArchitecture?.handoff?.source?.startsWith('fivem')) return;
+    if (architectureTaskOutcome.kind !== 'failed') return;
+    if (pendingAction || pendingCodeEdit || pendingWorkbench || actionBusy !== null) return;
+
+    const savedFivemBrief = durableOperatorMemory?.fivem_briefs?.[0] || null;
+    const taskKey = `${architectureTaskOutcome.task.id}:${savedFivemBrief?.id || fivemCodingBrief?.framework || 'fivem'}`;
+    if (lastFivemTaskRef.current === taskKey) return;
+    lastFivemTaskRef.current = taskKey;
+
+    const framework = savedFivemBrief?.framework || fivemCodingBrief?.framework || 'FiveM';
+    const topology = savedFivemBrief?.topology || fivemCodingBrief?.topology || 'unknown topology';
+    const nativeFamilies =
+      (savedFivemBrief?.native_families || fivemCodingBrief?.nativeFamilies || []).join(', ') || 'unknown native families';
+    const guidance = savedFivemBrief?.details || fivemCodingBrief?.details || 'Reload the FiveM brief and isolate the smallest safe fix.';
+
+    createFollowUpTask(
+      `Resolve ${framework} script blocker`,
+      `FiveM blocker detected.\n\nFramework: ${framework}\nTopology: ${topology}\nNative families: ${nativeFamilies}\n\nLatest blocker:\n${architectureTaskOutcome.summary}\n\nSaved FiveM guidance:\n${guidance}\n\nPrepare the next safe scripting pass without breaking working voice features or unrelated repo behavior.`,
+    ).catch(() => {
+      lastFivemTaskRef.current = '';
+    });
+  }, [
+    actionBusy,
+    agentArchitecture?.handoff?.source,
+    architectureTaskOutcome,
+    durableOperatorMemory?.fivem_briefs,
+    fivemCodingBrief,
     pendingAction,
     pendingCodeEdit,
     pendingWorkbench,
@@ -6316,6 +6793,7 @@ export default function JarvisHudDashboard() {
                   agentNotice={agentNotice}
                   architectureTaskOutcome={architectureTaskOutcome}
                   designTaskOutcome={designArchitectureTaskOutcome}
+                  fivemTaskOutcome={fivemArchitectureTaskOutcome}
                   roleTasks={agentRoleTasks}
                   onEnsureCoreTeam={ensureCoreArchitecture}
                   onPlannerHandoff={handoffToArchitecture}
@@ -7130,6 +7608,7 @@ ${item.details}`,
                       ['Inspect Repo', () => loadCodingPrompt('inspect')],
                       ['Debug Mode', () => loadCodingPrompt('debug')],
                       ['Review Mode', () => loadCodingPrompt('review')],
+                      ['Logic Audit', () => loadCodingPrompt('logic')],
                       ['Refactor Mode', () => loadCodingPrompt('refactor')],
                     ] as const).map(([label, action]) => (
                       <button
@@ -7141,6 +7620,19 @@ ${item.details}`,
                       </button>
                     ))}
                   </div>
+                  <Suspense fallback={<DashboardSectionFallback label="Loading FiveM coding intelligence..." />}>
+                    <FivemCodingPanel
+                      brief={fivemCodingBrief}
+                      onLoadPrompt={loadFivemCodingPrompt}
+                      onSaveBrief={saveFivemBrief}
+                      recentBriefs={durableOperatorMemory?.fivem_briefs || []}
+                      onLoadSavedBrief={(item) =>
+                        injectCommand(
+                          `I saved a FiveM brief.\nLabel: ${item.label}\nResource key: ${item.resource_key}\nFramework: ${item.framework}\nTopology: ${item.topology}\nNative families: ${(item.native_families || []).join(', ') || 'unknown'}\nRisk tags: ${(item.risk_tags || []).join(', ') || 'unknown'}\nSummary: ${item.summary}\nDetails:\n${item.details}\n\nContinue the FiveM/Lua review from this saved context and suggest the next safest change or audit.`,
+                        )
+                      }
+                    />
+                  </Suspense>
                   <Suspense fallback={<DashboardSectionFallback label="Loading design intelligence..." />}>
                     <DesignIntelligence
                       designBrief={designBrief}

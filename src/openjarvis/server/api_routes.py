@@ -501,6 +501,18 @@ class OperatorDesignBriefRequest(BaseModel):
     created_at: Optional[str] = None
 
 
+class OperatorFivemBriefRequest(BaseModel):
+    label: str
+    resource_key: str
+    framework: str
+    topology: str
+    summary: str
+    details: Optional[str] = None
+    native_families: Optional[list[str]] = None
+    risk_tags: Optional[list[str]] = None
+    created_at: Optional[str] = None
+
+
 class OperatorMissionUpdateRequest(BaseModel):
     id: str
     title: str
@@ -670,6 +682,46 @@ def _mission_followup_payload(mission: dict[str, Any], action: str) -> dict[str,
             "content": "\n".join(details),
             "label": f"{title} Brief",
             "source": "commercial-mission",
+        }
+    if domain == "fivem":
+        content = result or summary or next_step
+        if not content:
+            return None
+        framework = str(result_data.get("framework", "")).strip()
+        topology = str(result_data.get("topology", "")).strip()
+        focus_area = str(result_data.get("focus_area", "")).strip()
+        native_families = str(result_data.get("native_families", "")).strip()
+        details = [
+            "FiveM / Lua coding mission.",
+            content,
+        ]
+        if framework:
+            details.append(f"Framework: {framework}")
+        if topology:
+            details.append(f"Topology: {topology}")
+        if native_families:
+            details.append(f"Native families: {native_families}")
+        if focus_area:
+            details.append(f"Focus area: {focus_area}")
+        if blocked:
+            label = f"{title} Follow-up"
+            if "network" in native_families.lower():
+                label = "Review Network Safety"
+            elif "state" in native_families.lower():
+                label = "Audit State Flow"
+            elif framework:
+                label = f"Review {framework} Flow"
+            return {
+                "kind": "task",
+                "content": "\n".join(details),
+                "label": label,
+                "source": "fivem-mission",
+            }
+        return {
+            "kind": "prompt",
+            "content": "\n".join(details),
+            "label": f"{title} Review",
+            "source": "fivem-mission",
         }
     return None
 
@@ -2223,6 +2275,59 @@ async def operator_memory_add_design_brief(
                     "kind": "prompt",
                     "content": req.details or req.summary,
                     "label": "Design Follow-up",
+                },
+                "updated_at": req.created_at or "",
+            },
+        )
+        return updated
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@operator_memory_router.post("/fivem-brief")
+async def operator_memory_add_fivem_brief(
+    req: OperatorFivemBriefRequest,
+    request: Request,
+):
+    manager = getattr(request.app.state, "operator_memory", None)
+    if manager is None:
+        raise HTTPException(status_code=503, detail="Operator memory not configured")
+    try:
+        updated = manager.add_fivem_brief(
+            label=req.label,
+            resource_key=req.resource_key,
+            framework=req.framework,
+            topology=req.topology,
+            summary=req.summary,
+            details=req.details or "",
+            native_families=req.native_families or [],
+            risk_tags=req.risk_tags or [],
+            created_at=req.created_at or "",
+        )
+        manager.update_mission(
+            "fivem-mission",
+            {
+                "title": "FiveM mission",
+                "domain": "fivem",
+                "status": "active",
+                "phase": "verify" if req.framework.strip() in {"QBCore", "ESX", "ox_*"} else "plan",
+                "summary": req.summary.strip() or "FiveM brief saved and ready for the next scripting pass.",
+                "next_step": "Review framework boundaries, native usage, and event/state flow before the next patch.",
+                "result": (req.summary or req.details or "").strip(),
+                "retry_hint": "Re-run the most relevant FiveM audit after the next script change.",
+                "result_data": {
+                    "framework": req.framework,
+                    "topology": req.topology,
+                    "resource_key": req.resource_key,
+                    "native_families": ", ".join(req.native_families or []),
+                    "risk_tags": ", ".join(req.risk_tags or []),
+                    "focus_area": "FiveM review",
+                    "brief_label": req.label,
+                },
+                "next_action": {
+                    "kind": "prompt",
+                    "content": req.details or req.summary,
+                    "label": "FiveM Follow-up",
                 },
                 "updated_at": req.created_at or "",
             },

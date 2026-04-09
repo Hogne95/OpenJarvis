@@ -8,6 +8,7 @@ export function CoreAgentsPanel({
   agentNotice,
   architectureTaskOutcome,
   designTaskOutcome,
+  fivemTaskOutcome,
   roleTasks,
   onEnsureCoreTeam,
   onPlannerHandoff,
@@ -25,6 +26,14 @@ export function CoreAgentsPanel({
       }
     | null;
   designTaskOutcome:
+    | {
+        kind: 'failed' | 'completed';
+        label: string;
+        task: AgentTask;
+        summary: string;
+      }
+    | null;
+  fivemTaskOutcome:
     | {
         kind: 'failed' | 'completed';
         label: string;
@@ -112,6 +121,23 @@ export function CoreAgentsPanel({
             </div>
           </div>
           <div className="mt-2 text-sm text-slate-200/76">{designTaskOutcome.summary}</div>
+        </div>
+      ) : null}
+      {fivemTaskOutcome ? (
+        <div className="mt-3 rounded-[0.95rem] border border-sky-300/16 bg-sky-500/[0.06] px-3 py-3">
+          <div className="flex items-center justify-between gap-3">
+            <div className="text-[10px] uppercase tracking-[0.22em] text-sky-200/72">
+              {fivemTaskOutcome.kind === 'failed' ? 'Latest FiveM Blocker' : 'Latest FiveM Outcome'}
+            </div>
+            <div
+              className={`text-[10px] uppercase tracking-[0.22em] ${
+                fivemTaskOutcome.kind === 'failed' ? 'text-amber-300/75' : 'text-emerald-300/75'
+              }`}
+            >
+              {fivemTaskOutcome.label}
+            </div>
+          </div>
+          <div className="mt-2 text-sm text-slate-200/76">{fivemTaskOutcome.summary}</div>
         </div>
       ) : null}
       <div className="mt-3 grid gap-2">

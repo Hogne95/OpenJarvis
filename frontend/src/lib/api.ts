@@ -700,6 +700,18 @@ export interface DurableOperatorMemory {
     }>;
     created_at: string;
   }>;
+  fivem_briefs?: Array<{
+    id: string;
+    label: string;
+    resource_key: string;
+    framework: string;
+    topology: string;
+    summary: string;
+    details: string;
+    native_families?: string[];
+    risk_tags?: string[];
+    created_at: string;
+  }>;
   relationships: Record<
     string,
     {
@@ -1894,6 +1906,29 @@ export async function updateOperatorDesignBrief(body: {
   if (!res.ok) {
     const detail = await res.json().catch(() => ({ detail: res.statusText }));
     throw new Error(detail.detail || `Design brief update failed: ${res.status}`);
+  }
+  return res.json();
+}
+
+export async function updateOperatorFivemBrief(body: {
+  label: string;
+  resource_key: string;
+  framework: string;
+  topology: string;
+  summary: string;
+  details?: string;
+  native_families?: string[];
+  risk_tags?: string[];
+  created_at?: string;
+}): Promise<DurableOperatorMemory> {
+  const res = await fetch(`${getBase()}/v1/operator-memory/fivem-brief`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const detail = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(detail.detail || `FiveM brief update failed: ${res.status}`);
   }
   return res.json();
 }

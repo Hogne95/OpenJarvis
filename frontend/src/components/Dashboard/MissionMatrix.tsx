@@ -4,7 +4,7 @@ type MissionStatus = 'idle' | 'active' | 'blocked' | 'complete';
 export type MissionMatrixItem = {
   id: string;
   title: string;
-  domain: 'self-improve' | 'planner' | 'visual' | 'document' | 'design' | 'sales' | 'customer' | 'shopify' | 'commercial';
+  domain: 'self-improve' | 'planner' | 'visual' | 'document' | 'design' | 'sales' | 'customer' | 'shopify' | 'commercial' | 'fivem';
   status: MissionStatus;
   phase: MissionPhase;
   summary: string;
