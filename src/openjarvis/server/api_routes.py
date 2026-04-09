@@ -339,6 +339,7 @@ class ActionCalendarBriefRequest(BaseModel):
     attendees: Optional[str] = None
     location: Optional[str] = None
     notes: Optional[str] = None
+    provider: Optional[str] = None
 
 
 class InboxActionStageRequest(BaseModel):
@@ -353,6 +354,7 @@ class ActionTaskCreateRequest(BaseModel):
     title: str
     notes: Optional[str] = None
     due_at: Optional[str] = None
+    provider: Optional[str] = None
 
 
 class OperatorProfileUpdateRequest(BaseModel):
@@ -457,6 +459,7 @@ class OperatorMissionActionRequest(BaseModel):
 
 def _mission_followup_payload(mission: dict[str, Any], action: str) -> dict[str, Any] | None:
     domain = str(mission.get("domain", "")).strip().lower()
+    status = str(mission.get("status", "")).strip().lower()
     summary = str(mission.get("summary", "")).strip()
     result = str(mission.get("result", "")).strip()
     next_step = str(mission.get("next_step", "")).strip()
@@ -466,38 +469,80 @@ def _mission_followup_payload(mission: dict[str, Any], action: str) -> dict[str,
     if action in {"resume", "retry"} and isinstance(next_action, dict) and next_action.get("kind"):
         enriched = dict(next_action)
         enriched.setdefault("label", title)
+        if enriched.get("kind") == "task" and not enriched.get("content"):
+            enriched["content"] = result or summary or next_step
         return enriched
 
     if action not in {"resume", "retry"}:
         return None
+    blocked = action == "retry" or status == "blocked"
     if domain == "planner":
         content = result or summary or next_step
         if not content:
             return None
-        return {"kind": "brief", "content": content, "label": title}
+        return {
+            "kind": "handoff",
+            "content": content,
+            "label": "Planner Retry" if blocked else title,
+            "source": "planner-mission",
+        }
     if domain == "self-improve":
         content = result or summary or next_step
         if not content:
             return None
-        return {"kind": "prompt", "content": content, "label": title}
+        file_path = str(result_data.get("file_path", "")).strip()
+        if blocked:
+            details = [f"Mission: {title}", content]
+            if file_path:
+                details.insert(1, f"Target file: {file_path}")
+            return {
+                "kind": "task",
+                "content": "\n".join(details),
+                "label": f"Repair {file_path or title}",
+                "source": "self-improve-mission",
+            }
+        return {"kind": "prompt", "content": content, "label": title, "source": "self-improve-mission"}
     if domain == "visual":
         content = result or summary or next_step
         if not content:
             return None
-        return {"kind": "prompt", "content": content, "label": title}
+        if blocked:
+            return {
+                "kind": "task",
+                "content": f"Visual mission blocker.\n{content}\nRetry hint: {str(mission.get('retry_hint', '')).strip()}",
+                "label": f"{title} Follow-up",
+                "source": "visual-mission",
+            }
+        return {"kind": "prompt", "content": content, "label": title, "source": "visual-mission"}
     if domain == "document":
         content = result or summary or next_step
         if not content:
             return None
         mode = str(result_data.get("mode", "")).strip().lower()
+        if blocked:
+            return {
+                "kind": "task",
+                "content": f"Document mission blocker.\nMode: {mode or 'summary'}\n{content}",
+                "label": f"{title} Follow-up",
+                "source": "document-mission",
+            }
         if mode in {"business_review", "finance_review", "investment_memo", "kpi_extract"}:
-            return {"kind": "brief", "content": content, "label": f"{title} Memo"}
-        return {"kind": "prompt", "content": content, "label": title}
+            return {"kind": "brief", "content": content, "label": f"{title} Memo", "source": "document-mission"}
+        return {"kind": "prompt", "content": content, "label": title, "source": "document-mission"}
     if domain == "design":
         content = result or summary or next_step
         if not content:
             return None
-        return {"kind": "prompt", "content": content, "label": title}
+        weakest_area = str(result_data.get("weakest_area", "")).strip()
+        if blocked:
+            area_label = weakest_area or "HUD quality"
+            return {
+                "kind": "task",
+                "content": f"Design mission blocker.\nWeakest area: {area_label}\n{content}",
+                "label": f"Improve {area_label}",
+                "source": "design-mission",
+            }
+        return {"kind": "prompt", "content": content, "label": title, "source": "design-mission"}
     return None
 
 
@@ -1530,6 +1575,14 @@ async def action_center_status(request: Request):
     return manager.status()
 
 
+@action_center_router.get("/capabilities")
+async def action_center_capabilities(request: Request):
+    manager = getattr(request.app.state, "action_center", None)
+    if manager is None:
+        raise HTTPException(status_code=503, detail="Action center not configured")
+    return manager.capabilities()
+
+
 @action_center_router.post("/stage-email")
 async def action_center_stage_email(req: ActionEmailDraftRequest, request: Request):
     manager = getattr(request.app.state, "action_center", None)
@@ -1559,6 +1612,7 @@ async def action_center_stage_calendar(req: ActionCalendarBriefRequest, request:
             attendees=req.attendees or "",
             location=req.location or "",
             notes=req.notes or "",
+            provider=req.provider or "",
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
@@ -1591,6 +1645,7 @@ async def action_center_stage_task(req: ActionTaskCreateRequest, request: Reques
             title=req.title,
             notes=req.notes or "",
             due_at=req.due_at or "",
+            provider=req.provider or "",
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))

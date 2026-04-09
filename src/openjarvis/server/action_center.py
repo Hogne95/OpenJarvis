@@ -19,6 +19,7 @@ from openjarvis.connectors.gmail import _DEFAULT_CREDENTIALS_PATH as _GMAIL_CRED
 from openjarvis.connectors.google_tasks import (
     _DEFAULT_CREDENTIALS_PATH as _GTASKS_CREDENTIALS_PATH,
 )
+from openjarvis.connectors.outlook import _DEFAULT_CREDENTIALS_PATH as _OUTLOOK_CREDENTIALS_PATH
 from openjarvis.connectors.oauth import load_tokens, resolve_google_credentials
 
 
@@ -64,6 +65,95 @@ class ActionCenterManager:
         return {
             "pending": self._pending.to_dict() if self._pending else None,
             "history": [entry.to_dict() for entry in self._history[-12:]][::-1],
+            "capabilities": self.capabilities(),
+        }
+
+    def capabilities(self) -> dict[str, Any]:
+        gmail_tokens = load_tokens(resolve_google_credentials(_GMAIL_CREDENTIALS_PATH)) or {}
+        calendar_tokens = load_tokens(resolve_google_credentials(_GCALENDAR_CREDENTIALS_PATH)) or {}
+        tasks_tokens = load_tokens(resolve_google_credentials(_GTASKS_CREDENTIALS_PATH)) or {}
+        outlook_tokens = load_tokens(_OUTLOOK_CREDENTIALS_PATH) or {}
+        gmail_rest_ready = bool(gmail_tokens.get("access_token") or gmail_tokens.get("token"))
+        outlook_ready = bool(outlook_tokens.get("email") and outlook_tokens.get("password"))
+        calendar_ready = bool(calendar_tokens.get("access_token") or calendar_tokens.get("token"))
+        tasks_ready = bool(tasks_tokens.get("access_token") or tasks_tokens.get("token"))
+        preferred_email = "gmail" if gmail_rest_ready else "outlook" if outlook_ready else ""
+        preferred_calendar = "gcalendar" if calendar_ready else "outlook" if outlook_ready else ""
+        preferred_tasks = "google_tasks" if tasks_ready else ""
+        return {
+            "email": {
+                "ready": gmail_rest_ready or outlook_ready,
+                "preferred_provider": preferred_email,
+                "providers": [
+                    {
+                        "id": "gmail",
+                        "label": "Gmail REST",
+                        "connected": gmail_rest_ready,
+                        "direct_send": gmail_rest_ready,
+                        "execution_mode": "direct_send" if gmail_rest_ready else "manual_draft",
+                    },
+                    {
+                        "id": "outlook",
+                        "label": "Outlook / Microsoft 365",
+                        "connected": outlook_ready,
+                        "direct_send": False,
+                        "execution_mode": "manual_draft",
+                    },
+                ],
+            },
+            "calendar": {
+                "ready": calendar_ready or outlook_ready,
+                "preferred_provider": preferred_calendar,
+                "providers": [
+                    {
+                        "id": "gcalendar",
+                        "label": "Google Calendar",
+                        "connected": calendar_ready,
+                        "direct_create": calendar_ready,
+                        "execution_mode": "direct_create" if calendar_ready else "manual_plan",
+                    },
+                    {
+                        "id": "outlook",
+                        "label": "Outlook Calendar",
+                        "connected": outlook_ready,
+                        "direct_create": False,
+                        "execution_mode": "manual_plan",
+                    },
+                ],
+            },
+            "tasks": {
+                "ready": tasks_ready,
+                "preferred_provider": preferred_tasks,
+                "providers": [
+                    {
+                        "id": "google_tasks",
+                        "label": "Google Tasks",
+                        "connected": tasks_ready,
+                        "direct_create": tasks_ready,
+                        "execution_mode": "direct_create" if tasks_ready else "manual_plan",
+                    }
+                ],
+            },
+            "inbox": {
+                "ready": gmail_rest_ready,
+                "preferred_provider": "gmail" if gmail_rest_ready else "",
+                "providers": [
+                    {
+                        "id": "gmail",
+                        "label": "Gmail REST",
+                        "connected": gmail_rest_ready,
+                        "supports_archive": gmail_rest_ready,
+                        "supports_star": gmail_rest_ready,
+                    },
+                    {
+                        "id": "outlook",
+                        "label": "Outlook",
+                        "connected": outlook_ready,
+                        "supports_archive": False,
+                        "supports_star": False,
+                    },
+                ],
+            },
         }
 
     def stage_email_draft(
@@ -103,6 +193,7 @@ class ActionCenterManager:
         attendees: str = "",
         location: str = "",
         notes: str = "",
+        provider: str = "",
     ) -> dict[str, Any]:
         title_clean = title.strip()
         start_clean = start_at.strip()
@@ -121,6 +212,7 @@ class ActionCenterManager:
                 "attendees": attendees.strip(),
                 "location": location.strip(),
                 "notes": notes.strip(),
+                "provider": provider.strip().lower(),
             },
         )
         return self.status()
@@ -161,6 +253,7 @@ class ActionCenterManager:
         title: str,
         notes: str = "",
         due_at: str = "",
+        provider: str = "",
     ) -> dict[str, Any]:
         title_clean = title.strip()
         if not title_clean:
@@ -175,6 +268,7 @@ class ActionCenterManager:
                 "title": title_clean,
                 "notes": notes.strip(),
                 "due_at": due_at.strip(),
+                "provider": provider.strip().lower(),
             },
         )
         return self.status()
@@ -235,11 +329,17 @@ class ActionCenterManager:
 
     def _approve_email_draft(self, payload: dict[str, Any]) -> tuple[str, str, dict[str, Any]]:
         provider = str(payload.get("provider", "gmail")).lower()
-        if provider != "gmail":
+        if provider in {"outlook", "microsoft", "office365"}:
             return (
                 "draft_ready",
-                f"Draft is ready for {provider}, but direct send is not supported yet.",
-                {"provider": provider},
+                "Outlook draft is prepared. Review it and send it from Outlook after approval.",
+                {"provider": "outlook", "execution_mode": "manual_draft"},
+            )
+        if provider in {"gmail_imap"}:
+            return (
+                "draft_ready",
+                "Gmail IMAP is connected for reading, but direct send requires the Gmail REST connector.",
+                {"provider": "gmail_imap", "execution_mode": "manual_draft"},
             )
 
         tokens_path = resolve_google_credentials(_GMAIL_CREDENTIALS_PATH)
@@ -248,7 +348,7 @@ class ActionCenterManager:
             return (
                 "error",
                 "Gmail is not connected. Connect Gmail in Data Sources before sending.",
-                {"provider": provider},
+                {"provider": "gmail", "execution_mode": "direct_send"},
             )
 
         token = tokens.get("access_token") or tokens.get("token")
@@ -256,7 +356,7 @@ class ActionCenterManager:
             return (
                 "error",
                 "Gmail credentials are present, but no usable access token was found.",
-                {"provider": provider},
+                {"provider": "gmail", "execution_mode": "direct_send"},
             )
 
         msg = MIMEText(str(payload["body"]))
@@ -277,16 +377,17 @@ class ActionCenterManager:
             return (
                 "error",
                 f"Gmail send failed: {exc}",
-                {"provider": provider},
+                {"provider": "gmail", "execution_mode": "direct_send"},
             )
 
         return (
             "sent",
             f"Email sent to {payload['recipient']}.",
-            {"provider": provider},
+            {"provider": "gmail", "execution_mode": "direct_send"},
         )
 
     def _approve_calendar_brief(self, payload: dict[str, Any]) -> tuple[str, str, dict[str, Any]]:
+        provider = str(payload.get("provider", "")).strip().lower()
         tokens_path = resolve_google_credentials(_GCALENDAR_CREDENTIALS_PATH)
         tokens = load_tokens(tokens_path)
         token = (tokens or {}).get("access_token") or (tokens or {}).get("token")
@@ -296,6 +397,17 @@ class ActionCenterManager:
         parsed_end = self._parse_datetime(end_at) if end_at else None
         if parsed_start and parsed_end is None:
             parsed_end = parsed_start + timedelta(hours=1)
+
+        if provider in {"outlook", "microsoft", "office365"}:
+            attendees = payload.get("attendees", "")
+            attendee_phrase = f" with {attendees}" if attendees else ""
+            location = payload.get("location", "")
+            location_phrase = f" at {location}" if location else ""
+            return (
+                "draft_ready",
+                f"Outlook calendar plan ready for {payload['start_at']}{location_phrase}{attendee_phrase}. Review and create it from Outlook after checking details.",
+                {"provider": "outlook", "execution_mode": "manual_plan", "requires_manual_create": True},
+            )
 
         if token and parsed_start and parsed_end:
             attendees_raw = str(payload.get("attendees", "")).strip()
@@ -325,13 +437,18 @@ class ActionCenterManager:
                 return (
                     "created",
                     f"Calendar event created for {payload['start_at']}.",
-                    {"html_link": event_json.get("htmlLink", ""), "event_id": event_json.get("id", "")},
+                    {
+                        "provider": "gcalendar",
+                        "execution_mode": "direct_create",
+                        "html_link": event_json.get("htmlLink", ""),
+                        "event_id": event_json.get("id", ""),
+                    },
                 )
             except Exception as exc:
                 return (
                     "error",
                     f"Calendar create failed: {exc}. Reconnect Google Calendar to grant write access if needed.",
-                    {},
+                    {"provider": "gcalendar", "execution_mode": "direct_create"},
                 )
 
         attendees = payload.get("attendees", "")
@@ -341,7 +458,12 @@ class ActionCenterManager:
         return (
             "draft_ready",
             f"Calendar event plan ready for {payload['start_at']}{location_phrase}{attendee_phrase}. Review and create it from your calendar app after checking details.",
-            {"requires_manual_create": True, "reason": "Missing writable calendar token or invalid datetime"},
+            {
+                "provider": "gcalendar" if not provider else provider,
+                "execution_mode": "manual_plan",
+                "requires_manual_create": True,
+                "reason": "Missing writable calendar token or invalid datetime",
+            },
         )
 
     def _approve_inbox_action(self, payload: dict[str, Any]) -> tuple[str, str, dict[str, Any]]:
@@ -391,6 +513,13 @@ class ActionCenterManager:
         )
 
     def _approve_task_create(self, payload: dict[str, Any]) -> tuple[str, str, dict[str, Any]]:
+        provider = str(payload.get("provider", "google_tasks")).strip().lower() or "google_tasks"
+        if provider in {"outlook", "microsoft", "office365"}:
+            return (
+                "draft_ready",
+                "Task plan is ready for Outlook / Microsoft 365, but direct task creation is not supported yet.",
+                {"provider": "outlook", "execution_mode": "manual_plan"},
+            )
         tokens_path = resolve_google_credentials(_GTASKS_CREDENTIALS_PATH)
         tokens = load_tokens(tokens_path)
         token = (tokens or {}).get("access_token") or (tokens or {}).get("token")
@@ -398,7 +527,7 @@ class ActionCenterManager:
             return (
                 "draft_ready",
                 "Google Tasks is not connected with write access. Reconnect Google Tasks to create tasks directly.",
-                {},
+                {"provider": "google_tasks", "execution_mode": "manual_plan"},
             )
 
         try:
@@ -433,13 +562,18 @@ class ActionCenterManager:
             return (
                 "created",
                 f"Task created: {payload['title']}.",
-                {"task_id": task_json.get("id", ""), "self_link": task_json.get("selfLink", "")},
+                {
+                    "provider": "google_tasks",
+                    "execution_mode": "direct_create",
+                    "task_id": task_json.get("id", ""),
+                    "self_link": task_json.get("selfLink", ""),
+                },
             )
         except Exception as exc:
             return (
                 "error",
                 f"Task create failed: {exc}. Reconnect Google Tasks to grant write access if needed.",
-                {},
+                {"provider": "google_tasks", "execution_mode": "direct_create"},
             )
 
     @staticmethod

@@ -461,6 +461,31 @@ export interface ActionCenterStatus {
   pending: PendingActionCenterEntry | null;
   history: ActionCenterEntry[];
   result?: ActionCenterEntry;
+  capabilities?: ActionCenterCapabilities;
+}
+
+export interface ActionCenterProviderCapability {
+  id: string;
+  label: string;
+  connected: boolean;
+  direct_send?: boolean;
+  direct_create?: boolean;
+  execution_mode?: string;
+  supports_archive?: boolean;
+  supports_star?: boolean;
+}
+
+export interface ActionCenterCapabilityGroup {
+  ready: boolean;
+  preferred_provider: string;
+  providers: ActionCenterProviderCapability[];
+}
+
+export interface ActionCenterCapabilities {
+  email: ActionCenterCapabilityGroup;
+  calendar: ActionCenterCapabilityGroup;
+  tasks: ActionCenterCapabilityGroup;
+  inbox: ActionCenterCapabilityGroup;
 }
 
 export interface InboxSummaryItem {
@@ -1168,6 +1193,12 @@ export async function fetchActionCenterStatus(): Promise<ActionCenterStatus> {
   return res.json();
 }
 
+export async function fetchActionCenterCapabilities(): Promise<ActionCenterCapabilities> {
+  const res = await fetch(`${getBase()}/v1/action-center/capabilities`);
+  if (!res.ok) throw new Error(`Action center capabilities failed: ${res.status}`);
+  return res.json();
+}
+
 export async function stageEmailDraft(body: {
   recipient: string;
   subject: string;
@@ -1193,6 +1224,7 @@ export async function stageCalendarBrief(body: {
   attendees?: string;
   location?: string;
   notes?: string;
+  provider?: string;
 }): Promise<ActionCenterStatus> {
   const res = await fetch(`${getBase()}/v1/action-center/stage-calendar`, {
     method: 'POST',
@@ -1257,6 +1289,7 @@ export async function stageTask(body: {
   title: string;
   notes?: string;
   due_at?: string;
+  provider?: string;
 }): Promise<ActionCenterStatus> {
   const res = await fetch(`${getBase()}/v1/action-center/stage-task`, {
     method: 'POST',

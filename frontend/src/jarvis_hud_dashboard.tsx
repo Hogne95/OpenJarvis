@@ -102,6 +102,7 @@ import {
   updateOperatorVisualInsight,
   updateOperatorVisualObservation,
   updateVoiceLoopState,
+  type ActionCenterCapabilities,
   type ActionCenterStatus,
   type AgentTask,
   type AgentArchitectureStatus,
@@ -640,6 +641,8 @@ export default function JarvisHudDashboard() {
   const lastDesignOutcomeRef = useRef('');
   const lastDesignTaskRef = useRef('');
   const lastMissionSyncRef = useRef('');
+  const lastSpeechDetectedAtRef = useRef(0);
+  const lastVoicePlaybackAtRef = useRef(0);
 
   const {
     state: hudSpeechState,
@@ -662,10 +665,11 @@ export default function JarvisHudDashboard() {
   }, [durableOperatorMemory?.profile.honorific, durableOperatorMemory?.profile.reply_tone, operatorProfile.honorific, operatorProfile.replyTone, speechProfile?.reply_speed]);
   const canAutoSpeak = useMemo(() => {
     if (!speechProfile?.auto_speak || !voiceLoop?.active) return false;
-    if (streamState.isStreaming || hudSpeechState === 'recording' || hudSpeechState === 'transcribing') return false;
+    if (streamState.isStreaming || streamState.activeToolCalls.length > 0 || hudSpeechState === 'recording' || hudSpeechState === 'transcribing') return false;
     if (hudSpeechTelemetry.speechLikely) return false;
+    if (hudSpeechTelemetry.noiseFloor >= 0.02) return false;
     return true;
-  }, [hudSpeechState, hudSpeechTelemetry.speechLikely, speechProfile?.auto_speak, streamState.isStreaming, voiceLoop?.active]);
+  }, [hudSpeechState, hudSpeechTelemetry.noiseFloor, hudSpeechTelemetry.speechLikely, speechProfile?.auto_speak, streamState.activeToolCalls.length, streamState.isStreaming, voiceLoop?.active]);
 
   useEffect(() => {
     let cancelled = false;
@@ -793,6 +797,12 @@ export default function JarvisHudDashboard() {
     const timeout = window.setTimeout(() => setVoiceNotice(''), 5000);
     return () => window.clearTimeout(timeout);
   }, [voiceNotice]);
+
+  useEffect(() => {
+    if (hudSpeechState === 'recording' || hudSpeechState === 'transcribing' || hudSpeechTelemetry.speechLikely) {
+      lastSpeechDetectedAtRef.current = Date.now();
+    }
+  }, [hudSpeechState, hudSpeechTelemetry.speechLikely]);
 
   useEffect(() => {
     if (!workbenchNotice) return;
@@ -968,6 +978,10 @@ export default function JarvisHudDashboard() {
     () => latestMessageByRole(messages, 'assistant'),
     [messages],
   );
+  useEffect(() => {
+    if (!latestUserMessage?.content?.trim()) return;
+    lastSpeechDetectedAtRef.current = Date.now();
+  }, [latestUserMessage?.content]);
   const activeToolCall =
     streamState.activeToolCalls.length > 0
       ? streamState.activeToolCalls[streamState.activeToolCalls.length - 1]
@@ -978,6 +992,7 @@ export default function JarvisHudDashboard() {
   const pendingCodeEdit = codingWorkspace?.pending ?? null;
   const pendingWorkbench = workbench?.pending ?? null;
   const latestActionResult = actionCenter?.history?.[0] ?? null;
+  const actionCenterCapabilities = (actionCenter?.capabilities ?? null) as ActionCenterCapabilities | null;
   const latestCodeResult = codingWorkspace?.history?.[0] ?? null;
   const latestWorkbenchResult = workbench?.history?.[0] ?? null;
   const latestValidationFailure = useMemo(() => {
@@ -1785,8 +1800,15 @@ export default function JarvisHudDashboard() {
       setDurableOperatorMemory(next.memory);
       const followup = next.followup;
       if (followup?.content?.trim()) {
-        if (followup.kind === 'brief' && mission.id.includes('planner')) {
-          await handoffWithBrief(followup.content, 'mission-action');
+        if (followup.kind === 'handoff') {
+          await handoffWithBrief(followup.content, String(followup.source || 'mission-action'));
+          handledFollowup = true;
+        } else if (followup.kind === 'brief') {
+          if (mission.id.includes('planner') || String(followup.source || '').includes('planner')) {
+            await handoffWithBrief(followup.content, 'mission-action');
+          } else {
+            injectCommand(followup.content);
+          }
           handledFollowup = true;
         } else if (followup.kind === 'prompt') {
           injectCommand(followup.content);
@@ -2245,36 +2267,51 @@ export default function JarvisHudDashboard() {
     const googleCalendarConnected = ids.has('gcalendar');
     const googleTasksConnected = ids.has('google_tasks');
     const outlookConnected = ids.has('outlook');
+    const emailProvider = actionCenterCapabilities?.email.preferred_provider || connectorSummary.emailProvider;
+    const calendarProvider = actionCenterCapabilities?.calendar.preferred_provider || connectorSummary.calendarProvider;
+    const inboxDirect = actionCenterCapabilities?.inbox.providers.find((item) => item.id === 'gmail')?.supports_archive;
+    const taskDirect = actionCenterCapabilities?.tasks.providers.find((item) => item.id === 'google_tasks')?.direct_create;
     return [
       {
         label: 'Email Drafts',
-        value: connectorSummary.emailReady
-          ? connectorSummary.emailProvider === 'outlook'
-            ? 'Outlook draft path'
-            : 'Gmail draft path'
+        value: (actionCenterCapabilities?.email.ready ?? connectorSummary.emailReady)
+          ? emailProvider === 'outlook'
+            ? 'Outlook manual draft path'
+            : emailProvider === 'gmail'
+            ? 'Gmail direct send path'
+            : 'Draft path ready'
           : 'Not connected',
       },
       {
         label: 'Inbox Mutations',
-        value: gmailConnected ? 'Gmail path ready' : 'Limited',
+        value: inboxDirect || gmailConnected ? 'Gmail REST ready' : outlookConnected ? 'Outlook read-only' : 'Limited',
       },
       {
         label: 'Calendar Create',
-        value: googleCalendarConnected ? 'Google path ready' : outlookConnected ? 'Outlook draft path' : 'Limited',
+        value:
+          calendarProvider === 'gcalendar'
+            ? 'Google direct create path'
+            : calendarProvider === 'outlook'
+            ? 'Outlook manual plan path'
+            : googleCalendarConnected
+            ? 'Google path ready'
+            : outlookConnected
+            ? 'Outlook manual plan path'
+            : 'Limited',
       },
       {
         label: 'Task Create',
-        value: googleTasksConnected ? 'Google Tasks ready' : 'Limited',
+        value: taskDirect || googleTasksConnected ? 'Google Tasks direct path' : 'Limited',
       },
     ];
-  }, [connectedConnectorIds, connectorSummary.emailReady]);
+  }, [actionCenterCapabilities, connectedConnectorIds, connectorSummary.calendarProvider, connectorSummary.emailProvider, connectorSummary.emailReady]);
   const actionCenterExecutionHint = useMemo(() => {
     const ids = new Set(connectedConnectorIds);
     const gmailConnected = ids.has('gmail') || ids.has('gmail_imap');
     const googleCalendarConnected = ids.has('gcalendar');
     const outlookConnected = ids.has('outlook');
     if (actionMode === 'email') {
-      if (!connectorSummary.emailReady) {
+      if (!(actionCenterCapabilities?.email.ready ?? connectorSummary.emailReady)) {
         return {
           ready: false,
           label: 'Connect Gmail or Outlook to stage email drafts.',
@@ -2282,19 +2319,23 @@ export default function JarvisHudDashboard() {
           provider: '',
         };
       }
-      const preferredProvider = connectorSummary.emailProvider || (gmailConnected ? 'gmail' : 'outlook');
+      const preferredProvider =
+        actionCenterCapabilities?.email.preferred_provider || connectorSummary.emailProvider || (gmailConnected ? 'gmail' : 'outlook');
+      const emailCapability = actionCenterCapabilities?.email.providers.find((item) => item.id === preferredProvider);
       return {
         ready: true,
         label:
-          preferredProvider === 'gmail'
-            ? 'Email actions can proceed through the Gmail path when scopes allow.'
-            : 'Email draft staging is available through Outlook. Approval will keep this in draft-ready mode when direct send is unavailable.',
+          emailCapability?.direct_send
+            ? 'Email actions can proceed directly through the Gmail REST path.'
+            : preferredProvider === 'outlook'
+            ? 'Email draft staging is available through Outlook. Approval will keep this in draft-ready mode for operator review.'
+            : 'Email staging is available, but direct send is limited for the connected provider.',
         button: 'Stage for Approval',
         provider: preferredProvider === 'gmail' ? 'Gmail' : 'Outlook',
       };
     }
 
-    if (googleCalendarConnected) {
+    if (actionCenterCapabilities?.calendar.preferred_provider === 'gcalendar' || googleCalendarConnected) {
       return {
         ready: true,
         label: 'Calendar actions can attempt direct Google Calendar creation.',
@@ -2302,10 +2343,10 @@ export default function JarvisHudDashboard() {
         provider: 'Google Calendar',
       };
     }
-    if (outlookConnected) {
+    if (actionCenterCapabilities?.calendar.preferred_provider === 'outlook' || outlookConnected) {
       return {
         ready: true,
-        label: 'Calendar planning is available. Outlook may still require manual create after approval.',
+        label: 'Calendar planning is available. Outlook will keep this as a manual-plan approval step.',
         button: 'Stage for Approval',
         provider: 'Outlook',
       };
@@ -2316,7 +2357,7 @@ export default function JarvisHudDashboard() {
       button: 'Calendar Source Needed',
       provider: '',
     };
-  }, [actionMode, connectedConnectorIds, connectorSummary.emailProvider, connectorSummary.emailReady]);
+  }, [actionCenterCapabilities, actionMode, connectedConnectorIds, connectorSummary.emailProvider, connectorSummary.emailReady]);
 
   const apiBase = useMemo(() => getApiBase(), []);
 
@@ -2756,15 +2797,31 @@ export default function JarvisHudDashboard() {
     return cleaned;
   }
 
+  function canSpeakForPurpose(purpose: 'digest' | 'announcement' | 'reply') {
+    if (!canAutoSpeak) return false;
+    const now = Date.now();
+    const sinceSpeech = now - lastSpeechDetectedAtRef.current;
+    const sincePlayback = now - lastVoicePlaybackAtRef.current;
+    if (purpose === 'reply') {
+      return sinceSpeech >= 1200 && sincePlayback >= 1500;
+    }
+    if (hudSpeechTelemetry.noiseFloor >= 0.014) return false;
+    return sinceSpeech >= 2200 && sincePlayback >= 2600;
+  }
+
   async function playHudSpeech(text: string, purpose: 'digest' | 'announcement' | 'reply' = 'reply') {
-    if (!speechProfile || !canAutoSpeak) return false;
+    if (!speechProfile || !canSpeakForPurpose(purpose)) return false;
     const spoken = buildSpokenLine(text, purpose);
     if (!spoken) return false;
+    let speed = voicePersona.speed;
+    if (purpose === 'digest') speed = Math.max(0.8, speed - 0.05);
+    else if (purpose === 'announcement') speed = Math.max(0.82, speed - 0.03);
+    if (hudSpeechTelemetry.noiseFloor >= 0.01) speed = Math.min(1.08, speed + 0.03);
     const blob = await synthesizeSpeech({
       text: spoken,
       backend: speechProfile.reply_backend,
       voice_id: speechProfile.reply_voice_id,
-      speed: voicePersona.speed,
+      speed,
       output_format: 'wav',
     });
     audioElementRef.current?.pause();
@@ -2772,7 +2829,11 @@ export default function JarvisHudDashboard() {
     const url = URL.createObjectURL(blob);
     audioUrlRef.current = url;
     const audio = new Audio(url);
+    audio.onended = () => {
+      if (audioElementRef.current === audio) audioElementRef.current = null;
+    };
     audioElementRef.current = audio;
+    lastVoicePlaybackAtRef.current = Date.now();
     await audio.play().catch(() => {});
     return true;
   }
@@ -4249,6 +4310,7 @@ export default function JarvisHudDashboard() {
         title,
         notes,
         due_at: dueAt,
+        provider: actionCenterCapabilities?.tasks.preferred_provider || 'google_tasks',
       });
       setActionCenter(next);
       setActionNotice('Task staged for approval.');
@@ -4604,6 +4666,39 @@ export default function JarvisHudDashboard() {
     const weakestLabel = weakestArea?.label || 'HUD design quality';
     const weakestScore = typeof weakestArea?.score === 'number' ? `${weakestArea.score}/10` : 'unscored';
     const weakestNote = weakestArea?.note || 'Review the latest design blocker and tighten the next HUD pass.';
+
+    createFollowUpTask(
+      `Improve HUD ${weakestLabel}`,
+      `Design blocker detected.\n\nWeakest area: ${weakestLabel} (${weakestScore})\nGuidance: ${weakestNote}\n\nLatest design blocker:\n${architectureTaskOutcome.summary}\n\nUse the saved design brief and HUD scorecard to prepare the next safe implementation pass without breaking working voice features.`,
+    ).catch(() => {
+      lastDesignTaskRef.current = '';
+    });
+  }, [
+    actionBusy,
+    agentArchitecture?.handoff?.source,
+    architectureTaskOutcome,
+    durableOperatorMemory?.design_briefs,
+    pendingAction,
+    pendingCodeEdit,
+    pendingWorkbench,
+  ]);
+
+  useEffect(() => {
+    if (!architectureTaskOutcome || !agentArchitecture?.handoff?.source?.startsWith('design')) return;
+    if (architectureTaskOutcome.kind !== 'failed') return;
+    if (pendingAction || pendingCodeEdit || pendingWorkbench || actionBusy !== null) return;
+
+    const savedDesignBrief = durableOperatorMemory?.design_briefs?.[0] || null;
+    const weakestArea = savedDesignBrief?.scorecard?.length
+      ? savedDesignBrief.scorecard.slice().sort((left, right) => left.score - right.score)[0]
+      : null;
+    const taskKey = `${architectureTaskOutcome.task.id}:${weakestArea?.label || 'design'}`;
+    if (lastDesignTaskRef.current === taskKey) return;
+    lastDesignTaskRef.current = taskKey;
+
+    const weakestLabel = weakestArea?.label || 'HUD design quality';
+    const weakestScore = typeof weakestArea?.score === 'number' ? `${weakestArea.score}/10` : 'unscored';
+    const weakestNote = weakestArea?.note || 'Review the latest design blocker and tighten the next HUD pass.';
     createFollowUpTask(
       `Improve HUD ${weakestLabel}`,
       `Design blocker detected.\n\nWeakest area: ${weakestLabel} (${weakestScore})\nGuidance: ${weakestNote}\n\nLatest design blocker:\n${architectureTaskOutcome.summary}\n\nUse the saved design brief and HUD scorecard to prepare the next safe implementation pass without breaking working voice features.`,
@@ -4914,7 +5009,7 @@ export default function JarvisHudDashboard() {
           recipient: emailRecipient,
           subject: emailSubject,
           body: emailBody,
-          provider: connectorSummary.emailProvider || 'gmail',
+          provider: actionCenterCapabilities?.email.preferred_provider || connectorSummary.emailProvider || 'gmail',
         });
       } else {
         next = await stageCalendarBrief({
@@ -4924,6 +5019,7 @@ export default function JarvisHudDashboard() {
           attendees: calendarAttendees,
           location: calendarLocation,
           notes: calendarNotes,
+          provider: actionCenterCapabilities?.calendar.preferred_provider || connectorSummary.calendarProvider || '',
         });
       }
       setActionCenter(next);
