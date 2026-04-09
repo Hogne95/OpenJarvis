@@ -497,8 +497,16 @@ function buildAutomationAnnouncement(log: AutomationLogEntry) {
   return log.success ? `${label} completed.` : `${label} needs attention.`;
 }
 
-export default function JarvisHudDashboard() {
+export default function JarvisHudDashboard({
+  view = 'dashboard',
+}: {
+  view?: 'dashboard' | 'workspace' | 'operations' | 'briefings';
+}) {
   const navigate = useNavigate();
+  const isDashboardView = view === 'dashboard';
+  const isWorkspaceView = view === 'workspace';
+  const isOperationsView = view === 'operations';
+  const isBriefingsView = view === 'briefings';
   const messages = useAppStore((s) => s.messages);
   const streamState = useAppStore((s) => s.streamState);
   const selectedModel = useAppStore((s) => s.selectedModel);
@@ -7011,6 +7019,30 @@ export default function JarvisHudDashboard() {
                 <div className="mt-1 text-sm text-emerald-50/92">{automationNotice}</div>
               </div>
             ) : null}
+            <div className="flex flex-wrap gap-2">
+              {([
+                ['/dashboard', 'Home'],
+                ['/workspace', 'Workspace'],
+                ['/briefings', 'Briefings'],
+                ['/operations', 'Operations'],
+                ['/system', 'System'],
+              ] as const).map(([path, label]) => (
+                <button
+                  key={path}
+                  onClick={() => navigate(path)}
+                  className={`rounded-[1.1rem] border px-4 py-3 text-sm uppercase tracking-[0.22em] transition ${
+                    (path === '/dashboard' && isDashboardView) ||
+                    (path === '/workspace' && isWorkspaceView) ||
+                    (path === '/briefings' && isBriefingsView) ||
+                    (path === '/operations' && isOperationsView)
+                      ? 'border-cyan-300/20 bg-cyan-400/[0.12] text-cyan-50'
+                      : 'border-cyan-400/12 bg-slate-950/55 text-cyan-100 hover:bg-cyan-400/[0.08]'
+                  }`}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
             <button
               onClick={() => setFocusMode((value) => !value)}
               className="rounded-[1.2rem] border border-cyan-400/15 bg-cyan-400/[0.08] px-4 py-3 text-sm uppercase tracking-[0.22em] text-cyan-100 transition hover:bg-cyan-400/[0.14]"
@@ -7020,8 +7052,22 @@ export default function JarvisHudDashboard() {
           </div>
         </header>
 
-        <div className={`grid flex-1 gap-4 ${focusMode ? 'xl:grid-cols-[minmax(920px,1fr)]' : 'xl:grid-cols-[280px_minmax(700px,1fr)_340px]'}`}>
-          {!focusMode ? <div className="space-y-4">
+        <div
+          className={`grid flex-1 gap-4 ${
+            isDashboardView
+              ? focusMode
+                ? 'xl:grid-cols-[minmax(920px,1fr)]'
+                : 'xl:grid-cols-[280px_minmax(780px,1fr)]'
+              : isOperationsView
+              ? focusMode
+                ? 'xl:grid-cols-[minmax(920px,1fr)]'
+                : 'xl:grid-cols-[300px_minmax(780px,1fr)]'
+              : 'xl:grid-cols-[minmax(980px,1fr)]'
+          }`}
+        >
+          {(isDashboardView || isOperationsView) && !focusMode ? <div className="space-y-4">
+            {isDashboardView ? (
+              <>
             <Panel title="Core Matrix" kicker="Subsystems">
               <div className="space-y-3">
                 {coreMatrix.map(({ icon: Icon, label, value }) => (
@@ -7072,7 +7118,11 @@ export default function JarvisHudDashboard() {
                 {agentNotice || 'Launch inbox and meeting agents directly from the HUD.'}
               </div>
             </Panel>
+              </>
+            ) : null}
 
+            {isOperationsView ? (
+              <>
             <Panel title="Core Agents" kicker="Explicit architecture">
               <Suspense fallback={<DashboardSectionFallback label="Loading core agents..." />}>
                 <CoreAgentsPanel
@@ -7095,9 +7145,12 @@ export default function JarvisHudDashboard() {
                 <MissionMatrix missions={autonomyMissions} onRunMission={runMissionAction} />
               </Suspense>
             </Panel>
+              </>
+            ) : null}
           </div> : null}
 
           <div className="space-y-4">
+            {isDashboardView ? (
             <Panel title="Command Core" kicker="Reactor">
               <div className="grid gap-6 xl:grid-cols-[1.12fr_0.88fr]">
                 <div className="relative flex min-h-[30rem] items-center justify-center overflow-hidden rounded-[1.5rem] border border-cyan-400/10 bg-[radial-gradient(circle_at_center,rgba(8,47,73,0.75),rgba(2,6,23,0.95)_62%)] p-6">
@@ -7236,7 +7289,9 @@ export default function JarvisHudDashboard() {
                 </div>
               </div>
             </Panel>
+            ) : null}
 
+            {(isDashboardView || isWorkspaceView) ? (
             <div className="grid gap-4 lg:grid-cols-[1fr_0.9fr]">
               <Panel title="Approval Gate" kicker="Human-in-the-loop">
                 <div className="rounded-[1.15rem] border border-cyan-400/10 bg-slate-950/55 p-4">
@@ -7294,6 +7349,7 @@ export default function JarvisHudDashboard() {
                 </div>
               </Panel>
 
+              {isWorkspaceView ? (
               <Panel title="Direct Control" kicker="Command deck">
                 <div className="rounded-[1.15rem] border border-cyan-400/10 bg-slate-950/55 p-4">
                   <div className="mb-2 text-[10px] uppercase tracking-[0.35em] text-cyan-300/55">
@@ -8308,8 +8364,11 @@ ${item.details}`,
                   ))}
                 </div>
               </Panel>
+              ) : null}
             </div>
+            ) : null}
 
+            {(isDashboardView || isWorkspaceView || isOperationsView) ? (
             <Panel title="Operator Output" kicker="Recent result">
               <div className="rounded-[1.15rem] border border-cyan-400/10 bg-black/30 p-4 font-mono text-xs leading-6 text-slate-200/78">
                 <div className="mb-3 text-[10px] uppercase tracking-[0.32em] text-cyan-300/55">
@@ -8333,15 +8392,19 @@ ${item.details}`,
                 </pre>
               </div>
             </Panel>
+            ) : null}
 
+            {(isDashboardView || isWorkspaceView || isOperationsView) ? (
             <Panel title="Commander Queue" kicker="Next best actions">
               <Suspense fallback={<DashboardSectionFallback label="Loading commander queue..." />}>
                 <CommanderQueue items={commanderQueue} />
               </Suspense>
             </Panel>
+            ) : null}
           </div>
 
-          {!focusMode ? <div className="space-y-4">
+          {(isOperationsView || isBriefingsView) && !focusMode ? <div className="space-y-4">
+            {isBriefingsView ? (
             <Panel title="Daily Brief" kicker="Morning digest">
               <div className="rounded-[1.15rem] border border-cyan-400/10 bg-slate-950/50 px-4 py-3">
                 <div className="text-sm leading-7 text-slate-200/78">
@@ -8442,7 +8505,9 @@ ${item.details}`,
                 ) : null}
               </div>
             </Panel>
+            ) : null}
 
+            {isOperationsView ? (
             <Panel title="Automation Matrix" kicker="Operator routines">
               <div className="space-y-3">
                 <div className="rounded-[1.15rem] border border-cyan-400/10 bg-slate-950/50 px-4 py-3">
@@ -8535,7 +8600,9 @@ ${item.details}`,
                 </div>
               </div>
             </Panel>
+            ) : null}
 
+            {isOperationsView ? (
             <Panel title="Alert Center" kicker="Actionable updates">
               <div className="space-y-3">
                 {activeAutomationAlerts.length ? (
@@ -8622,7 +8689,9 @@ ${item.details}`,
                 )}
               </div>
             </Panel>
+            ) : null}
 
+            {isOperationsView ? (
             <Panel title="Operations Log" kicker="Background runs">
               <div className="space-y-3">
                 {automationLogs.length ? (
@@ -8649,7 +8718,9 @@ ${item.details}`,
                 )}
               </div>
             </Panel>
+            ) : null}
 
+            {isOperationsView ? (
             <Panel title="Operator Profile" kicker="Personalization">
               <div className="rounded-[1.15rem] border border-cyan-400/10 bg-slate-950/50 px-4 py-3">
                 <div className="grid gap-3">
@@ -8848,7 +8919,9 @@ ${item.details}`,
                 ) : null}
               </div>
             </Panel>
+            ) : null}
 
+            {isBriefingsView ? (
             <Panel title="Inbox Snapshot" kicker="Recent mail">
               <div className="space-y-3">
                 {sortedInboxSummary.length ? (
@@ -8968,7 +9041,9 @@ ${item.details}`,
                 )}
               </div>
             </Panel>
+            ) : null}
 
+            {isBriefingsView ? (
             <Panel title="Tactical Timeline" kicker="Event stream">
               <div className="space-y-3">
                 {timelineItems.map(({ icon: Icon, title, detail }) => (
@@ -8987,7 +9062,9 @@ ${item.details}`,
                 ))}
               </div>
             </Panel>
+            ) : null}
 
+            {isBriefingsView ? (
             <Panel title="Task Rail" kicker="Follow-through">
               <div className="space-y-3">
                 {taskSummary.length ? (
@@ -9014,7 +9091,9 @@ ${item.details}`,
                 )}
               </div>
             </Panel>
+            ) : null}
 
+            {isBriefingsView ? (
             <Panel title="Prep Queue" kicker="Upcoming meetings">
               <div className="space-y-3">
                 {prepQueue.length ? (
@@ -9061,7 +9140,9 @@ ${item.details}`,
                 )}
               </div>
             </Panel>
+            ) : null}
 
+            {isBriefingsView ? (
             <Panel title="Inbox Queue" kicker="Priority focus">
               <div className="space-y-3">
                 {inboxFocusQueue.length ? (
@@ -9106,7 +9187,9 @@ ${item.details}`,
                 )}
               </div>
             </Panel>
+            ) : null}
 
+            {isBriefingsView ? (
             <Panel title="Reminder Rail" kicker="Next up">
               <div className="space-y-3">
                 {reminders.length ? (
@@ -9168,6 +9251,7 @@ ${item.details}`,
                 )}
               </div>
             </Panel>
+            ) : null}
 
           </div> : null}
         </div>

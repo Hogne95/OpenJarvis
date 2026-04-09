@@ -4,6 +4,7 @@ import {
   MessageSquare,
   Plus,
   BarChart3,
+  LayoutDashboard,
   Settings,
   Search,
   PanelLeftClose,
@@ -17,6 +18,9 @@ import {
   Loader2,
   ScrollText,
   Database,
+  Briefcase,
+  PanelsTopLeft,
+  RadioTower,
 } from 'lucide-react';
 import { ConversationList } from './ConversationList';
 import { useAppStore } from '../../lib/store';
@@ -52,8 +56,12 @@ export function Sidebar() {
   };
 
   const navItems = [
-    { path: '/', icon: MessageSquare, label: 'Chat' },
-    { path: '/dashboard', icon: BarChart3, label: 'Dashboard' },
+    { path: '/', icon: LayoutDashboard, label: 'Dashboard' },
+    { path: '/chat', icon: MessageSquare, label: 'Chat' },
+    { path: '/workspace', icon: Briefcase, label: 'Workspace' },
+    { path: '/briefings', icon: PanelsTopLeft, label: 'Briefings' },
+    { path: '/operations', icon: BarChart3, label: 'Operations' },
+    { path: '/system', icon: RadioTower, label: 'System' },
     { path: '/data-sources', icon: Database, label: 'Data Sources' },
     { path: '/agents', icon: Bot, label: 'Agents' },
     { path: '/logs', icon: ScrollText, label: 'Logs' },
