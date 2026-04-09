@@ -4,6 +4,9 @@ export type CustomerIntelBrief = {
   details: string;
   prompt: string;
   plannerPrompt: string;
+  draftRecipient: string;
+  draftSubject: string;
+  draftBody: string;
   counts: Array<{ label: string; value: string }>;
   focusItems: Array<{ label: string; detail: string }>;
 };
@@ -14,12 +17,16 @@ export function CustomerIntelPanel({
   onLoadBrief,
   onRouteToPlanner,
   onMakeTask,
+  onDraftReply,
+  onEscalate,
 }: {
   brief: CustomerIntelBrief | null;
   architectureBusy: boolean;
   onLoadBrief: () => void;
   onRouteToPlanner: () => void;
   onMakeTask: () => void;
+  onDraftReply: () => void;
+  onEscalate: () => void;
 }) {
   return (
     <div className="mt-4 rounded-[1rem] border border-cyan-400/10 bg-slate-950/55 p-3">
@@ -74,6 +81,20 @@ export function CustomerIntelPanel({
               className="rounded-full border border-emerald-300/20 bg-emerald-500/10 px-3 py-1.5 text-[10px] uppercase tracking-[0.3em] text-emerald-100 transition hover:border-emerald-300/40 hover:bg-emerald-500/20"
             >
               Make Task
+            </button>
+            <button
+              type="button"
+              onClick={onDraftReply}
+              className="rounded-full border border-fuchsia-300/20 bg-fuchsia-500/10 px-3 py-1.5 text-[10px] uppercase tracking-[0.3em] text-fuchsia-100 transition hover:border-fuchsia-300/40 hover:bg-fuchsia-500/20"
+            >
+              Draft Reply
+            </button>
+            <button
+              type="button"
+              onClick={onEscalate}
+              className="rounded-full border border-amber-300/20 bg-amber-500/10 px-3 py-1.5 text-[10px] uppercase tracking-[0.3em] text-amber-100 transition hover:border-amber-300/40 hover:bg-amber-500/20"
+            >
+              Escalate
             </button>
           </div>
         </div>

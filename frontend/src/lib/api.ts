@@ -97,6 +97,26 @@ export interface RuntimeReadiness {
   };
 }
 
+export interface ShopifySummary {
+  store: string;
+  orders: number;
+  open_orders: number;
+  customers: number;
+  products: number;
+  active_products: number;
+  estimated_revenue: number;
+  top_customers: Array<{
+    name: string;
+    total_spent: string;
+    orders_count: number;
+  }>;
+  top_products: Array<{
+    title: string;
+    status: string;
+    variant_count: number;
+  }>;
+}
+
 export async function getSetupStatus(): Promise<SetupStatus | null> {
   if (!isTauri()) return null;
   try {
@@ -1552,6 +1572,15 @@ export async function fetchOperatorMemory(): Promise<DurableOperatorMemory> {
   if (!res.ok) {
     const detail = await res.json().catch(() => ({ detail: res.statusText }));
     throw new Error(detail.detail || `Operator memory fetch failed: ${res.status}`);
+  }
+  return res.json();
+}
+
+export async function fetchShopifySummary(): Promise<ShopifySummary> {
+  const res = await fetch(`${getBase()}/v1/shopify/summary`);
+  if (!res.ok) {
+    const detail = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(detail.detail || `Shopify summary failed: ${res.status}`);
   }
   return res.json();
 }

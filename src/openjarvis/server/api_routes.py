@@ -17,6 +17,7 @@ from fastapi.concurrency import run_in_threadpool
 from fastapi import APIRouter, HTTPException, Request, Response, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
+from openjarvis.connectors.shopify import ShopifyConnector
 from openjarvis.server.agent_architecture import (
     build_architecture_status,
     create_role_handoff,
@@ -1305,6 +1306,7 @@ agent_architecture_router = APIRouter(prefix="/v1/agent-architecture", tags=["ag
 automation_router = APIRouter(prefix="/v1/automation", tags=["automation"])
 workspace_router = APIRouter(prefix="/v1/workspace", tags=["workspace"])
 coding_router = APIRouter(prefix="/v1/coding", tags=["coding"])
+shopify_router = APIRouter(prefix="/v1/shopify", tags=["shopify"])
 
 
 @speech_router.post("/transcribe")
@@ -3438,6 +3440,19 @@ async def coding_status(request: Request):
     return manager.status()
 
 
+@shopify_router.get("/summary")
+async def shopify_summary():
+    connector = ShopifyConnector()
+    if not connector.is_connected():
+        raise HTTPException(status_code=400, detail="Shopify connector is not connected")
+    try:
+        return connector.store_summary()
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
 @coding_router.post("/read-file")
 async def coding_read_file(req: CodingReadFileRequest, request: Request):
     manager = getattr(request.app.state, "coding_workspace", None)
@@ -3620,6 +3635,7 @@ def include_all_routes(app) -> None:
     app.include_router(automation_router)
     app.include_router(workspace_router)
     app.include_router(coding_router)
+    app.include_router(shopify_router)
     app.include_router(feedback_router)
     app.include_router(optimize_router)
 
@@ -3676,6 +3692,7 @@ __all__ = [
     "automation_router",
     "workspace_router",
     "coding_router",
+    "shopify_router",
     "feedback_router",
     "optimize_router",
 ]

@@ -127,3 +127,8 @@ try:
     import openjarvis.connectors.news_rss  # noqa: F401
 except ImportError:
     pass
+
+try:
+    import openjarvis.connectors.shopify  # noqa: F401
+except ImportError:
+    pass

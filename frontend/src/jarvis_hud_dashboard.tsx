@@ -55,6 +55,7 @@ import {
   handoffAgentArchitecture,
   fetchManagedAgents,
   fetchOperatorMemory,
+  fetchShopifySummary,
   parseJarvisIntent,
   fetchReminders,
   fetchSpeechHealth,
@@ -128,6 +129,7 @@ import {
   type VisionUiVerifyResult,
   type VisionQueryResult,
   type ReminderItem,
+  type ShopifySummary,
   type SpeechProfile,
   type TaskSummaryItem,
   type VoiceLoopStatus,
@@ -155,6 +157,9 @@ const CoreAgentsPanel = lazy(() =>
 );
 const CustomerIntelPanel = lazy(() =>
   import('./components/Dashboard/CustomerIntelPanel').then((module) => ({ default: module.CustomerIntelPanel })),
+);
+const ShopifyIntelPanel = lazy(() =>
+  import('./components/Dashboard/ShopifyIntelPanel').then((module) => ({ default: module.ShopifyIntelPanel })),
 );
 const DesignIntelligence = lazy(() =>
   import('./components/Dashboard/DesignIntelligence').then((module) => ({ default: module.DesignIntelligence })),
@@ -612,6 +617,7 @@ export default function JarvisHudDashboard() {
   const [documentAnalysisTitle, setDocumentAnalysisTitle] = useState('');
   const [documentAnalysis, setDocumentAnalysis] = useState<DocumentAnalysisResult | null>(null);
   const [documentBusy, setDocumentBusy] = useState(false);
+  const [shopifySummary, setShopifySummary] = useState<ShopifySummary | null>(null);
   const [screenSnapshot, setScreenSnapshot] = useState<{
     dataUrl: string;
     capturedAt: number;
@@ -1675,8 +1681,49 @@ export default function JarvisHudDashboard() {
       plannerPrompt:
         `Customer mission briefing.\n${sections.join('\n\n')}\n\n` +
         'Plan the next safe customer-success execution pass: who needs attention, what should be escalated, and which follow-ups matter most.',
+      draftRecipient: latestCustomerInbox?.author_email || '',
+      draftSubject:
+        latestCustomerInbox?.title && latestCustomerInbox.title.toLowerCase().startsWith('re:')
+          ? latestCustomerInbox.title
+          : latestCustomerInbox?.title
+          ? `Re: ${latestCustomerInbox.title}`
+          : primaryAccount?.name
+          ? `Checking in on ${primaryAccount.name}`
+          : 'Customer follow-up',
+      draftBody:
+        `Hi ${((latestCustomerInbox?.author || primaryInteraction?.contact || primaryAccount?.name || 'there').split('<')[0] || 'there').trim()},\n\n` +
+        `I wanted to follow up on ${primaryInteraction?.topic || latestCustomerInbox?.title || primaryAccount?.name || 'your recent request'}.\n\n` +
+        `Current context:\n` +
+        `- Health: ${primaryAccount?.health || 'Unknown'}\n` +
+        `- Sentiment: ${primaryAccount?.sentiment || primaryInteraction?.sentiment || 'Unknown'}\n` +
+        `- Urgency: ${primaryInteraction?.urgency || 'Unknown'}\n` +
+        `- Promised follow-up: ${primaryInteraction?.promised_follow_up || primaryAccount?.next_step || 'We are reviewing the next step'}\n\n` +
+        `Thanks for your patience. We are reviewing this carefully and I want to make sure we give you the clearest next step possible.\n\n` +
+        `Best,\nJARVIS`,
     };
   }, [durableOperatorMemory?.customer_accounts, durableOperatorMemory?.customer_interactions, inboxSummary]);
+
+  const shopifyBrief = useMemo(() => {
+    if (!shopifySummary) return null;
+    return {
+      title: `Shopify Intel · ${shopifySummary.store}`,
+      summary:
+        `${shopifySummary.orders} recent orders · ${shopifySummary.open_orders} open · ` +
+        `${shopifySummary.customers} customers · revenue ${shopifySummary.estimated_revenue}`,
+      prompt:
+        `I have a Shopify store summary.\n` +
+        `Store: ${shopifySummary.store}\n` +
+        `Orders: ${shopifySummary.orders}\n` +
+        `Open orders: ${shopifySummary.open_orders}\n` +
+        `Customers: ${shopifySummary.customers}\n` +
+        `Products: ${shopifySummary.products}\n` +
+        `Active products: ${shopifySummary.active_products}\n` +
+        `Estimated revenue: ${shopifySummary.estimated_revenue}\n` +
+        `Top customers: ${shopifySummary.top_customers.map((item) => `${item.name} (${item.total_spent})`).join(', ') || 'None'}\n` +
+        `Top products: ${shopifySummary.top_products.map((item) => `${item.title} (${item.status})`).join(', ') || 'None'}\n\n` +
+        `Turn this into the next best ecommerce operating actions, risks, and opportunities.`,
+    };
+  }, [shopifySummary]);
 
   function loadSalesPrompt(mode: 'account-brief' | 'deal-review' | 'follow-up' | 'objection' | 'meeting-prep') {
     if (!salesBrief) {
@@ -1699,6 +1746,43 @@ export default function JarvisHudDashboard() {
     } as const;
     injectCommand(promptByMode[mode]);
     setWorkbenchNotice(noticeByMode[mode]);
+  }
+
+  function loadCustomerReplyDraft() {
+    if (!customerBrief) {
+      setWorkbenchNotice('Build a customer brief first.');
+      return;
+    }
+    setActionMode('email');
+    setEmailRecipient(customerBrief.draftRecipient);
+    setEmailSubject(customerBrief.draftSubject);
+    setEmailBody(customerBrief.draftBody);
+    setActionNotice(
+      customerBrief.draftRecipient
+        ? 'Customer reply draft loaded into Action Center.'
+        : 'Customer reply draft loaded into Action Center. Add a recipient before staging approval.',
+    );
+  }
+
+  async function escalateCustomerIssue() {
+    if (!customerBrief) {
+      setWorkbenchNotice('Build a customer brief first.');
+      return;
+    }
+    await createFollowUpTask(
+      'Escalate customer issue',
+      `${customerBrief.details}\n\nEscalation requested from Customer Intel.\nReview churn risk, promised follow-ups, and the safest next response.`,
+    );
+  }
+
+  async function refreshShopifyIntel() {
+    try {
+      const next = await fetchShopifySummary();
+      setShopifySummary(next);
+      setWorkbenchNotice('Shopify summary loaded into the HUD.');
+    } catch (error) {
+      setWorkbenchNotice(error instanceof Error ? error.message : 'Unable to load Shopify summary.');
+    }
   }
 
   function loadSalesFollowUpDraft() {
@@ -1963,6 +2047,8 @@ export default function JarvisHudDashboard() {
           entries.find((item) => item.id === 'design-mission' || item.id === 'mission-design' || item.domain === 'design') || null,
         sales:
           entries.find((item) => item.id === 'sales-mission' || item.id === 'mission-sales' || item.domain === 'sales') || null,
+        customer:
+          entries.find((item) => item.id === 'customer-mission' || item.id === 'mission-customer' || item.domain === 'customer') || null,
       };
     }, [durableOperatorMemory?.missions]);
   const autonomyMissions = useMemo(() => {
@@ -2141,6 +2227,43 @@ export default function JarvisHudDashboard() {
           resultMeta: summarizeMissionMeta(durable?.result_data),
           actionLabel: salesBrief ? 'Load Brief' : 'Open Sales',
           action: () => (salesBrief ? injectCommand(salesBrief.prompt) : setFocusMode(false)),
+        });
+      }
+
+      if (customerBrief || durableMissionLookup.customer) {
+        const durable = durableMissionLookup.customer;
+        const hasChurnRisk = customerBrief?.counts.find((item) => item.label === 'Churn Risk' && Number(item.value) > 0);
+        const hasUrgent = customerBrief?.counts.find((item) => item.label === 'Urgent' && Number(item.value) > 0);
+        missions.push({
+          id: durable?.id || 'mission-customer',
+          title: durable?.title || customerBrief?.title || 'Customer mission',
+          domain: 'customer',
+          status: ((durable?.status as MissionStatus | undefined) || (customerBrief ? 'active' : 'idle')),
+          phase:
+            ((durable?.phase as MissionPhase | undefined) ||
+              (hasUrgent ? 'act' : hasChurnRisk ? 'plan' : customerBrief ? 'verify' : 'detect')),
+          summary: durable?.summary || customerBrief?.summary || 'Customer lane is ready.',
+          nextStep:
+            durable?.next_step ||
+            (hasUrgent
+              ? 'Draft the next customer reply or escalate the issue.'
+              : hasChurnRisk
+              ? 'Review the highest-risk customer account and resolve the next follow-up.'
+              : 'Audit current customer health and support activity.'),
+          result:
+            durable?.result ||
+            (hasUrgent
+              ? 'Urgent customer interaction detected.'
+              : hasChurnRisk
+              ? 'Customer churn risk signals are active.'
+              : 'Customer context is stable and ready for the next support pass.'),
+          retryHint:
+            durable?.retry_hint ||
+            'Reload Customer Intel, draft the next reply, or route the customer brief to planner for deeper support coordination.',
+          nextActionLabel: typeof durable?.next_action?.label === 'string' ? durable.next_action.label : undefined,
+          resultMeta: summarizeMissionMeta(durable?.result_data),
+          actionLabel: customerBrief ? 'Load Brief' : 'Open Customer',
+          action: () => (customerBrief ? injectCommand(customerBrief.prompt) : setFocusMode(false)),
         });
       }
 
@@ -2468,6 +2591,18 @@ export default function JarvisHudDashboard() {
       });
     }
 
+    if (shopifyBrief) {
+      items.push({
+        id: `shopify-brief-${shopifySummary?.store || 'store'}`,
+        priority: 57,
+        label: 'Shopify Intel',
+        title: shopifyBrief.title,
+        detail: shopifyBrief.summary,
+        actionLabel: 'Load Brief',
+        action: () => injectCommand(shopifyBrief.prompt),
+      });
+    }
+
     if (agentArchitecture?.handoff?.brief) {
       items.push({
         id: `agent-handoff-${agentArchitecture.handoff.planner?.task_id || agentArchitecture.handoff.executor?.task_id || 'current'}`,
@@ -2722,7 +2857,7 @@ export default function JarvisHudDashboard() {
     }
 
     return items.sort((left, right) => right.priority - left.priority).slice(0, 6);
-  }, [activeAutomationAlerts, agentArchitecture?.handoff?.brief, agentArchitecture?.handoff?.executor?.task_id, agentArchitecture?.handoff?.planner?.task_id, agentArchitecture?.roles, agentRoleTasks.executor, agentRoleTasks.planner, architectureTaskOutcome, autonomyMissions, customerBrief, documentBrief, editorFilePath, gitCommitMessage, inboxFocusQueue, latestCodeResult?.file_path, latestValidationFailure, latestValidationSuccess, nextCodingTask, nextReviewQueueItem, pendingAction, pendingCodeEdit, pendingWorkbench, prepQueue, salesBrief, screenSnapshot?.capturedAt, screenSnapshot?.label, selfImproveBrief, selfImprovePatchPlan, selfImproveRuns, visionAnalysis?.content, visionQuery?.answer, visionQuery?.question, visionSignals, visionSuggestedActions?.actions, visionTextExtraction?.content, visionUiPlan?.summary, visionUiPlan?.target_label, visionUiTargets?.targets, visionUiVerify?.summary, visionUiVerify?.risk_level, visionUiVerify?.target_label, visualBrief]);
+  }, [activeAutomationAlerts, agentArchitecture?.handoff?.brief, agentArchitecture?.handoff?.executor?.task_id, agentArchitecture?.handoff?.planner?.task_id, agentArchitecture?.roles, agentRoleTasks.executor, agentRoleTasks.planner, architectureTaskOutcome, autonomyMissions, customerBrief, documentBrief, editorFilePath, gitCommitMessage, inboxFocusQueue, latestCodeResult?.file_path, latestValidationFailure, latestValidationSuccess, nextCodingTask, nextReviewQueueItem, pendingAction, pendingCodeEdit, pendingWorkbench, prepQueue, salesBrief, screenSnapshot?.capturedAt, screenSnapshot?.label, selfImproveBrief, selfImprovePatchPlan, selfImproveRuns, shopifyBrief, shopifySummary?.store, visionAnalysis?.content, visionQuery?.answer, visionQuery?.question, visionSignals, visionSuggestedActions?.actions, visionTextExtraction?.content, visionUiPlan?.summary, visionUiPlan?.target_label, visionUiTargets?.targets, visionUiVerify?.summary, visionUiVerify?.risk_level, visionUiVerify?.target_label, visualBrief]);
   const connectorCapabilities = useMemo(() => {
     const ids = new Set(connectedConnectorIds);
     const gmailConnected = ids.has('gmail') || ids.has('gmail_imap');
@@ -6088,6 +6223,15 @@ export default function JarvisHudDashboard() {
                             customerBrief?.details || customerBrief?.summary || 'Review customer health, churn risk, and the next follow-up actions.',
                           )
                         }
+                        onDraftReply={loadCustomerReplyDraft}
+                        onEscalate={() => void escalateCustomerIssue()}
+                      />
+                    </Suspense>
+                    <Suspense fallback={<DashboardSectionFallback label="Loading shopify intelligence..." />}>
+                      <ShopifyIntelPanel
+                        summary={shopifySummary}
+                        onRefresh={() => void refreshShopifyIntel()}
+                        onLoadBrief={() => injectCommand(shopifyBrief?.prompt || '')}
                       />
                     </Suspense>
                     <Suspense fallback={<DashboardSectionFallback label="Loading document intelligence..." />}>

@@ -360,6 +360,30 @@ export const SOURCE_CATALOG: ConnectorMeta[] = [
     ],
   },
   {
+    connector_id: 'shopify',
+    display_name: 'Shopify',
+    auth_type: 'local',
+    category: 'documents',
+    icon: 'ShoppingBag',
+    color: 'text-emerald-400',
+    description: 'Store orders, customers, and products',
+    unitLabel: 'store records',
+    steps: [
+      {
+        label: 'In Shopify Admin, go to Apps -> App and sales channel settings -> Develop apps. Create or open a custom app for OpenJarvis.',
+        url: 'https://admin.shopify.com/store',
+        urlLabel: 'Open Shopify Admin →',
+      },
+      {
+        label: 'Enable Admin API scopes for orders, customers, and products read access, then install the app and copy the Admin API access token.',
+      },
+      {
+        label: 'Paste your credentials below as store-domain and token joined by a colon, for example: mystore.myshopify.com:shpat_xxx',
+      },
+    ],
+    inputFields: [{ name: 'token', placeholder: 'store-name.myshopify.com:shpat_xxx', type: 'password' }],
+  },
+  {
     connector_id: 'outlook',
     display_name: 'Outlook',
     auth_type: 'oauth',
