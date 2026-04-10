@@ -3216,7 +3216,7 @@ export default function JarvisHudDashboard({
         action: () => {
           if (item.action_hint === 'planner_handoff') {
             void handoffWithBrief(
-              `${item.title}\n\nWhy now: ${commanderBrief.why}\n\nBest next step: ${commanderBrief.best_next_step}`,
+              commanderBrief.planner_prompt || `${item.title}\n\nWhy now: ${commanderBrief.why}\n\nBest next step: ${commanderBrief.best_next_step}`,
               'commander-brief',
             );
             return;

@@ -1115,6 +1115,8 @@ def test_operator_memory_analytics_route_returns_focus_and_lessons(tmp_path: Pat
     assert payload["blocked_missions"]
     assert payload["top_lessons"]
     assert payload["focus_recommendations"]
+    assert "recurring_patterns" in payload
+    assert "improvement_opportunities" in payload
 
 
 def test_operator_memory_review_item_is_recorded_and_returned_in_analytics(tmp_path: Path):
@@ -1146,6 +1148,52 @@ def test_operator_memory_review_item_is_recorded_and_returned_in_analytics(tmp_p
     payload = analytics.json()
     assert payload["review_items"]
     assert payload["review_items"][0]["summary"] == "The answer was too vague and should be tightened."
+
+
+def test_operator_memory_analytics_detects_recurring_patterns(tmp_path: Path):
+    client = _make_client(tmp_path)
+    bootstrap = client.post(
+        "/v1/auth/bootstrap",
+        json={
+            "username": "owner",
+            "password": "supersecret123",
+            "display_name": "Owner",
+        },
+    )
+    assert bootstrap.status_code == 200
+
+    for mission_id in ("voice-1", "voice-2"):
+        client.post(
+            "/v1/operator-memory/mission",
+            json={
+                "id": mission_id,
+                "title": "Voice blocker",
+                "domain": "voice",
+                "status": "blocked",
+                "phase": "retry",
+                "next_step": "Stabilize the voice loop.",
+            },
+        )
+    for summary in ("Answer was too vague.", "Another answer was too vague."):
+        review = client.post(
+            "/v1/operator-memory/review",
+            json={
+                "category": "quality",
+                "label": "Operator review",
+                "summary": summary,
+                "detail": "Need tighter recommendations.",
+                "source": "test",
+            },
+        )
+        assert review.status_code == 200
+
+    analytics = client.get("/v1/operator-memory/analytics")
+    assert analytics.status_code == 200
+    payload = analytics.json()
+    keys = {f"{item['kind']}:{item['key']}" for item in payload["recurring_patterns"]}
+    assert "review_category:quality" in keys
+    assert "blocked_domain:voice" in keys
+    assert payload["improvement_opportunities"]
 
 
 def test_operator_memory_commander_brief_is_user_scoped_and_structured(tmp_path: Path):

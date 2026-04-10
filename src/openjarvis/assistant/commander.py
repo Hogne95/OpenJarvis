@@ -17,6 +17,13 @@ class CommanderQueueEntry:
     priority: int
 
 
+@dataclass(frozen=True)
+class CommanderExecutionPhase:
+    phase: str
+    goal: str
+    success_signal: str
+
+
 def _clean_text(value: Any) -> str:
     return str(value or "").strip()
 
@@ -26,6 +33,32 @@ def _interaction_style(profile: dict[str, Any]) -> str:
     decisiveness = _clean_text(profile.get("decisiveness_preference")) or "recommend clearly"
     verbosity = _clean_text(profile.get("verbosity_preference")) or "adaptive"
     return f"{autonomy} autonomy, {decisiveness}, {verbosity} verbosity"
+
+
+def _build_execution_plan(*, recommendation: str, why: str, best_next_step: str, risks: list[str]) -> list[CommanderExecutionPhase]:
+    primary_risk = risks[0] if risks else "Watch for hidden blockers while the plan is running."
+    return [
+        CommanderExecutionPhase(
+            phase="plan",
+            goal=recommendation,
+            success_signal="The top objective is narrowed to one bounded action.",
+        ),
+        CommanderExecutionPhase(
+            phase="execute",
+            goal=best_next_step,
+            success_signal="A concrete task, handoff, or approved action is in motion.",
+        ),
+        CommanderExecutionPhase(
+            phase="verify",
+            goal=f"Confirm the result actually reduces the pressure behind: {why}",
+            success_signal="The blocker, queue pressure, or failure signal is measurably reduced.",
+        ),
+        CommanderExecutionPhase(
+            phase="report",
+            goal=f"Report outcome and remaining risk: {primary_risk}",
+            success_signal="JARVIS can state what changed, what remains, and the next safest move.",
+        ),
+    ]
 
 
 def build_commander_brief(
@@ -164,6 +197,22 @@ def build_commander_brief(
         )
 
     queue = sorted(queue, key=lambda item: item.priority, reverse=True)[:4]
+    execution_plan = _build_execution_plan(
+        recommendation=recommendation,
+        why=why,
+        best_next_step=best_next_step,
+        risks=risks,
+    )
+    planner_prompt = (
+        "Commander mode directive.\n"
+        f"Recommendation: {recommendation}\n"
+        f"Why: {why}\n"
+        f"Best next step: {best_next_step}\n"
+        "Execution phases:\n"
+        + "\n".join(
+            f"- {phase.phase.title()}: {phase.goal} (success: {phase.success_signal})" for phase in execution_plan
+        )
+    )
 
     return {
         "headline": "Commander brief ready.",
@@ -172,6 +221,8 @@ def build_commander_brief(
         "risks": risks,
         "best_next_step": best_next_step,
         "queue": [asdict(item) for item in queue],
+        "execution_plan": [asdict(item) for item in execution_plan],
         "operating_mode": _clean_text(awareness_mode.get("level")) or "unknown",
         "interaction_style": _interaction_style(profile),
+        "planner_prompt": planner_prompt,
     }

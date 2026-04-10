@@ -11,6 +11,7 @@ import pytest
 from openjarvis.agents._stubs import AgentResult
 from openjarvis.agents.errors import FatalError, RetryableError
 from openjarvis.core.events import EventBus, EventType
+from openjarvis.server.operator_memory import OperatorMemory
 
 
 @pytest.fixture
@@ -171,6 +172,25 @@ class TestExecutorBasic:
         assert updated_task["status"] == "failed"
         assert updated_task["progress"]["step_status"] == "error"
         assert "bad config" in updated_task["progress"]["result_summary"]
+
+    def test_execute_tick_records_review_item_for_owner_scoped_failure(self, executor, manager, tmp_path):
+        owner_memory = OperatorMemory(path=str(tmp_path / "owner-memory.json"))
+        executor._system._operator_memory_by_user_id = {"user-1": owner_memory}
+        agent = manager.create_agent(
+            name="planner",
+            agent_type="monitor_operative",
+            owner_user_id="user-1",
+        )
+
+        with patch.object(
+            executor, "_invoke_agent", side_effect=FatalError("planner execution broke")
+        ):
+            executor.execute_tick(agent["id"])
+
+        analytics = owner_memory.analytics_summary()
+        assert analytics["review_items"]
+        assert analytics["review_items"][0]["category"] == "agent_failure"
+        assert "planner execution broke" in analytics["review_items"][0]["detail"]
 
 
 def test_finalize_tick_reads_agent_result_metadata(tmp_path):

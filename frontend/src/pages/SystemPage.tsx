@@ -332,6 +332,20 @@ export function SystemPage() {
                     ))}
                   </div>
                 ) : null}
+                {commanderBrief?.execution_plan?.length ? (
+                  <div className="mt-4 grid gap-2">
+                    {commanderBrief.execution_plan.map((step) => (
+                      <div
+                        key={step.phase}
+                        className="rounded-[0.9rem] border border-cyan-400/10 bg-slate-950/55 px-3 py-2"
+                      >
+                        <div className="text-[10px] uppercase tracking-[0.22em] text-cyan-300/55">{step.phase}</div>
+                        <div className="mt-1 text-sm text-cyan-50/92">{step.goal}</div>
+                        <div className="mt-1 text-xs leading-6 text-slate-200/72">{step.success_signal}</div>
+                      </div>
+                    ))}
+                  </div>
+                ) : null}
               </div>
             </div>
 
@@ -503,6 +517,32 @@ export function SystemPage() {
                           <div className="text-[10px] uppercase tracking-[0.22em] text-cyan-300/55">{item.status}</div>
                         </div>
                         <div className="mt-1 text-xs leading-6 text-slate-200/72">{item.summary}</div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ) : null}
+              {memoryAnalytics?.recurring_patterns?.length ? (
+                <div className="mt-4 rounded-[1rem] border border-cyan-400/10 bg-black/20 px-4 py-3">
+                  <div className="text-xs uppercase tracking-[0.22em] text-cyan-300/55">Recurring Patterns</div>
+                  <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                    {memoryAnalytics.recurring_patterns.slice(0, 4).map((item) => (
+                      <div key={`${item.kind}:${item.key}`} className="rounded-[0.9rem] border border-cyan-400/10 bg-slate-950/55 px-3 py-2">
+                        <div className="text-[10px] uppercase tracking-[0.22em] text-cyan-300/55">{item.kind.replace('_', ' ')}</div>
+                        <div className="mt-1 text-sm text-cyan-50/92">{item.key}</div>
+                        <div className="mt-1 text-xs leading-6 text-slate-200/72">{item.count} repeated signal(s)</div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ) : null}
+              {memoryAnalytics?.improvement_opportunities?.length ? (
+                <div className="mt-4 rounded-[1rem] border border-cyan-400/10 bg-black/20 px-4 py-3">
+                  <div className="text-xs uppercase tracking-[0.22em] text-cyan-300/55">Improvement Opportunities</div>
+                  <div className="mt-3 space-y-2">
+                    {memoryAnalytics.improvement_opportunities.slice(0, 4).map((item) => (
+                      <div key={item} className="rounded-[0.9rem] border border-cyan-400/10 bg-slate-950/55 px-3 py-2 text-sm text-slate-100/80">
+                        {item}
                       </div>
                     ))}
                   </div>

@@ -662,6 +662,8 @@ class OperatorMemoryAnalyticsResponse(BaseModel):
     top_lessons: list[dict[str, Any]]
     focus_recommendations: list[str]
     review_items: list[dict[str, Any]]
+    recurring_patterns: list[dict[str, Any]]
+    improvement_opportunities: list[str]
 
 
 class OperatorCommanderQueueItem(BaseModel):
@@ -674,6 +676,12 @@ class OperatorCommanderQueueItem(BaseModel):
     priority: int
 
 
+class OperatorCommanderExecutionPhase(BaseModel):
+    phase: str
+    goal: str
+    success_signal: str
+
+
 class OperatorCommanderBriefResponse(BaseModel):
     headline: str
     recommendation: str
@@ -681,8 +689,10 @@ class OperatorCommanderBriefResponse(BaseModel):
     risks: list[str]
     best_next_step: str
     queue: list[OperatorCommanderQueueItem]
+    execution_plan: list[OperatorCommanderExecutionPhase]
     operating_mode: str
     interaction_style: str
+    planner_prompt: str
 
 
 class OperatorReviewItemRequest(BaseModel):

@@ -1492,6 +1492,14 @@ class OperatorMemory:
             if item.status.strip().lower() in {"active", "running", "in_progress", "pending"}
         ]
         bottlenecks = self.top_learning_experiences(limit=4)
+        category_counts: dict[str, int] = {}
+        domain_counts: dict[str, int] = {}
+        for item in self._review_items:
+            category = item.category.strip().lower() or "quality"
+            category_counts[category] = category_counts.get(category, 0) + 1
+        for item in blocked_missions:
+            domain = item.domain.strip().lower() or "general"
+            domain_counts[domain] = domain_counts.get(domain, 0) + 1
         focus: list[str] = []
         if blocked_missions:
             focus.append(f"Clear {len(blocked_missions)} blocked mission{'s' if len(blocked_missions) != 1 else ''}.")
@@ -1503,6 +1511,37 @@ class OperatorMemory:
             focus.append(f"Use the lesson from {bottlenecks[0].get('label', 'recent work')} to avoid repeat friction.")
         if not focus:
             focus.append("No major bottleneck is dominating right now.")
+
+        recurring_patterns = [
+            {"key": key, "count": count, "kind": "review_category"}
+            for key, count in sorted(category_counts.items(), key=lambda item: (-item[1], item[0]))[:4]
+            if count >= 2
+        ]
+        recurring_patterns.extend(
+            {"key": key, "count": count, "kind": "blocked_domain"}
+            for key, count in sorted(domain_counts.items(), key=lambda item: (-item[1], item[0]))[:4]
+            if count >= 2
+        )
+        improvement_opportunities: list[str] = []
+        for item in recurring_patterns:
+            if item["kind"] == "review_category":
+                improvement_opportunities.append(
+                    f"Recurring {item['key']} issues appeared {item['count']} times. Tighten that workflow or prompt path."
+                )
+            else:
+                improvement_opportunities.append(
+                    f"{item['key'].title()} work is blocking repeatedly. Add a stronger checklist or recovery routine there."
+                )
+        if not improvement_opportunities and self._review_items:
+            first = self._review_items[0]
+            improvement_opportunities.append(
+                f"Review the latest {first.category} item and decide whether it needs a prompt, tool, or workflow change."
+            )
+        if not improvement_opportunities and blocked_missions:
+            first = blocked_missions[0]
+            improvement_opportunities.append(
+                f"Build a reusable recovery routine for {first.title or 'the current blocked mission'}."
+            )
 
         return {
             "signals": asdict(self._signals),
@@ -1529,6 +1568,8 @@ class OperatorMemory:
             "top_lessons": bottlenecks,
             "focus_recommendations": focus,
             "review_items": [asdict(item) for item in self._review_items[:8]],
+            "recurring_patterns": recurring_patterns,
+            "improvement_opportunities": improvement_opportunities,
         }
 
     def add_review_item(

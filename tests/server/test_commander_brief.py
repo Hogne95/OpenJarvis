@@ -30,6 +30,8 @@ def test_commander_brief_prioritizes_blocked_mission():
     assert brief["best_next_step"] == "Inspect the latest interruption failure and patch cleanup."
     assert brief["queue"][0]["action_hint"] == "planner_handoff"
     assert "voice unavailable" in brief["risks"]
+    assert [item["phase"] for item in brief["execution_plan"]] == ["plan", "execute", "verify", "report"]
+    assert "Commander mode directive." in brief["planner_prompt"]
 
 
 def test_commander_brief_falls_back_to_review_queue():
@@ -56,3 +58,4 @@ def test_commander_brief_falls_back_to_review_queue():
     assert brief["queue"][0]["id"] == "review-review-1"
     assert brief["queue"][0]["action_hint"] == "open_system"
     assert brief["risks"][0] == "Review queue: A recent answer felt too passive."
+    assert brief["execution_plan"][0]["phase"] == "plan"

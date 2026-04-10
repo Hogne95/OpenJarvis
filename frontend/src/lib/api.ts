@@ -1987,6 +1987,12 @@ export interface OperatorMemoryAnalyticsResponse {
     source: string;
     created_at: string;
   }>;
+  recurring_patterns: Array<{
+    key: string;
+    count: number;
+    kind: string;
+  }>;
+  improvement_opportunities: string[];
 }
 
 export interface OperatorCommanderBriefResponse {
@@ -2004,8 +2010,14 @@ export interface OperatorCommanderBriefResponse {
     action_hint: string;
     priority: number;
   }>;
+  execution_plan: Array<{
+    phase: string;
+    goal: string;
+    success_signal: string;
+  }>;
   operating_mode: string;
   interaction_style: string;
+  planner_prompt: string;
 }
 
 export async function fetchOperatorMemoryContext(body: {

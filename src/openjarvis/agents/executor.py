@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import time
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from openjarvis.agents._stubs import AgentResult
@@ -144,6 +145,67 @@ class AgentExecutor:
         if result_summary:
             payload["result_summary"] = result_summary
         self._bus.publish(EventType.TRACE_STEP, payload)
+
+    def _resolve_operator_memory(self, agent: dict[str, Any]) -> Any | None:
+        """Resolve the best operator-memory target for self-improvement signals.
+
+        Root cause: agent failures were already observable in traces and HUD status,
+        but they were not automatically feeding the review loop. Resolving the
+        agent owner's operator memory lets JARVIS learn from repeated failures
+        without leaking one user's issues into another user's memory.
+        """
+        owner_user_id = str(agent.get("owner_user_id") or "").strip()
+        system = self._system
+        if system is not None and owner_user_id:
+            cache = getattr(system, "_operator_memory_by_user_id", None)
+            if isinstance(cache, dict):
+                cached = cache.get(owner_user_id)
+                if cached is not None:
+                    return cached
+        if system is not None:
+            fallback = getattr(system, "operator_memory", None)
+            if fallback is not None:
+                return fallback
+        if not owner_user_id:
+            return None
+        try:
+            from openjarvis.core.config import DEFAULT_CONFIG_DIR
+            from openjarvis.server.operator_memory import OperatorMemory
+        except Exception:
+            return None
+        scoped_dir = Path(DEFAULT_CONFIG_DIR) / "operator_memory"
+        scoped_dir.mkdir(parents=True, exist_ok=True)
+        manager = OperatorMemory(path=str(scoped_dir / f"{owner_user_id}.json"))
+        if system is not None:
+            cache = getattr(system, "_operator_memory_by_user_id", None)
+            if cache is None:
+                cache = {}
+                setattr(system, "_operator_memory_by_user_id", cache)
+            if isinstance(cache, dict):
+                cache[owner_user_id] = manager
+        return manager
+
+    def _record_failure_review_item(self, agent: dict[str, Any], *, error: Exception, category: str) -> None:
+        manager = self._resolve_operator_memory(agent)
+        if manager is None or not hasattr(manager, "add_review_item"):
+            return
+        agent_name = str(agent.get("name") or "Managed agent").strip() or "Managed agent"
+        activity = str(agent.get("current_activity") or "").strip()
+        summary = f"{agent_name} hit a {category.replace('_', ' ')} condition."
+        detail = f"Error: {str(error).strip() or 'unknown'}"
+        if activity:
+            detail += f"\nLast activity: {activity}"
+        try:
+            manager.add_review_item(
+                category=category,
+                label=agent_name,
+                summary=summary,
+                detail=detail,
+                source="agent-executor",
+                status="open",
+            )
+        except Exception:
+            pass
 
     def _inject_tool_deps(self, tool: Any) -> None:
         """Inject runtime dependencies into a tool instance.
@@ -669,6 +731,7 @@ class AgentExecutor:
         duration: float,
     ) -> None:
         """Update agent state after tick completion or failure."""
+        agent = self._manager.get_agent(agent_id) or {"id": agent_id, "name": "Managed agent"}
         self._record_execution_step(
             agent_id,
             phase="report",
@@ -781,6 +844,7 @@ class AgentExecutor:
                     "duration": duration,
                 },
             )
+            self._record_failure_review_item(agent, error=error, category="agent_blocker")
         else:
             logger.error(
                 "Tick failed for agent %s after %.1fs: %s",
@@ -815,6 +879,7 @@ class AgentExecutor:
                     "duration": duration,
                 },
             )
+            self._record_failure_review_item(agent, error=error, category="agent_failure")
 
     def _save_trace(
         self,
