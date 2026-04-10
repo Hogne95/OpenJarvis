@@ -1335,9 +1335,9 @@ function InteractTab({ agentId, agentStatus }: { agentId: string; agentStatus: s
 
   useEffect(() => {
     loadData();
-    const interval = setInterval(loadData, 2000);
+    const interval = setInterval(loadData, waitingForResponse || liveStatus === 'running' ? 2000 : 5000);
     return () => clearInterval(interval);
-  }, [loadData]);
+  }, [loadData, liveStatus, waitingForResponse]);
 
   useEffect(() => { setLiveStatus(agentStatus); }, [agentStatus]);
 
@@ -2859,7 +2859,7 @@ function LogsTab({ agentId }: { agentId: string }) {
 
   useEffect(() => {
     loadData();
-    const interval = setInterval(loadData, 5000);
+    const interval = setInterval(loadData, 10000);
     return () => clearInterval(interval);
   }, [loadData]);
 
@@ -3052,13 +3052,33 @@ export function AgentsPage() {
     fetchTemplates().then(setTemplates).catch(() => {});
   }, [refresh]);
 
+  useEffect(() => {
+    const interval = setInterval(() => {
+      void refresh();
+    }, 15000);
+    return () => clearInterval(interval);
+  }, [refresh]);
+
   const selectedAgent = managedAgents.find((a) => a.id === selectedAgentId);
 
   useEffect(() => {
     if (selectedAgentId) {
-      fetchAgentTasks(selectedAgentId).then(setTasks).catch(() => setTasks([]));
-      fetchAgentChannels(selectedAgentId).then(setChannels).catch(() => setChannels([]));
+      const loadSelectedAgentData = async () => {
+        const [nextTasks, nextChannels] = await Promise.allSettled([
+          fetchAgentTasks(selectedAgentId),
+          fetchAgentChannels(selectedAgentId),
+        ]);
+        setTasks(nextTasks.status === 'fulfilled' ? nextTasks.value : []);
+        setChannels(nextChannels.status === 'fulfilled' ? nextChannels.value : []);
+      };
+      void loadSelectedAgentData();
+      const interval = setInterval(() => {
+        void loadSelectedAgentData();
+      }, 10000);
+      return () => clearInterval(interval);
     }
+    setTasks([]);
+    setChannels([]);
   }, [selectedAgentId]);
 
   const handlePause = async (id: string) => {

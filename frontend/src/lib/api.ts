@@ -1640,7 +1640,18 @@ export async function fetchWorkspaceChecks(): Promise<WorkspaceChecks> {
   return res.json();
 }
 
-export async function prepareWorkspaceCommit(message: string): Promise<{ root: string; command: string }> {
+export async function prepareWorkspaceStage(): Promise<{ root: string; command: string }> {
+  const res = await fetch(`${getBase()}/v1/workspace/git/prepare-stage`, {
+    method: 'POST',
+  });
+  if (!res.ok) {
+    const detail = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(detail.detail || `Prepare stage failed: ${res.status}`);
+  }
+  return res.json();
+}
+
+export async function prepareWorkspaceCommit(message: string): Promise<{ root: string; command: string; message: string }> {
   const res = await fetch(`${getBase()}/v1/workspace/git/prepare-commit`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },

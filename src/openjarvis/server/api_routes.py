@@ -34,6 +34,63 @@ def _package_ready(module_name: str) -> bool:
         return False
 
 
+def _safe_backend_health(backend: Any) -> tuple[bool, str]:
+    """Return backend health without letting probe errors break status routes."""
+    if backend is None:
+        return False, "No backend configured"
+    try:
+        healthy = bool(backend.health())
+    except Exception as exc:
+        logger.warning("Backend health probe failed for %s: %s", getattr(backend, "backend_id", type(backend).__name__), exc)
+        return False, str(exc)
+    if healthy:
+        return True, ""
+    return False, "Backend reported unhealthy"
+
+
+def _safe_voice_loop_status(voice_loop: Any) -> dict[str, Any]:
+    """Return voice loop status without raising into the HUD."""
+    if voice_loop is None:
+        return {
+            "active": False,
+            "phase": "idle",
+            "session_id": None,
+            "started_at": None,
+            "updated_at": None,
+            "backend_available": False,
+            "backend_name": None,
+            "language_hints": ["no", "en"],
+            "live_vad_enabled": False,
+            "vad_backend": "energy",
+            "wake_backend": "transcript",
+            "last_vad_rms": 0.0,
+            "last_wake_score": None,
+            "last_transcript": "",
+            "last_error": "Voice loop manager not configured",
+        }
+    try:
+        return voice_loop.status()
+    except Exception as exc:
+        logger.warning("Voice loop status probe failed: %s", exc)
+        return {
+            "active": False,
+            "phase": "error",
+            "session_id": None,
+            "started_at": None,
+            "updated_at": None,
+            "backend_available": False,
+            "backend_name": getattr(voice_loop, "backend_id", None),
+            "language_hints": ["no", "en"],
+            "live_vad_enabled": False,
+            "vad_backend": "energy",
+            "wake_backend": "transcript",
+            "last_vad_rms": 0.0,
+            "last_wake_score": None,
+            "last_transcript": "",
+            "last_error": str(exc),
+        }
+
+
 def _desktop_report_status(repo_root: Path) -> tuple[str, str, str]:
     report_path = repo_root / "desktop-readiness-report.txt"
     if not report_path.exists():
@@ -74,6 +131,8 @@ def build_runtime_readiness(app_state: Any) -> dict[str, Any]:
     repo_root = Path.cwd()
     speech_backend = getattr(app_state, "speech_backend", None)
     voice_loop = getattr(app_state, "voice_loop", None)
+    speech_backend_healthy, speech_backend_error = _safe_backend_health(speech_backend)
+    voice_status = _safe_voice_loop_status(voice_loop)
     api_key_present = bool(os.environ.get("OPENAI_API_KEY", "").strip())
     openai_ready = _package_ready("openai")
     docx_ready = _package_ready("docx")
@@ -89,15 +148,19 @@ def build_runtime_readiness(app_state: Any) -> dict[str, Any]:
         {
             "id": "speech-backend",
             "label": "Speech Backend",
-            "status": "ready" if speech_backend and speech_backend.health() else "blocked",
+            "status": "ready" if speech_backend_healthy else "blocked",
             "detail": (
                 f"Speech backend is available via {getattr(speech_backend, 'backend_id', 'configured backend')}."
-                if speech_backend and speech_backend.health()
-                else "Speech backend is not configured or not healthy."
+                if speech_backend_healthy
+                else (
+                    f"Speech backend is not healthy: {speech_backend_error}"
+                    if speech_backend_error
+                    else "Speech backend is not configured or not healthy."
+                )
             ),
             "recommendation": (
                 "Speech is ready for voice input."
-                if speech_backend and speech_backend.health()
+                if speech_backend_healthy
                 else "Configure a speech backend before relying on voice input."
             ),
         },
@@ -105,7 +168,11 @@ def build_runtime_readiness(app_state: Any) -> dict[str, Any]:
             "id": "voice-loop",
             "label": "Voice Loop",
             "status": "ready" if voice_loop is not None else "warning",
-            "detail": "Voice loop manager is configured." if voice_loop is not None else "Voice loop manager is not configured.",
+            "detail": (
+                f"Voice loop is {voice_status.get('phase') or 'idle'}."
+                if voice_loop is not None
+                else "Voice loop manager is not configured."
+            ),
             "recommendation": (
                 "Voice loop is available for always-listening mode."
                 if voice_loop is not None
@@ -1666,9 +1733,11 @@ async def speech_health(request: Request):
     backend = getattr(request.app.state, "speech_backend", None)
     if backend is None:
         return {"available": False, "reason": "No speech backend configured"}
+    healthy, error = _safe_backend_health(backend)
     return {
-        "available": backend.health(),
-        "backend": backend.backend_id,
+        "available": healthy,
+        "backend": getattr(backend, "backend_id", type(backend).__name__),
+        "reason": error or None,
     }
 
 
@@ -1744,7 +1813,8 @@ async def synthesize_speech(req: SpeechSynthesizeRequest, request: Request):
             output_format=req.output_format,
         )
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc))
+        logger.warning("Speech synthesis failed for backend %s: %s", backend_key, exc)
+        raise HTTPException(status_code=503, detail=f"TTS synthesis failed: {exc}")
 
     media_type = "audio/mpeg" if result.format == "mp3" else "audio/wav"
     headers = {
@@ -1758,25 +1828,7 @@ async def synthesize_speech(req: SpeechSynthesizeRequest, request: Request):
 async def voice_loop_status(request: Request):
     """Return the current HUD voice loop session state."""
     manager = getattr(request.app.state, "voice_loop", None)
-    if manager is None:
-        return {
-            "active": False,
-            "phase": "idle",
-            "session_id": None,
-            "started_at": None,
-            "updated_at": None,
-            "backend_available": False,
-            "backend_name": None,
-            "language_hints": ["no", "en"],
-            "live_vad_enabled": False,
-            "vad_backend": "energy",
-            "wake_backend": "transcript",
-            "last_vad_rms": 0.0,
-            "last_wake_score": None,
-            "last_transcript": "",
-            "last_error": "Voice loop manager not configured",
-        }
-    return manager.status()
+    return _safe_voice_loop_status(manager)
 
 
 @voice_loop_router.post("/start")
@@ -3891,6 +3943,86 @@ async def workspace_checks(request: Request, root: Optional[str] = None):
     }
 
 
+def _workspace_changed_paths(summary: dict[str, Any]) -> list[str]:
+    paths: list[str] = []
+    for raw_line in summary.get("changed_files") or []:
+        line = str(raw_line).strip()
+        if not line:
+            continue
+        parts = line.split(maxsplit=1)
+        candidate = parts[-1].strip() if parts else ""
+        if " -> " in candidate:
+            candidate = candidate.split(" -> ", 1)[-1].strip()
+        if candidate:
+            paths.append(candidate)
+    return paths
+
+
+def _workspace_commit_type(paths: list[str]) -> str:
+    lowered = [path.lower() for path in paths]
+    if lowered and all(path.endswith((".md", ".txt", ".rst")) or path.startswith("docs/") for path in lowered):
+        return "docs"
+    if lowered and all("/test" in path or path.startswith("tests/") or path.endswith(("_test.py", ".spec.ts", ".test.ts", ".test.tsx")) for path in lowered):
+        return "test"
+    if lowered and all(
+        path.startswith((".github/", "configs/", "deploy/"))
+        or path.endswith((".json", ".toml", ".yaml", ".yml", ".ini"))
+        for path in lowered
+    ):
+        return "chore"
+    return "fix"
+
+
+def _workspace_commit_scope(paths: list[str]) -> str:
+    if not paths:
+        return "workspace"
+    first = paths[0].replace("\\", "/")
+    parts = [part for part in first.split("/") if part]
+    preferred = [part for part in parts if part not in {"src", "openjarvis", "frontend", "tests"}]
+    if preferred:
+        return preferred[0].replace("_", "-")
+    stem = Path(first).stem.strip()
+    return stem.replace("_", "-") or "workspace"
+
+
+def _workspace_commit_subject(paths: list[str]) -> str:
+    if not paths:
+        return "update workspace"
+    names = [Path(path.replace("\\", "/")).stem.replace("_", "-") for path in paths[:3]]
+    names = [name for name in names if name]
+    if not names:
+        return "update workspace"
+    if len(paths) == 1:
+        return f"update {names[0]}"
+    if len(paths) == 2 and len(names) >= 2:
+        return f"update {names[0]} and {names[1]}"
+    return f"update {names[0]} and related files"
+
+
+def _generate_workspace_commit_message(summary: dict[str, Any]) -> str:
+    paths = _workspace_changed_paths(summary)
+    commit_type = _workspace_commit_type(paths)
+    scope = _workspace_commit_scope(paths)
+    subject = _workspace_commit_subject(paths)
+    if scope:
+        return f"{commit_type}({scope}): {subject}"
+    return f"{commit_type}: {subject}"
+
+
+@workspace_router.post("/git/prepare-stage")
+async def workspace_prepare_stage(request: Request, root: Optional[str] = None):
+    registry = getattr(request.app.state, "workspace_registry", None)
+    try:
+        summary = registry.summary(root) if registry is not None else await workspace_summary(request, root)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    return {
+        "root": summary["root"],
+        "command": "git add -A",
+    }
+
+
 @workspace_router.post("/git/prepare-commit")
 async def workspace_prepare_commit(req: WorkspaceGitActionRequest, request: Request, root: Optional[str] = None):
     registry = getattr(request.app.state, "workspace_registry", None)
@@ -3899,12 +4031,11 @@ async def workspace_prepare_commit(req: WorkspaceGitActionRequest, request: Requ
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
 
-    message = (req.message or "").strip()
-    if not message:
-        raise HTTPException(status_code=400, detail="Commit message is required")
+    message = (req.message or "").strip() or _generate_workspace_commit_message(summary)
 
     return {
         "root": summary["root"],
+        "message": message,
         "command": f'git commit -m "{message.replace(chr(34), chr(39))}"',
     }
 

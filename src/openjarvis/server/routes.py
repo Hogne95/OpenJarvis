@@ -687,7 +687,10 @@ async def server_info(request: Request):
 async def health(request: Request):
     """Health check endpoint."""
     engine = request.app.state.engine
-    healthy = engine.health()
+    try:
+        healthy = bool(engine.health())
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail=f"Engine health probe failed: {exc}")
     if not healthy:
         raise HTTPException(status_code=503, detail="Engine unhealthy")
     return {"status": "ok"}

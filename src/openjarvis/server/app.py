@@ -28,6 +28,32 @@ from openjarvis.server.workbench import WorkbenchManager
 logger = logging.getLogger(__name__)
 
 
+def _bootstrap_core_agent_architecture(app: FastAPI) -> None:
+    """Provision the core JARVIS role agents if the manager is available.
+
+    Root cause: the HUD expects planner/executor/vision roles to exist, but
+    they were only created lazily through explicit architecture actions.
+    Bootstrapping them at startup makes agent availability match the product's
+    default UX expectations.
+    """
+    try:
+        manager = getattr(app.state, "agent_manager", None)
+        if manager is None:
+            return
+        from openjarvis.server.agent_architecture import ensure_core_team
+
+        status = ensure_core_team(app.state)
+        created = status.get("created", []) or []
+        existing = status.get("existing", []) or []
+        logger.info(
+            "Core JARVIS agents ready (created=%s existing=%s)",
+            len(created),
+            len(existing),
+        )
+    except Exception as exc:
+        logger.warning("Core JARVIS agent bootstrap skipped: %s", exc)
+
+
 def _restore_sendblue_bindings(app: FastAPI) -> None:
     """Restore SendBlue channel bindings from the database on startup.
 
@@ -277,6 +303,9 @@ def create_app(
     app.include_router(create_jarvis_intent_router())
     app.include_router(upload_router)
     include_all_routes(app)
+
+    # Bootstrap the planner/executor/vision roles expected by the HUD.
+    _bootstrap_core_agent_architecture(app)
 
     # Restore SendBlue channel bindings from database on startup
     _restore_sendblue_bindings(app)

@@ -68,7 +68,7 @@ export function DesktopPage() {
     void refresh();
     const interval = setInterval(() => {
       void getDesktopRuntimeStatus().then(setRuntime);
-    }, 3000);
+    }, 10000);
     return () => clearInterval(interval);
   }, [refresh]);
 

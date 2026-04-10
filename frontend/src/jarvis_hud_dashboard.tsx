@@ -74,6 +74,7 @@ import {
   holdActionCenterItem,
   holdCodeEdit,
   holdWorkbenchCommand,
+  prepareWorkspaceStage,
   prepareWorkspaceCommit,
   prepareWorkspacePush,
   recordOperatorMemorySignal,
@@ -703,6 +704,8 @@ export default function JarvisHudDashboard({
   const lastLearningRecordRef = useRef('');
   const lastSpeechDetectedAtRef = useRef(0);
   const lastVoicePlaybackAtRef = useRef(0);
+  const fastRefreshInFlightRef = useRef(false);
+  const slowRefreshInFlightRef = useRef(false);
 
   const {
     state: hudSpeechState,
@@ -734,87 +737,127 @@ export default function JarvisHudDashboard({
   useEffect(() => {
     let cancelled = false;
 
-    const refreshLiveStatus = async () => {
-      const [action, automation, automationLogResult, coding, digest, digestSched, operatorMemory, inbox, tasks, reminderItems, health, speech, agents, connectors, loop, profile, wb, workspace, repos, checks, desktop, architecture] = await Promise.allSettled([
-        fetchActionCenterStatus(),
-        fetchAutomationStatus(),
-        fetchAutomationLogs(),
-        fetchCodingStatus(),
-        fetchDailyDigest(),
-        fetchDigestSchedule(),
-        fetchOperatorMemory(),
-        fetchInboxSummary(),
-        fetchTaskSummary(),
-        fetchReminders(),
-        checkHealth(),
-        fetchSpeechHealth(),
-        fetchManagedAgents(),
-        listConnectors(),
-        fetchVoiceLoopStatus(),
-        fetchSpeechProfile(),
-        fetchWorkbenchStatus(),
-        fetchWorkspaceSummary(),
-        fetchWorkspaceRepos(),
-        fetchWorkspaceChecks(),
-        fetchDesktopState(),
-        fetchAgentArchitectureStatus(),
-      ]);
+    const refreshFastStatus = async () => {
+      if (fastRefreshInFlightRef.current) return;
+      fastRefreshInFlightRef.current = true;
+      try {
+        const [action, automation, coding, health, speech, loop, wb] = await Promise.allSettled([
+          fetchActionCenterStatus(),
+          fetchAutomationStatus(),
+          fetchCodingStatus(),
+          checkHealth(),
+          fetchSpeechHealth(),
+          fetchVoiceLoopStatus(),
+          fetchWorkbenchStatus(),
+        ]);
 
-      if (cancelled) return;
+        if (cancelled) return;
 
-      if (action.status === 'fulfilled') setActionCenter(action.value);
-      if (automation.status === 'fulfilled') setAutomationStatus(automation.value);
-      if (automationLogResult.status === 'fulfilled') setAutomationLogs(automationLogResult.value.items || []);
-      if (coding.status === 'fulfilled') setCodingWorkspace(coding.value);
-      if (digest.status === 'fulfilled') setDailyDigest(digest.value);
-      if (digestSched.status === 'fulfilled') setDigestSchedule(digestSched.value);
-      if (operatorMemory.status === 'fulfilled') setDurableOperatorMemory(operatorMemory.value);
-      if (inbox.status === 'fulfilled') setInboxSummary(inbox.value);
-      if (tasks.status === 'fulfilled') setTaskSummary(tasks.value);
-      if (reminderItems.status === 'fulfilled') setReminders(reminderItems.value);
-      if (workspace.status === 'fulfilled') setWorkspaceSummary(workspace.value);
-      if (repos.status === 'fulfilled') setWorkspaceRepos(repos.value);
-      if (checks.status === 'fulfilled') setWorkspaceChecks(checks.value);
-      if (desktop.status === 'fulfilled') setDesktopState(desktop.value);
-      if (architecture.status === 'fulfilled') setAgentArchitecture(architecture.value);
-      setApiReachable(health.status === 'fulfilled' ? health.value : false);
-      setSpeechAvailable(speech.status === 'fulfilled' ? speech.value.available : false);
-      setRunningAgentCount(
-        agents.status === 'fulfilled'
-          ? agents.value.filter((agent) => agent.status === 'running').length
-          : managedAgents.filter((agent) => agent.status === 'running').length,
-      );
-
-      if (connectors.status === 'fulfilled') {
-        const connected = connectors.value.filter((connector) => connector.connected);
-        const ids = new Set(connected.map((connector) => connector.connector_id));
-        setConnectedConnectorIds(Array.from(ids));
-        setConnectorSummary({
-          totalConnected: connected.length,
-          emailReady: ids.has('gmail') || ids.has('gmail_imap') || ids.has('outlook'),
-          calendarReady: ids.has('gcalendar') || ids.has('outlook'),
-          docsReady: ids.has('gdrive') || ids.has('notion') || ids.has('obsidian'),
-          messagingReady: ids.has('slack') || ids.has('imessage') || ids.has('whatsapp'),
-          emailProvider: ids.has('gmail') ? 'gmail' : ids.has('outlook') ? 'outlook' : ids.has('gmail_imap') ? 'gmail' : '',
-          calendarProvider: ids.has('gcalendar') ? 'gcalendar' : ids.has('outlook') ? 'outlook' : '',
-        });
-      }
-
-      if (loop.status === 'fulfilled') setVoiceLoop(loop.value);
-      if (profile.status === 'fulfilled') setSpeechProfile(profile.value);
-      if (wb.status === 'fulfilled') {
-        setWorkbench(wb.value);
-        if (!workbenchDirectory) setWorkbenchDirectory(wb.value.default_working_dir);
+        if (action.status === 'fulfilled') setActionCenter(action.value);
+        if (automation.status === 'fulfilled') setAutomationStatus(automation.value);
+        if (coding.status === 'fulfilled') setCodingWorkspace(coding.value);
+        if (loop.status === 'fulfilled') setVoiceLoop(loop.value);
+        if (wb.status === 'fulfilled') {
+          setWorkbench(wb.value);
+          setWorkbenchDirectory((current) => current || wb.value.default_working_dir);
+        }
+        if (health.status === 'fulfilled') setApiReachable(health.value);
+        if (speech.status === 'fulfilled') setSpeechAvailable(speech.value.available);
+      } finally {
+        fastRefreshInFlightRef.current = false;
       }
     };
 
-    refreshLiveStatus();
-    const interval = window.setInterval(refreshLiveStatus, 4000);
+    const refreshSlowStatus = async () => {
+      if (slowRefreshInFlightRef.current) return;
+      slowRefreshInFlightRef.current = true;
+      try {
+        const [
+          automationLogResult,
+          digest,
+          digestSched,
+          operatorMemory,
+          inbox,
+          tasks,
+          reminderItems,
+          agents,
+          connectors,
+          profile,
+          workspace,
+          repos,
+          checks,
+          desktop,
+          architecture,
+        ] = await Promise.allSettled([
+          fetchAutomationLogs(),
+          fetchDailyDigest(),
+          fetchDigestSchedule(),
+          fetchOperatorMemory(),
+          fetchInboxSummary(),
+          fetchTaskSummary(),
+          fetchReminders(),
+          fetchManagedAgents(),
+          listConnectors(),
+          fetchSpeechProfile(),
+          fetchWorkspaceSummary(),
+          fetchWorkspaceRepos(),
+          fetchWorkspaceChecks(),
+          fetchDesktopState(),
+          fetchAgentArchitectureStatus(),
+        ]);
+
+        if (cancelled) return;
+
+        if (automationLogResult.status === 'fulfilled') setAutomationLogs(automationLogResult.value.items || []);
+        if (digest.status === 'fulfilled') setDailyDigest(digest.value);
+        if (digestSched.status === 'fulfilled') setDigestSchedule(digestSched.value);
+        if (operatorMemory.status === 'fulfilled') setDurableOperatorMemory(operatorMemory.value);
+        if (inbox.status === 'fulfilled') setInboxSummary(inbox.value);
+        if (tasks.status === 'fulfilled') setTaskSummary(tasks.value);
+        if (reminderItems.status === 'fulfilled') setReminders(reminderItems.value);
+        if (workspace.status === 'fulfilled') setWorkspaceSummary(workspace.value);
+        if (repos.status === 'fulfilled') setWorkspaceRepos(repos.value);
+        if (checks.status === 'fulfilled') setWorkspaceChecks(checks.value);
+        if (desktop.status === 'fulfilled') setDesktopState(desktop.value);
+        if (architecture.status === 'fulfilled') setAgentArchitecture(architecture.value);
+        if (profile.status === 'fulfilled') setSpeechProfile(profile.value);
+        if (agents.status === 'fulfilled') {
+          setRunningAgentCount(agents.value.filter((agent) => agent.status === 'running').length);
+        }
+
+        if (connectors.status === 'fulfilled') {
+          const connected = connectors.value.filter((connector) => connector.connected);
+          const ids = new Set(connected.map((connector) => connector.connector_id));
+          setConnectedConnectorIds(Array.from(ids));
+          setConnectorSummary({
+            totalConnected: connected.length,
+            emailReady: ids.has('gmail') || ids.has('gmail_imap') || ids.has('outlook'),
+            calendarReady: ids.has('gcalendar') || ids.has('outlook'),
+            docsReady: ids.has('gdrive') || ids.has('notion') || ids.has('obsidian'),
+            messagingReady: ids.has('slack') || ids.has('imessage') || ids.has('whatsapp'),
+            emailProvider: ids.has('gmail') ? 'gmail' : ids.has('outlook') ? 'outlook' : ids.has('gmail_imap') ? 'gmail' : '',
+            calendarProvider: ids.has('gcalendar') ? 'gcalendar' : ids.has('outlook') ? 'outlook' : '',
+          });
+        }
+      } finally {
+        slowRefreshInFlightRef.current = false;
+      }
+    };
+
+    void refreshFastStatus();
+    void refreshSlowStatus();
+    const fastInterval = window.setInterval(() => {
+      void refreshFastStatus();
+    }, 5000);
+    const slowInterval = window.setInterval(() => {
+      void refreshSlowStatus();
+    }, 20000);
     return () => {
       cancelled = true;
-      window.clearInterval(interval);
+      window.clearInterval(fastInterval);
+      window.clearInterval(slowInterval);
     };
-  }, [managedAgents, workbenchDirectory]);
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -5384,12 +5427,11 @@ export default function JarvisHudDashboard({
   }
 
   async function prepareCommitCommand(message: string, notice = 'Commit command prepared. Stage it when ready.') {
-    if (!message) {
-      setWorkbenchNotice('Enter a commit message first.');
-      return;
-    }
     try {
       const prepared = await prepareWorkspaceCommit(message);
+      if (!gitCommitMessage.trim()) {
+        setGitCommitMessage(prepared.message);
+      }
       setWorkbenchDirectory(prepared.root);
       setWorkbenchCommand(prepared.command);
       setWorkbenchNotice(notice);
@@ -5400,6 +5442,17 @@ export default function JarvisHudDashboard({
 
   async function loadPreparedCommitCommand() {
     await prepareCommitCommand(gitCommitMessage.trim());
+  }
+
+  async function loadPreparedStageCommand() {
+    try {
+      const prepared = await prepareWorkspaceStage();
+      setWorkbenchDirectory(prepared.root);
+      setWorkbenchCommand(prepared.command);
+      setWorkbenchNotice('Stage command prepared for the active workspace repo.');
+    } catch (error) {
+      setWorkbenchNotice(error instanceof Error ? error.message : 'Unable to prepare stage command.');
+    }
   }
 
   async function loadPreparedPushCommand() {
@@ -7686,13 +7739,19 @@ ${item.details}`,
                       </div>
                     ) : null}
                   </div>
-                  <div className="mt-3 grid gap-3 md:grid-cols-[1fr_180px_180px]">
+                  <div className="mt-3 grid gap-3 md:grid-cols-[1fr_160px_160px_160px]">
                     <input
                       value={gitCommitMessage}
                       onChange={(event) => setGitCommitMessage(event.target.value)}
-                      placeholder="feat: improve HUD coding workflow"
+                      placeholder="Leave blank to auto-generate a commit message"
                       className="rounded-[0.9rem] border border-cyan-400/10 bg-slate-950/70 px-4 py-3 text-sm text-slate-100 outline-none placeholder:text-slate-500"
                     />
+                    <button
+                      onClick={loadPreparedStageCommand}
+                      className="rounded-[0.9rem] border border-cyan-400/12 bg-slate-950/70 px-4 py-3 text-xs uppercase tracking-[0.24em] text-cyan-100 transition hover:bg-cyan-400/[0.08]"
+                    >
+                      Prepare Stage
+                    </button>
                     <button
                       onClick={loadPreparedCommitCommand}
                       className="rounded-[0.9rem] border border-cyan-400/12 bg-slate-950/70 px-4 py-3 text-xs uppercase tracking-[0.24em] text-cyan-100 transition hover:bg-cyan-400/[0.08]"
