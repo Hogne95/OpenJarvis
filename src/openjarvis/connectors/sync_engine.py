@@ -56,6 +56,8 @@ class SyncEngine:
 
     def __init__(self, pipeline: IngestionPipeline, *, state_db: str = "") -> None:
         self._pipeline = pipeline
+        self._owner_user_id = str(getattr(pipeline, "_owner_user_id", "") or "").strip()
+        self._account_key = str(getattr(pipeline, "_account_key", "") or "").strip()
 
         if not state_db:
             db_path = DEFAULT_CONFIG_DIR / "sync_state.db"
@@ -86,10 +88,10 @@ class SyncEngine:
         On error the checkpoint is updated with the error message and the
         exception is re-raised so callers can handle it.
         """
-        connector_id: str = connector.connector_id
+        connector_id: str = self._checkpoint_key(connector.connector_id)
 
         # Load any previous checkpoint so we can resume.
-        checkpoint = self.get_checkpoint(connector_id)
+        checkpoint = self.get_checkpoint(connector.connector_id)
         prior_cursor: Optional[str] = checkpoint["cursor"] if checkpoint else None
         prior_items: int = checkpoint["items_synced"] if checkpoint else 0
 
@@ -143,11 +145,12 @@ class SyncEngine:
 
     def get_checkpoint(self, connector_id: str) -> Optional[Dict[str, Any]]:
         """Return the last checkpoint, or ``None`` if never synced."""
+        resolved_connector_id = self._checkpoint_key(connector_id)
         sql = (
             "SELECT items_synced, cursor, last_sync, error"
             " FROM sync_state WHERE connector_id = ?"
         )
-        row = self._conn.execute(sql, (connector_id,)).fetchone()
+        row = self._conn.execute(sql, (resolved_connector_id,)).fetchone()
 
         if row is None:
             return None
@@ -187,6 +190,15 @@ class SyncEngine:
             (connector_id, items_synced, cursor, now, error),
         )
         self._conn.commit()
+
+    def _checkpoint_key(self, connector_id: str) -> str:
+        """Scope connector checkpoints by tenant defaults when available."""
+        parts = [connector_id.strip()]
+        if self._owner_user_id:
+            parts.append(f"user={self._owner_user_id}")
+        if self._account_key:
+            parts.append(f"account={self._account_key}")
+        return "::".join(parts)
 
 
 __all__ = ["SyncEngine"]

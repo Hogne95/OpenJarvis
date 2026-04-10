@@ -92,6 +92,28 @@ class TestKnowledgeSearchTool:
         assert "sarah@example.com" in result.content
         assert result.metadata["num_results"] >= 1
 
+    def test_default_owner_scope_filters_results(self, store):
+        """Tool-level owner scope prevents cross-user retrieval by default."""
+        store.store(
+            "Owner-only Kubernetes planning note.",
+            source="gmail",
+            doc_type="email",
+            owner_user_id="owner-1",
+        )
+        store.store(
+            "Guest-only Kubernetes planning note.",
+            source="gmail",
+            doc_type="email",
+            owner_user_id="guest-1",
+        )
+
+        tool = KnowledgeSearchTool(store=store, owner_user_id="owner-1")
+        result = tool.execute(query="Kubernetes planning")
+
+        assert result.success is True
+        assert "Owner-only" in result.content
+        assert "Guest-only" not in result.content
+
     def test_no_results(self, store):
         """Query matching nothing returns success=True with 'No relevant results'."""
         tool = KnowledgeSearchTool(store=store)

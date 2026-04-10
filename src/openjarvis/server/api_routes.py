@@ -24,10 +24,12 @@ from openjarvis.server.agent_architecture import (
     ensure_core_team,
 )
 from openjarvis.server.auth import (
+    get_action_center_manager,
     get_coding_workspace_manager,
     get_operator_memory_manager,
     get_workbench_manager,
     get_workspace_registry,
+    require_role_if_bootstrapped,
 )
 
 logger = logging.getLogger(__name__)
@@ -2039,25 +2041,24 @@ async def workbench_hold(request: Request):
 
 @action_center_router.get("/status")
 async def action_center_status(request: Request):
-    manager = getattr(request.app.state, "action_center", None)
-    if manager is None:
-        raise HTTPException(status_code=503, detail="Action center not configured")
-    return manager.status()
+    manager = get_action_center_manager(request)
+    user = require_role_if_bootstrapped(request)
+    include_capabilities = bool(
+        user is None or str(user.get("role", "")).strip().lower() == "superadmin"
+    )
+    return manager.status(include_capabilities=include_capabilities)
 
 
 @action_center_router.get("/capabilities")
 async def action_center_capabilities(request: Request):
-    manager = getattr(request.app.state, "action_center", None)
-    if manager is None:
-        raise HTTPException(status_code=503, detail="Action center not configured")
+    require_role_if_bootstrapped(request, "superadmin")
+    manager = get_action_center_manager(request)
     return manager.capabilities()
 
 
 @action_center_router.post("/stage-email")
 async def action_center_stage_email(req: ActionEmailDraftRequest, request: Request):
-    manager = getattr(request.app.state, "action_center", None)
-    if manager is None:
-        raise HTTPException(status_code=503, detail="Action center not configured")
+    manager = get_action_center_manager(request)
     try:
         return manager.stage_email_draft(
             recipient=req.recipient,
@@ -2071,9 +2072,7 @@ async def action_center_stage_email(req: ActionEmailDraftRequest, request: Reque
 
 @action_center_router.post("/stage-calendar")
 async def action_center_stage_calendar(req: ActionCalendarBriefRequest, request: Request):
-    manager = getattr(request.app.state, "action_center", None)
-    if manager is None:
-        raise HTTPException(status_code=503, detail="Action center not configured")
+    manager = get_action_center_manager(request)
     try:
         return manager.stage_calendar_brief(
             title=req.title,
@@ -2090,9 +2089,7 @@ async def action_center_stage_calendar(req: ActionCalendarBriefRequest, request:
 
 @action_center_router.post("/stage-inbox-action")
 async def action_center_stage_inbox_action(req: InboxActionStageRequest, request: Request):
-    manager = getattr(request.app.state, "action_center", None)
-    if manager is None:
-        raise HTTPException(status_code=503, detail="Action center not configured")
+    manager = get_action_center_manager(request)
     try:
         return manager.stage_inbox_action(
             action_kind=req.action_kind,
@@ -2107,9 +2104,7 @@ async def action_center_stage_inbox_action(req: InboxActionStageRequest, request
 
 @action_center_router.post("/stage-task")
 async def action_center_stage_task(req: ActionTaskCreateRequest, request: Request):
-    manager = getattr(request.app.state, "action_center", None)
-    if manager is None:
-        raise HTTPException(status_code=503, detail="Action center not configured")
+    manager = get_action_center_manager(request)
     try:
         return manager.stage_task(
             title=req.title,
@@ -2123,9 +2118,8 @@ async def action_center_stage_task(req: ActionTaskCreateRequest, request: Reques
 
 @action_center_router.post("/approve")
 async def action_center_approve(request: Request):
-    manager = getattr(request.app.state, "action_center", None)
-    if manager is None:
-        raise HTTPException(status_code=503, detail="Action center not configured")
+    require_role_if_bootstrapped(request, "superadmin")
+    manager = get_action_center_manager(request)
     try:
         return await run_in_threadpool(manager.approve)
     except ValueError as exc:
@@ -2134,14 +2128,13 @@ async def action_center_approve(request: Request):
 
 @action_center_router.post("/hold")
 async def action_center_hold(request: Request):
-    manager = getattr(request.app.state, "action_center", None)
-    if manager is None:
-        raise HTTPException(status_code=503, detail="Action center not configured")
+    manager = get_action_center_manager(request)
     return manager.hold()
 
 
 @action_center_router.get("/inbox-summary")
-async def action_center_inbox_summary(limit: int = 5):
+async def action_center_inbox_summary(request: Request, limit: int = 5):
+    require_role_if_bootstrapped(request, "superadmin")
     try:
         from openjarvis.connectors.store import KnowledgeStore
 
@@ -2183,7 +2176,8 @@ async def action_center_inbox_summary(limit: int = 5):
 
 
 @action_center_router.get("/task-summary")
-async def action_center_task_summary(limit: int = 6):
+async def action_center_task_summary(request: Request, limit: int = 6):
+    require_role_if_bootstrapped(request, "superadmin")
     try:
         from openjarvis.connectors.store import KnowledgeStore
 
@@ -2221,7 +2215,8 @@ async def action_center_task_summary(limit: int = 6):
 
 
 @action_center_router.get("/reminders")
-async def action_center_reminders(limit: int = 8):
+async def action_center_reminders(request: Request, limit: int = 8):
+    require_role_if_bootstrapped(request, "superadmin")
     try:
         from openjarvis.connectors.store import KnowledgeStore
 

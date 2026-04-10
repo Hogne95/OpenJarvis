@@ -8,6 +8,11 @@ from typing import Any, Dict, Optional
 
 logger = logging.getLogger(__name__)
 
+try:
+    from fastapi import Request as FastAPIRequest
+except ImportError:  # pragma: no cover - optional dependency at import time
+    FastAPIRequest = Any  # type: ignore[assignment]
+
 # Module-level cache of connector instances (keyed by connector_id).
 _instances: Dict[str, Any] = {}
 _chunk_count_cache: Dict[str, int] = {}
@@ -70,8 +75,26 @@ try:
         email: Optional[str] = None
         password: Optional[str] = None
 
+    class ConnectorAccountCreateRequest(_BaseModel):
+        provider: str
+        label: str
+        account_type: Optional[str] = None
+        external_identity: Optional[str] = None
+        status: Optional[str] = None
+        metadata: Optional[Dict[str, Any]] = None
+
+    class ConnectorAccountUpdateRequest(_BaseModel):
+        provider: Optional[str] = None
+        label: Optional[str] = None
+        account_type: Optional[str] = None
+        external_identity: Optional[str] = None
+        status: Optional[str] = None
+        metadata: Optional[Dict[str, Any]] = None
+
 except ImportError:
     ConnectRequest = None  # type: ignore[assignment,misc]
+    ConnectorAccountCreateRequest = None  # type: ignore[assignment,misc]
+    ConnectorAccountUpdateRequest = None  # type: ignore[assignment,misc]
 
 
 def create_connectors_router():
@@ -82,16 +105,17 @@ def create_connectors_router():
     this package.
     """
     try:
-        from fastapi import APIRouter, HTTPException, Request
+        from fastapi import APIRouter, HTTPException
     except ImportError as exc:
         raise ImportError(
             "fastapi and pydantic are required for the connectors router"
         ) from exc
 
-    if ConnectRequest is None:
+    if ConnectRequest is None or ConnectorAccountCreateRequest is None or ConnectorAccountUpdateRequest is None:
         raise ImportError("pydantic is required for the connectors router")
 
     from openjarvis.core.registry import ConnectorRegistry
+    from openjarvis.server.auth import require_current_user_if_bootstrapped, require_role_if_bootstrapped
 
     router = APIRouter(prefix="/connectors", tags=["connectors"])
 
@@ -160,9 +184,82 @@ def create_connectors_router():
     # Endpoints
     # ------------------------------------------------------------------
 
+    @router.get("/accounts")
+    async def list_connector_accounts(request: FastAPIRequest):
+        user = require_current_user_if_bootstrapped(request)
+        if user is None:
+            return {"accounts": []}
+        store = getattr(request.app.state, "connector_account_store", None)
+        if store is None:
+            raise HTTPException(status_code=503, detail="Connector account store not configured")
+        return {"accounts": store.list_accounts(str(user["id"]))}
+
+    @router.post("/accounts")
+    async def create_connector_account(req: ConnectorAccountCreateRequest, request: FastAPIRequest):
+        user = require_current_user_if_bootstrapped(request)
+        if user is None:
+            raise HTTPException(status_code=401, detail="Authentication required")
+        store = getattr(request.app.state, "connector_account_store", None)
+        if store is None:
+            raise HTTPException(status_code=503, detail="Connector account store not configured")
+        try:
+            return store.create_account(
+                owner_user_id=str(user["id"]),
+                provider=req.provider,
+                label=req.label,
+                account_type=req.account_type or "",
+                external_identity=req.external_identity or "",
+                status=req.status or "configured",
+                metadata=req.metadata or {},
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+
+    @router.patch("/accounts/{account_id}")
+    async def update_connector_account(
+        account_id: str,
+        req: ConnectorAccountUpdateRequest,
+        request: FastAPIRequest,
+    ):
+        user = require_current_user_if_bootstrapped(request)
+        if user is None:
+            raise HTTPException(status_code=401, detail="Authentication required")
+        store = getattr(request.app.state, "connector_account_store", None)
+        if store is None:
+            raise HTTPException(status_code=503, detail="Connector account store not configured")
+        try:
+            return store.update_account(
+                account_id,
+                owner_user_id=str(user["id"]),
+                provider=req.provider,
+                label=req.label,
+                account_type=req.account_type,
+                external_identity=req.external_identity,
+                status=req.status,
+                metadata=req.metadata,
+            )
+        except ValueError as exc:
+            detail = str(exc)
+            status_code = 404 if "not found" in detail.lower() else 400
+            raise HTTPException(status_code=status_code, detail=detail)
+
+    @router.delete("/accounts/{account_id}")
+    async def delete_connector_account(account_id: str, request: FastAPIRequest):
+        user = require_current_user_if_bootstrapped(request)
+        if user is None:
+            raise HTTPException(status_code=401, detail="Authentication required")
+        store = getattr(request.app.state, "connector_account_store", None)
+        if store is None:
+            raise HTTPException(status_code=503, detail="Connector account store not configured")
+        deleted = store.delete_account(account_id, owner_user_id=str(user["id"]))
+        if not deleted:
+            raise HTTPException(status_code=404, detail="Connector account not found")
+        return {"deleted": True}
+
     @router.get("")
-    async def list_connectors():
+    async def list_connectors(request: FastAPIRequest):
         """List all registered connectors with their connection status."""
+        require_role_if_bootstrapped(request, "superadmin")
         _ensure_connectors_registered()
         results = []
         for key in sorted(ConnectorRegistry.keys()):
@@ -181,8 +278,9 @@ def create_connectors_router():
         return {"connectors": results}
 
     @router.get("/{connector_id}")
-    async def connector_detail(connector_id: str):
+    async def connector_detail(connector_id: str, request: FastAPIRequest):
         """Return detail for a single connector."""
+        require_role_if_bootstrapped(request, "superadmin")
         _ensure_connectors_registered()
         if not ConnectorRegistry.contains(connector_id):
             raise HTTPException(
@@ -237,8 +335,9 @@ def create_connectors_router():
         }
 
     @router.post("/{connector_id}/connect")
-    async def connect_connector(connector_id: str, req: ConnectRequest):
+    async def connect_connector(connector_id: str, req: ConnectRequest, request: FastAPIRequest):
         """Connect a connector using the supplied credentials."""
+        require_role_if_bootstrapped(request, "superadmin")
         _ensure_connectors_registered()
         if not ConnectorRegistry.contains(connector_id):
             raise HTTPException(
@@ -317,8 +416,9 @@ def create_connectors_router():
         }
 
     @router.post("/{connector_id}/disconnect")
-    async def disconnect_connector(connector_id: str):
+    async def disconnect_connector(connector_id: str, request: FastAPIRequest):
         """Disconnect a connector and clear its credentials."""
+        require_role_if_bootstrapped(request, "superadmin")
         _ensure_connectors_registered()
         if not ConnectorRegistry.contains(connector_id):
             raise HTTPException(
@@ -341,11 +441,12 @@ def create_connectors_router():
         }
 
     @router.get("/{connector_id}/oauth/start")
-    async def oauth_start(connector_id: str, request: Request):
+    async def oauth_start(connector_id: str, request: FastAPIRequest):
         """Redirect to the OAuth provider's consent page.
 
         The callback will come back to /v1/connectors/{id}/oauth/callback.
         """
+        require_role_if_bootstrapped(request, "superadmin")
         from urllib.parse import urlencode
 
         from openjarvis.connectors.oauth import (
@@ -392,9 +493,11 @@ def create_connectors_router():
         connector_id: str,
         code: str = "",
         error: str = "",
-        request: Request = None,
+        request: FastAPIRequest = None,
     ):
         """Handle OAuth callback from the provider."""
+        if request is not None:
+            require_role_if_bootstrapped(request, "superadmin")
         from fastapi.responses import HTMLResponse
 
         from openjarvis.connectors.oauth import (
@@ -482,8 +585,9 @@ def create_connectors_router():
     _sync_state: Dict[str, Dict[str, Any]] = {}  # {connector_id: {state, error}}
 
     @router.post("/{connector_id}/sync")
-    def trigger_sync(connector_id: str) -> Dict[str, Any]:
+    def trigger_sync(connector_id: str, request: FastAPIRequest) -> Dict[str, Any]:
         """Trigger a sync in the background and return immediately."""
+        require_role_if_bootstrapped(request, "superadmin")
         import threading
 
         _ensure_connectors_registered()
@@ -558,8 +662,9 @@ def create_connectors_router():
         }
 
     @router.get("/{connector_id}/sync")
-    async def sync_status(connector_id: str):
+    async def sync_status(connector_id: str, request: FastAPIRequest):
         """Return the current sync status for a connector."""
+        require_role_if_bootstrapped(request, "superadmin")
         _ensure_connectors_registered()
         try:
             instance = _get_or_create(connector_id)

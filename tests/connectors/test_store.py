@@ -144,6 +144,54 @@ def test_retrieve_filter_by_author(ks: KnowledgeStore) -> None:
     assert len(bob_results) >= 1
 
 
+def test_retrieve_filter_by_owner_user_id(ks: KnowledgeStore) -> None:
+    """retrieve() with owner_user_id= only returns that user's chunks."""
+    _store(
+        ks,
+        content="Owner alpha planning notes",
+        source="gmail",
+        owner_user_id="owner-1",
+    )
+    _store(
+        ks,
+        content="Guest alpha planning notes",
+        source="gmail",
+        owner_user_id="guest-1",
+    )
+
+    owner_results = ks.retrieve("alpha planning", top_k=10, owner_user_id="owner-1")
+    guest_results = ks.retrieve("alpha planning", top_k=10, owner_user_id="guest-1")
+
+    assert len(owner_results) >= 1
+    assert len(guest_results) >= 1
+    assert all(r.metadata.get("owner_user_id") == "owner-1" for r in owner_results)
+    assert all(r.metadata.get("owner_user_id") == "guest-1" for r in guest_results)
+
+
+def test_retrieve_filter_by_account_key(ks: KnowledgeStore) -> None:
+    """retrieve() with account_key= keeps account-specific connector data separate."""
+    _store(
+        ks,
+        content="Personal inbox reminder about taxes",
+        source="gmail",
+        account_key="personal-mail",
+    )
+    _store(
+        ks,
+        content="Work inbox reminder about taxes",
+        source="gmail",
+        account_key="work-mail",
+    )
+
+    personal_results = ks.retrieve("reminder taxes", top_k=10, account_key="personal-mail")
+    work_results = ks.retrieve("reminder taxes", top_k=10, account_key="work-mail")
+
+    assert len(personal_results) >= 1
+    assert len(work_results) >= 1
+    assert all(r.metadata.get("account_key") == "personal-mail" for r in personal_results)
+    assert all(r.metadata.get("account_key") == "work-mail" for r in work_results)
+
+
 def test_retrieve_filter_by_timestamp_since(ks: KnowledgeStore) -> None:
     """retrieve() with since= excludes older documents."""
     old_ts = datetime(2023, 1, 1, tzinfo=timezone.utc)
@@ -333,3 +381,61 @@ def test_memory_retrieve_event_emitted(tmp_path: Path) -> None:
 
     types = [e.event_type for e in bus.history]
     assert EventType.MEMORY_RETRIEVE in types
+
+
+def test_existing_database_gains_tenanting_columns(tmp_path: Path) -> None:
+    """Opening an older knowledge DB adds owner/account columns without losing data."""
+    import sqlite3
+
+    db = tmp_path / "legacy_knowledge.db"
+    conn = sqlite3.connect(db)
+    conn.executescript(
+        """
+        CREATE TABLE knowledge_chunks (
+            id TEXT PRIMARY KEY,
+            doc_id TEXT NOT NULL,
+            content TEXT NOT NULL,
+            source TEXT NOT NULL DEFAULT '',
+            doc_type TEXT NOT NULL DEFAULT '',
+            title TEXT NOT NULL DEFAULT '',
+            author TEXT NOT NULL DEFAULT '',
+            participants TEXT NOT NULL DEFAULT '[]',
+            timestamp TEXT NOT NULL DEFAULT '',
+            thread_id TEXT NOT NULL DEFAULT '',
+            url TEXT NOT NULL DEFAULT '',
+            metadata TEXT NOT NULL DEFAULT '{}',
+            chunk_index INTEGER NOT NULL DEFAULT 0,
+            created_at REAL NOT NULL
+        );
+        CREATE VIRTUAL TABLE knowledge_fts
+        USING fts5(
+            content,
+            title,
+            author,
+            content='knowledge_chunks',
+            content_rowid='rowid',
+            tokenize='porter unicode61'
+        );
+        """
+    )
+    conn.execute(
+        """
+        INSERT INTO knowledge_chunks
+            (id, doc_id, content, source, doc_type, title, author, participants, timestamp, thread_id, url, metadata, chunk_index, created_at)
+        VALUES
+            ('chunk-1', 'doc-1', 'Legacy stored note', 'notes', 'note', 'Legacy', '', '[]', '', '', '', '{}', 0, 0.0)
+        """
+    )
+    conn.commit()
+    conn.close()
+
+    ks = KnowledgeStore(db_path=db)
+    columns = {
+        row["name"]
+        for row in ks._conn.execute("PRAGMA table_info(knowledge_chunks)").fetchall()
+    }
+    assert "owner_user_id" in columns
+    assert "account_key" in columns
+
+    results = ks.retrieve("legacy stored", top_k=5)
+    assert len(results) == 1

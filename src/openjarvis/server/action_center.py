@@ -63,12 +63,14 @@ class ActionCenterManager:
         self._capabilities_cache: dict[str, Any] | None = None
         self._capabilities_cache_at: float = 0.0
 
-    def status(self) -> dict[str, Any]:
-        return {
+    def status(self, *, include_capabilities: bool = True) -> dict[str, Any]:
+        payload = {
             "pending": self._pending.to_dict() if self._pending else None,
             "history": [entry.to_dict() for entry in self._history[-12:]][::-1],
-            "capabilities": self.capabilities(),
         }
+        if include_capabilities:
+            payload["capabilities"] = self.capabilities()
+        return payload
 
     def capabilities(self) -> dict[str, Any]:
         now = time.time()

@@ -14,6 +14,7 @@ from fastapi.staticfiles import StaticFiles
 from openjarvis.server.api_routes import include_all_routes
 from openjarvis.server.action_center import ActionCenterManager
 from openjarvis.server.auth_routes import create_auth_router
+from openjarvis.server.connector_account_store import ConnectorAccountStore
 from openjarvis.server.coding_workspace import CodingWorkspaceManager
 from openjarvis.server.comparison import comparison_router
 from openjarvis.server.connectors_router import create_connectors_router
@@ -57,6 +58,12 @@ def _shutdown_background_services(app: FastAPI) -> None:
             user_store.close()
         except Exception:
             logger.debug("User store close skipped", exc_info=True)
+    connector_account_store = getattr(app.state, "connector_account_store", None)
+    if connector_account_store is not None:
+        try:
+            connector_account_store.close()
+        except Exception:
+            logger.debug("Connector account store close skipped", exc_info=True)
 
 
 def _bootstrap_core_agent_architecture(app: FastAPI) -> None:
@@ -318,6 +325,7 @@ def create_app(
     app.state.task_scheduler_store = task_scheduler_store
     app.state.session_start = time.time()
     app.state.user_store = UserStore()
+    app.state.connector_account_store = ConnectorAccountStore()
 
     # Wire up trace store if traces are enabled
     app.state.trace_store = None

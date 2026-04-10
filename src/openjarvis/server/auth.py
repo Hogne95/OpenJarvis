@@ -9,6 +9,7 @@ from typing import Any, Dict, Optional
 
 from fastapi import HTTPException, Request
 from openjarvis.core.config import DEFAULT_CONFIG_DIR
+from openjarvis.server.action_center import ActionCenterManager
 from openjarvis.server.coding_workspace import CodingWorkspaceManager
 from openjarvis.server.operator_memory import OperatorMemory
 from openjarvis.server.repo_registry import RepoRegistry
@@ -48,6 +49,19 @@ def require_current_user_if_bootstrapped(request: Request) -> Optional[Dict[str,
     if store.user_count() <= 0:
         return get_current_user(request)
     return require_current_user(request)
+
+
+def require_role_if_bootstrapped(request: Request, *roles: str) -> Optional[Dict[str, Any]]:
+    user = require_current_user_if_bootstrapped(request)
+    if user is None:
+        return None
+    allowed = {role.strip().lower() for role in roles if role and role.strip()}
+    if not allowed:
+        return user
+    current_role = str(user.get("role", "")).strip().lower()
+    if current_role not in allowed:
+        raise HTTPException(status_code=403, detail="Forbidden")
+    return user
 
 
 def get_operator_memory_manager(request: Request) -> OperatorMemory:
@@ -165,6 +179,30 @@ def get_workbench_manager(request: Request) -> WorkbenchManager:
     return manager
 
 
+def get_action_center_manager(request: Request) -> ActionCenterManager:
+    user = require_current_user_if_bootstrapped(request)
+    if user is None:
+        manager = getattr(request.app.state, "action_center", None)
+        if manager is None:
+            manager = ActionCenterManager()
+            request.app.state.action_center = manager
+        return manager
+
+    cache = getattr(request.app.state, "_action_center_by_user_id", None)
+    if cache is None:
+        cache = {}
+        request.app.state._action_center_by_user_id = cache
+
+    user_id = str(user["id"]).strip()
+    cached = cache.get(user_id)
+    if cached is not None:
+        return cached
+
+    manager = ActionCenterManager()
+    cache[user_id] = manager
+    return manager
+
+
 def get_coding_workspace_manager(request: Request) -> CodingWorkspaceManager:
     user = require_current_user_if_bootstrapped(request)
     if user is None:
@@ -191,10 +229,12 @@ def get_coding_workspace_manager(request: Request) -> CodingWorkspaceManager:
 
 __all__ = [
     "SESSION_COOKIE_NAME",
+    "get_action_center_manager",
     "get_coding_workspace_manager",
     "get_current_user",
     "require_current_user",
     "require_current_user_if_bootstrapped",
+    "require_role_if_bootstrapped",
     "get_operator_memory_manager",
     "get_workbench_manager",
     "get_workspace_registry",

@@ -11,11 +11,20 @@ import {
 } from '../lib/api';
 import type { ChannelBinding, ManagedAgent } from '../lib/api';
 import { getBase } from '../lib/api';
-import { Database, MessageSquare, Loader2 } from 'lucide-react';
+import { Database, MessageSquare, Loader2, Mail, Plus, Trash2 } from 'lucide-react';
 import { SOURCE_CATALOG } from '../types/connectors';
 import type { ConnectRequest } from '../types/connectors';
-import { listConnectors, connectSource, getSyncStatus, triggerSync } from '../lib/connectors-api';
+import {
+  listConnectors,
+  connectSource,
+  getSyncStatus,
+  triggerSync,
+  listConnectorAccounts,
+  createConnectorAccount,
+  deleteConnectorAccount,
+} from '../lib/connectors-api';
 import type { SyncStatus } from '../types/connectors';
+import type { ConnectorAccount } from '../lib/connectors-api';
 
 const isDocumentHidden = () => typeof document !== 'undefined' && document.hidden;
 
@@ -464,7 +473,241 @@ function SyncStatusDisplay({
   );
 }
 
+function ConnectorAccountsPanel({ currentUserRole }: { currentUserRole: string | undefined }) {
+  const [accounts, setAccounts] = useState<ConnectorAccount[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+  const [form, setForm] = useState({
+    provider: 'gmail',
+    label: '',
+    account_type: 'email',
+    external_identity: '',
+  });
+
+  const loadAccounts = useCallback(async () => {
+    setLoading(true);
+    try {
+      setAccounts(await listConnectorAccounts());
+      setError('');
+    } catch (err: any) {
+      setError(err.message || 'Failed to load accounts');
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void loadAccounts();
+  }, [loadAccounts]);
+
+  const handleCreate = async () => {
+    if (!form.label.trim()) return;
+    setSaving(true);
+    try {
+      const created = await createConnectorAccount({
+        provider: form.provider,
+        label: form.label.trim(),
+        account_type: form.account_type.trim() || 'email',
+        external_identity: form.external_identity.trim(),
+        metadata: { created_from: 'data_sources_page' },
+      });
+      setAccounts((prev) => [created, ...prev]);
+      setForm((prev) => ({ ...prev, label: '', external_identity: '' }));
+      setError('');
+    } catch (err: any) {
+      setError(err.message || 'Failed to add account');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleDelete = async (accountId: string) => {
+    try {
+      await deleteConnectorAccount(accountId);
+      setAccounts((prev) => prev.filter((account) => account.id !== accountId));
+      setError('');
+    } catch (err: any) {
+      setError(err.message || 'Failed to delete account');
+    }
+  };
+
+  const inputStyle: React.CSSProperties = {
+    width: '100%',
+    padding: '7px 10px',
+    background: 'var(--color-bg)',
+    border: '1px solid var(--color-border)',
+    borderRadius: 4,
+    color: 'var(--color-text)',
+    fontSize: 12,
+    boxSizing: 'border-box',
+  };
+
+  return (
+    <div
+      style={{
+        background: 'var(--color-bg-secondary)',
+        border: '1px solid var(--color-border)',
+        borderRadius: 10,
+        padding: 14,
+        marginBottom: 14,
+      }}
+    >
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10 }}>
+        <Mail size={18} style={{ color: 'var(--color-accent)' }} />
+        <div style={{ flex: 1 }}>
+          <div style={{ fontSize: 14, fontWeight: 600 }}>My Accounts</div>
+          <div style={{ fontSize: 11, color: 'var(--color-text-secondary)' }}>
+            Register personal and work accounts under your own user so JARVIS can assist them separately later.
+          </div>
+        </div>
+      </div>
+
+      <div
+        style={{
+          fontSize: 11,
+          color: 'var(--color-text-secondary)',
+          marginBottom: 12,
+          background: 'var(--color-bg)',
+          border: '1px solid var(--color-border)',
+          borderRadius: 6,
+          padding: '10px 12px',
+        }}
+      >
+        Root cause: JARVIS used to treat connectors as one shared system surface. This account registry is the first privacy-safe layer, so each user can declare multiple inbox identities without exposing them to anyone else.
+        {currentUserRole !== 'superadmin' && (
+          <div style={{ marginTop: 6 }}>
+            Global connector setup is still limited to admins until per-user connector credential storage is finished, but your account labels are already private to your session.
+          </div>
+        )}
+      </div>
+
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1.2fr auto', gap: 8, marginBottom: 12 }}>
+        <select
+          value={form.provider}
+          onChange={(e) => setForm((prev) => ({ ...prev, provider: e.target.value }))}
+          style={inputStyle}
+        >
+          <option value="gmail">Gmail</option>
+          <option value="outlook">Outlook</option>
+          <option value="imap">IMAP</option>
+          <option value="slack">Slack</option>
+          <option value="custom">Custom</option>
+        </select>
+        <input
+          value={form.label}
+          onChange={(e) => setForm((prev) => ({ ...prev, label: e.target.value }))}
+          placeholder="Label (Work, Personal)"
+          style={inputStyle}
+        />
+        <input
+          value={form.external_identity}
+          onChange={(e) => setForm((prev) => ({ ...prev, external_identity: e.target.value }))}
+          placeholder="Email or account identity"
+          style={inputStyle}
+        />
+        <button
+          onClick={handleCreate}
+          disabled={saving || !form.label.trim()}
+          style={{
+            display: 'inline-flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            gap: 6,
+            padding: '0 12px',
+            background: saving || !form.label.trim() ? '#444' : '#7c3aed',
+            color: 'white',
+            border: 'none',
+            borderRadius: 6,
+            fontSize: 12,
+            cursor: 'pointer',
+            minHeight: 34,
+          }}
+        >
+          <Plus size={14} />
+          {saving ? 'Adding...' : 'Add'}
+        </button>
+      </div>
+
+      {loading ? (
+        <div style={{ fontSize: 12, color: 'var(--color-text-secondary)' }}>Loading your accounts...</div>
+      ) : accounts.length === 0 ? (
+        <div style={{ fontSize: 12, color: 'var(--color-text-secondary)' }}>
+          No accounts saved yet. Add your personal and work identities here first.
+        </div>
+      ) : (
+        <div style={{ display: 'grid', gap: 8 }}>
+          {accounts.map((account) => (
+            <div
+              key={account.id}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 10,
+                background: 'var(--color-bg)',
+                border: '1px solid var(--color-border)',
+                borderRadius: 8,
+                padding: '10px 12px',
+              }}
+            >
+              <div style={{ flex: 1 }}>
+                <div style={{ fontSize: 13, fontWeight: 600 }}>
+                  {account.label}
+                  <span style={{ fontSize: 10, color: 'var(--color-text-tertiary)', marginLeft: 8 }}>
+                    {account.provider}
+                  </span>
+                </div>
+                <div style={{ fontSize: 11, color: 'var(--color-text-secondary)' }}>
+                  {account.external_identity || 'Identity pending'}
+                </div>
+              </div>
+              <span
+                style={{
+                  fontSize: 10,
+                  padding: '3px 8px',
+                  borderRadius: 999,
+                  background: 'var(--color-bg-secondary)',
+                  color: 'var(--color-text-secondary)',
+                  textTransform: 'uppercase',
+                  letterSpacing: 0.4,
+                }}
+              >
+                {account.status}
+              </span>
+              <button
+                onClick={() => handleDelete(account.id)}
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  width: 30,
+                  height: 30,
+                  background: 'transparent',
+                  color: '#f87171',
+                  border: '1px solid var(--color-border)',
+                  borderRadius: 6,
+                  cursor: 'pointer',
+                }}
+                aria-label={`Delete ${account.label}`}
+              >
+                <Trash2 size={14} />
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {error && (
+        <div style={{ fontSize: 11, color: '#ef4444', marginTop: 8 }}>
+          {error}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function DataSourcesSection() {
+  const currentUser = useAppStore((s) => s.currentUser);
   const [connectors, setConnectors] = useState<
     Array<{ connector_id: string; display_name: string; connected: boolean; chunks: number }>
   >([]);
@@ -586,6 +829,8 @@ function DataSourcesSection() {
 
   return (
     <div>
+      <ConnectorAccountsPanel currentUserRole={currentUser?.role} />
+
       {/* Connected sources grid */}
       {connected.length > 0 && (
         <div style={{

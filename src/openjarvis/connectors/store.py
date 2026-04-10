@@ -29,6 +29,8 @@ _CREATE_MAIN_TABLE = """
 CREATE TABLE IF NOT EXISTS knowledge_chunks (
     id            TEXT PRIMARY KEY,
     doc_id        TEXT NOT NULL,
+    owner_user_id TEXT NOT NULL DEFAULT '',
+    account_key   TEXT NOT NULL DEFAULT '',
     content       TEXT NOT NULL,
     source        TEXT NOT NULL DEFAULT '',
     doc_type      TEXT NOT NULL DEFAULT '',
@@ -76,6 +78,8 @@ END;
 """
 
 _CREATE_INDEXES = """
+CREATE INDEX IF NOT EXISTS idx_kc_owner_user_id ON knowledge_chunks(owner_user_id);
+CREATE INDEX IF NOT EXISTS idx_kc_account_key ON knowledge_chunks(account_key);
 CREATE INDEX IF NOT EXISTS idx_kc_source     ON knowledge_chunks(source);
 CREATE INDEX IF NOT EXISTS idx_kc_doc_type   ON knowledge_chunks(doc_type);
 CREATE INDEX IF NOT EXISTS idx_kc_author     ON knowledge_chunks(author);
@@ -141,9 +145,27 @@ class KnowledgeStore(MemoryBackend):
         self._conn.execute("PRAGMA journal_mode=WAL;")
         self._conn.execute("PRAGMA foreign_keys=ON;")
         self._conn.executescript(
-            _CREATE_MAIN_TABLE + _CREATE_FTS_TABLE + _CREATE_TRIGGERS + _CREATE_INDEXES
+            _CREATE_MAIN_TABLE + _CREATE_FTS_TABLE + _CREATE_TRIGGERS
         )
+        self._migrate_columns()
+        self._conn.executescript(_CREATE_INDEXES)
+        self._conn.execute("INSERT INTO knowledge_fts(knowledge_fts) VALUES ('rebuild')")
         self._conn.commit()
+
+    def _migrate_columns(self) -> None:
+        """Backfill newer tenanting columns for older databases."""
+        existing = {
+            str(row["name"])
+            for row in self._conn.execute("PRAGMA table_info(knowledge_chunks)").fetchall()
+        }
+        if "owner_user_id" not in existing:
+            self._conn.execute(
+                "ALTER TABLE knowledge_chunks ADD COLUMN owner_user_id TEXT NOT NULL DEFAULT ''"
+            )
+        if "account_key" not in existing:
+            self._conn.execute(
+                "ALTER TABLE knowledge_chunks ADD COLUMN account_key TEXT NOT NULL DEFAULT ''"
+            )
 
     # ------------------------------------------------------------------
     # MemoryBackend interface
@@ -164,6 +186,8 @@ class KnowledgeStore(MemoryBackend):
         url: Optional[str] = None,
         metadata: Optional[Dict[str, Any]] = None,
         chunk_index: int = 0,
+        owner_user_id: str = "",
+        account_key: str = "",
     ) -> str:
         """Persist a content chunk and return its unique chunk id.
 
@@ -183,6 +207,8 @@ class KnowledgeStore(MemoryBackend):
         combined_meta["source"] = source
         combined_meta["doc_type"] = doc_type
         combined_meta["doc_id"] = doc_id
+        combined_meta["owner_user_id"] = owner_user_id
+        combined_meta["account_key"] = account_key
         combined_meta["title"] = title
         combined_meta["author"] = author
         combined_meta["participants"] = participants or []
@@ -196,14 +222,16 @@ class KnowledgeStore(MemoryBackend):
         self._conn.execute(
             """
             INSERT INTO knowledge_chunks
-                (id, doc_id, content, source, doc_type, title, author,
+                (id, doc_id, owner_user_id, account_key, content, source, doc_type, title, author,
                  participants, timestamp, thread_id, url, metadata,
                  chunk_index, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 chunk_id,
                 doc_id,
+                owner_user_id,
+                account_key,
                 content,
                 source,
                 doc_type,
@@ -240,6 +268,8 @@ class KnowledgeStore(MemoryBackend):
         source: Optional[str] = None,
         doc_type: Optional[str] = None,
         author: Optional[str] = None,
+        owner_user_id: Optional[str] = None,
+        account_key: Optional[str] = None,
         since: Optional[Union[datetime, str]] = None,
         until: Optional[Union[datetime, str]] = None,
         **kwargs: Any,
@@ -275,6 +305,12 @@ class KnowledgeStore(MemoryBackend):
         if author is not None:
             filters.append("kc.author = ?")
             params.append(author)
+        if owner_user_id is not None:
+            filters.append("kc.owner_user_id = ?")
+            params.append(owner_user_id)
+        if account_key is not None:
+            filters.append("kc.account_key = ?")
+            params.append(account_key)
         if since_str:
             filters.append("kc.timestamp >= ?")
             params.append(since_str)

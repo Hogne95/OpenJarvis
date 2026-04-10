@@ -156,6 +156,149 @@ def test_login_logout_and_me_round_trip(tmp_path: Path):
     assert after_logout.status_code == 401
 
 
+def test_superadmin_can_create_and_list_users(tmp_path: Path):
+    client = _make_client(tmp_path)
+    bootstrap = client.post(
+        "/v1/auth/bootstrap",
+        json={
+            "username": "owner",
+            "password": "supersecret123",
+            "display_name": "Owner",
+        },
+    )
+    assert bootstrap.status_code == 200
+
+    create_user = client.post(
+        "/v1/auth/users",
+        json={
+            "username": "guest",
+            "password": "guestsecret123",
+            "display_name": "Guest User",
+            "role": "user",
+        },
+    )
+    assert create_user.status_code == 200
+    assert create_user.json()["user"]["username"] == "guest"
+
+    users = client.get("/v1/auth/users")
+    assert users.status_code == 200
+    usernames = [user["username"] for user in users.json()["users"]]
+    assert set(usernames) == {"owner", "guest"}
+
+
+def test_admin_routes_enforce_role_boundaries(tmp_path: Path):
+    owner = _make_client(tmp_path)
+    app = owner.app
+    bootstrap = owner.post(
+        "/v1/auth/bootstrap",
+        json={
+            "username": "owner",
+            "password": "supersecret123",
+            "display_name": "Owner",
+        },
+    )
+    assert bootstrap.status_code == 200
+    app.state.user_store.create_user(
+        username="manager",
+        password="managersecret123",
+        display_name="Manager",
+        role="admin",
+    )
+    app.state.user_store.create_user(
+        username="guest",
+        password="guestsecret123",
+        display_name="Guest",
+        role="user",
+    )
+
+    manager = TestClient(app)
+    login_manager = manager.post(
+        "/v1/auth/login",
+        json={"username": "manager", "password": "managersecret123"},
+    )
+    assert login_manager.status_code == 200
+
+    create_admin = manager.post(
+        "/v1/auth/users",
+        json={
+            "username": "another-admin",
+            "password": "supersecret123",
+            "display_name": "Another Admin",
+            "role": "admin",
+        },
+    )
+    assert create_admin.status_code == 403
+
+    users = owner.get("/v1/auth/users").json()["users"]
+    manager_record = next(user for user in users if user["username"] == "manager")
+    update_admin = manager.patch(
+        f"/v1/auth/users/{manager_record['id']}",
+        json={"display_name": "Nope"},
+    )
+    assert update_admin.status_code == 403
+
+
+def test_superadmin_can_update_user_and_reset_password(tmp_path: Path):
+    owner = _make_client(tmp_path)
+    app = owner.app
+    bootstrap = owner.post(
+        "/v1/auth/bootstrap",
+        json={
+            "username": "owner",
+            "password": "supersecret123",
+            "display_name": "Owner",
+        },
+    )
+    assert bootstrap.status_code == 200
+    guest_record = app.state.user_store.create_user(
+        username="guest",
+        password="guestsecret123",
+        display_name="Guest",
+        role="user",
+    )
+
+    update_guest = owner.patch(
+        f"/v1/auth/users/{guest_record['id']}",
+        json={"display_name": "Guest Updated", "role": "restricted", "status": "disabled"},
+    )
+    assert update_guest.status_code == 200
+    updated = update_guest.json()["user"]
+    assert updated["display_name"] == "Guest Updated"
+    assert updated["role"] == "restricted"
+    assert updated["status"] == "disabled"
+
+    guest = TestClient(app)
+    disabled_login = guest.post(
+        "/v1/auth/login",
+        json={"username": "guest", "password": "guestsecret123"},
+    )
+    assert disabled_login.status_code == 401
+
+    reenable_guest = owner.patch(
+        f"/v1/auth/users/{guest_record['id']}",
+        json={"status": "active", "role": "user"},
+    )
+    assert reenable_guest.status_code == 200
+
+    reset_password = owner.post(
+        f"/v1/auth/users/{guest_record['id']}/reset-password",
+        json={"password": "brandnewsecret123"},
+    )
+    assert reset_password.status_code == 200
+
+    old_login = guest.post(
+        "/v1/auth/login",
+        json={"username": "guest", "password": "guestsecret123"},
+    )
+    assert old_login.status_code == 401
+
+    new_login = guest.post(
+        "/v1/auth/login",
+        json={"username": "guest", "password": "brandnewsecret123"},
+    )
+    assert new_login.status_code == 200
+
+
 def test_operator_memory_routes_are_isolated_per_authenticated_user(tmp_path: Path):
     app_client = _make_client(tmp_path)
     app = app_client.app
@@ -367,3 +510,211 @@ def test_coding_workspace_state_is_isolated_per_authenticated_user(tmp_path: Pat
     owner_approve = owner.post("/v1/coding/approve")
     assert owner_approve.status_code == 200
     assert target.read_text(encoding="utf-8") == "new content\n"
+
+
+def test_action_center_state_is_isolated_per_authenticated_user(tmp_path: Path):
+    owner = _make_client(tmp_path)
+    app = owner.app
+    bootstrap = owner.post(
+        "/v1/auth/bootstrap",
+        json={
+            "username": "owner",
+            "password": "supersecret123",
+            "display_name": "Owner",
+        },
+    )
+    assert bootstrap.status_code == 200
+    app.state.user_store.create_user(
+        username="guest",
+        password="guestsecret123",
+        display_name="Guest",
+        role="user",
+    )
+
+    guest = TestClient(app)
+    login_guest = guest.post(
+        "/v1/auth/login",
+        json={"username": "guest", "password": "guestsecret123"},
+    )
+    assert login_guest.status_code == 200
+
+    owner_stage = owner.post(
+        "/v1/action-center/stage-email",
+        json={
+            "recipient": "owner@example.com",
+            "subject": "Owner note",
+            "body": "Private owner draft",
+            "provider": "gmail",
+        },
+    )
+    guest_stage = guest.post(
+        "/v1/action-center/stage-email",
+        json={
+            "recipient": "guest@example.com",
+            "subject": "Guest note",
+            "body": "Private guest draft",
+            "provider": "gmail",
+        },
+    )
+    assert owner_stage.status_code == 200
+    assert guest_stage.status_code == 200
+
+    owner_status = owner.get("/v1/action-center/status")
+    guest_status = guest.get("/v1/action-center/status")
+    assert owner_status.status_code == 200
+    assert guest_status.status_code == 200
+    assert owner_status.json()["pending"]["payload"]["recipient"] == "owner@example.com"
+    assert guest_status.json()["pending"]["payload"]["recipient"] == "guest@example.com"
+
+
+def test_connector_backed_routes_require_superadmin_until_per_user_accounts_exist(tmp_path: Path):
+    owner = _make_client(tmp_path)
+    app = owner.app
+    bootstrap = owner.post(
+        "/v1/auth/bootstrap",
+        json={
+            "username": "owner",
+            "password": "supersecret123",
+            "display_name": "Owner",
+        },
+    )
+    assert bootstrap.status_code == 200
+    app.state.user_store.create_user(
+        username="guest",
+        password="guestsecret123",
+        display_name="Guest",
+        role="user",
+    )
+
+    guest = TestClient(app)
+    login_guest = guest.post(
+        "/v1/auth/login",
+        json={"username": "guest", "password": "guestsecret123"},
+    )
+    assert login_guest.status_code == 200
+
+    guest_connectors = guest.get("/v1/connectors")
+    assert guest_connectors.status_code == 403
+
+    guest_capabilities = guest.get("/v1/action-center/capabilities")
+    assert guest_capabilities.status_code == 403
+
+    guest_inbox = guest.get("/v1/action-center/inbox-summary")
+    assert guest_inbox.status_code == 403
+
+
+def test_connector_accounts_are_isolated_per_authenticated_user(tmp_path: Path):
+    owner = _make_client(tmp_path)
+    app = owner.app
+    bootstrap = owner.post(
+        "/v1/auth/bootstrap",
+        json={
+            "username": "owner",
+            "password": "supersecret123",
+            "display_name": "Owner",
+        },
+    )
+    assert bootstrap.status_code == 200
+    app.state.user_store.create_user(
+        username="guest",
+        password="guestsecret123",
+        display_name="Guest",
+        role="user",
+    )
+
+    guest = TestClient(app)
+    login_guest = guest.post(
+        "/v1/auth/login",
+        json={"username": "guest", "password": "guestsecret123"},
+    )
+    assert login_guest.status_code == 200
+
+    owner_create = owner.post(
+        "/v1/connectors/accounts",
+        json={
+            "provider": "gmail",
+            "label": "Personal",
+            "account_type": "email",
+            "external_identity": "owner@example.com",
+            "metadata": {"scope": "private"},
+        },
+    )
+    guest_create = guest.post(
+        "/v1/connectors/accounts",
+        json={
+            "provider": "gmail",
+            "label": "Work",
+            "account_type": "email",
+            "external_identity": "guest@company.com",
+            "metadata": {"scope": "private"},
+        },
+    )
+    assert owner_create.status_code == 200
+    assert guest_create.status_code == 200
+
+    owner_account = owner_create.json()
+    guest_account = guest_create.json()
+
+    owner_list = owner.get("/v1/connectors/accounts")
+    guest_list = guest.get("/v1/connectors/accounts")
+    assert owner_list.status_code == 200
+    assert guest_list.status_code == 200
+
+    owner_ids = [account["id"] for account in owner_list.json()["accounts"]]
+    guest_ids = [account["id"] for account in guest_list.json()["accounts"]]
+    assert owner_account["id"] in owner_ids
+    assert guest_account["id"] not in owner_ids
+    assert guest_account["id"] in guest_ids
+    assert owner_account["id"] not in guest_ids
+
+
+def test_connector_accounts_cannot_be_modified_across_users(tmp_path: Path):
+    owner = _make_client(tmp_path)
+    app = owner.app
+    bootstrap = owner.post(
+        "/v1/auth/bootstrap",
+        json={
+            "username": "owner",
+            "password": "supersecret123",
+            "display_name": "Owner",
+        },
+    )
+    assert bootstrap.status_code == 200
+    app.state.user_store.create_user(
+        username="guest",
+        password="guestsecret123",
+        display_name="Guest",
+        role="user",
+    )
+
+    guest = TestClient(app)
+    login_guest = guest.post(
+        "/v1/auth/login",
+        json={"username": "guest", "password": "guestsecret123"},
+    )
+    assert login_guest.status_code == 200
+
+    guest_create = guest.post(
+        "/v1/connectors/accounts",
+        json={
+            "provider": "gmail",
+            "label": "Guest Mail",
+            "account_type": "email",
+            "external_identity": "guest@example.com",
+        },
+    )
+    assert guest_create.status_code == 200
+    guest_account_id = guest_create.json()["id"]
+
+    cross_update = owner.patch(
+        f"/v1/connectors/accounts/{guest_account_id}",
+        json={"label": "Owner Tried"},
+    )
+    assert cross_update.status_code == 404
+
+    cross_delete = owner.delete(f"/v1/connectors/accounts/{guest_account_id}")
+    assert cross_delete.status_code == 404
+
+    guest_list = guest.get("/v1/connectors/accounts")
+    assert guest_list.status_code == 200
+    assert [account["id"] for account in guest_list.json()["accounts"]] == [guest_account_id]

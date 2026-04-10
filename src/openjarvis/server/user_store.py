@@ -156,6 +156,16 @@ class UserStore:
         row = self._db.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
         return self._row_to_user(row)
 
+    def list_users(self) -> list[Dict[str, Any]]:
+        rows = self._db.execute(
+            """
+            SELECT *
+            FROM users
+            ORDER BY created_at ASC, username ASC
+            """
+        ).fetchall()
+        return [user for user in (self._row_to_user(row) for row in rows) if user is not None]
+
     def authenticate(self, username: str, password: str) -> Optional[Dict[str, Any]]:
         user = self.get_user_by_username(username)
         if user is None or user.get("status") != "active":
@@ -217,6 +227,77 @@ class UserStore:
             (token_hash,),
         )
         self._db.commit()
+
+    def revoke_sessions_for_user(self, user_id: str) -> None:
+        self._db.execute("DELETE FROM web_sessions WHERE user_id = ?", (user_id,))
+        self._db.commit()
+
+    def update_user(
+        self,
+        user_id: str,
+        *,
+        display_name: Optional[str] = None,
+        role: Optional[str] = None,
+        status: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        current = self.get_user_by_id(user_id)
+        if current is None:
+            raise ValueError("User not found.")
+
+        next_display_name = (
+            display_name.strip()
+            if display_name is not None
+            else str(current["display_name"])
+        )
+        next_role = (role or str(current["role"])).strip().lower() or "user"
+        next_status = (status or str(current["status"])).strip().lower() or "active"
+        if not next_display_name:
+            raise ValueError("Display name is required.")
+        if next_role not in {"superadmin", "admin", "user", "restricted"}:
+            raise ValueError("Invalid role.")
+        if next_status not in {"active", "disabled"}:
+            raise ValueError("Invalid status.")
+
+        self._db.execute(
+            """
+            UPDATE users
+            SET display_name = ?,
+                role = ?,
+                status = ?,
+                updated_at = datetime('now')
+            WHERE id = ?
+            """,
+            (next_display_name, next_role, next_status, user_id),
+        )
+        self._db.commit()
+        if next_status != "active":
+            self.revoke_sessions_for_user(user_id)
+        updated = self.get_user_by_id(user_id)
+        if updated is None:
+            raise ValueError("User not found.")
+        return updated
+
+    def set_password(self, user_id: str, password: str) -> Dict[str, Any]:
+        if len(password) < 8:
+            raise ValueError("Password must be at least 8 characters.")
+        current = self.get_user_by_id(user_id)
+        if current is None:
+            raise ValueError("User not found.")
+        self._db.execute(
+            """
+            UPDATE users
+            SET password_hash = ?,
+                updated_at = datetime('now')
+            WHERE id = ?
+            """,
+            (self.hash_password(password), user_id),
+        )
+        self._db.commit()
+        self.revoke_sessions_for_user(user_id)
+        updated = self.get_user_by_id(user_id)
+        if updated is None:
+            raise ValueError("User not found.")
+        return updated
 
     def _row_to_user(self, row: sqlite3.Row | None) -> Optional[Dict[str, Any]]:
         if row is None:

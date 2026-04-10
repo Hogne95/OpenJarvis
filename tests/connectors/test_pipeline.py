@@ -292,3 +292,28 @@ def test_ingest_chunk_count_return_value(
     assert n2 == 1  # only doc_c is new
 
     assert store.count() == 3
+
+
+def test_ingest_stamps_owner_and_account_scope(store: KnowledgeStore) -> None:
+    """Pipeline-level tenant defaults are written into indexed chunks."""
+    scoped_pipeline = IngestionPipeline(
+        store,
+        owner_user_id="owner-1",
+        account_key="work-mail",
+    )
+    doc = _make_doc(
+        doc_id="doc:scoped:001",
+        content="Scoped connector document",
+        source="gmail",
+    )
+
+    n = scoped_pipeline.ingest([doc])
+
+    assert n == 1
+    row = store._conn.execute(
+        "SELECT owner_user_id, account_key FROM knowledge_chunks WHERE doc_id = ?",
+        ("doc:scoped:001",),
+    ).fetchone()
+    assert row is not None
+    assert row["owner_user_id"] == "owner-1"
+    assert row["account_key"] == "work-mail"

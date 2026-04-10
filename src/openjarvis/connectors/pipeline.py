@@ -44,10 +44,14 @@ class IngestionPipeline:
         *,
         max_tokens: int = 512,
         attachment_store: Optional[AttachmentStore] = None,
+        owner_user_id: str = "",
+        account_key: str = "",
     ) -> None:
         self._store = store
         self._chunker = SemanticChunker(max_tokens=max_tokens)
         self._attachment_store = attachment_store
+        self._owner_user_id = owner_user_id.strip()
+        self._account_key = account_key.strip()
         self._seen_doc_ids: set[str] = set()
         self._load_existing_doc_ids()
 
@@ -142,6 +146,8 @@ class IngestionPipeline:
                     source=doc.source,
                     doc_type=doc.doc_type,
                     doc_id=doc.doc_id,
+                    owner_user_id=self._owner_user_id,
+                    account_key=self._account_key,
                     title=doc.title,
                     author=doc.author,
                     participants=doc.participants,
@@ -185,6 +191,8 @@ class IngestionPipeline:
                                 source=doc.source,
                                 doc_type=doc.doc_type,
                                 doc_id=doc.doc_id,
+                                owner_user_id=self._owner_user_id,
+                                account_key=self._account_key,
                                 title=f"{doc.title} [{att.filename}]",
                                 author=doc.author,
                                 participants=doc.participants,

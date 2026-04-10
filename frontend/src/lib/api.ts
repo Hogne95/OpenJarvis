@@ -353,6 +353,70 @@ export async function fetchCurrentUser(): Promise<AuthUser> {
   return data.user;
 }
 
+export async function fetchUsers(): Promise<AuthUser[]> {
+  const res = await authFetch('/v1/auth/users');
+  if (!res.ok) {
+    const data = await res.json().catch(() => null);
+    throw new Error(data?.detail || `Failed to fetch users: ${res.status}`);
+  }
+  const data = await res.json();
+  return data.users || [];
+}
+
+export async function createUserAdmin(payload: {
+  username: string;
+  password: string;
+  display_name?: string;
+  role?: string;
+}): Promise<AuthUser> {
+  const res = await authFetch('/v1/auth/users', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) {
+    const data = await res.json().catch(() => null);
+    throw new Error(data?.detail || `Failed to create user: ${res.status}`);
+  }
+  const data = await res.json();
+  return data.user;
+}
+
+export async function updateUserAdmin(
+  userId: string,
+  payload: Partial<{
+    display_name: string;
+    role: string;
+    status: string;
+  }>,
+): Promise<AuthUser> {
+  const res = await authFetch(`/v1/auth/users/${encodeURIComponent(userId)}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) {
+    const data = await res.json().catch(() => null);
+    throw new Error(data?.detail || `Failed to update user: ${res.status}`);
+  }
+  const data = await res.json();
+  return data.user;
+}
+
+export async function resetUserPasswordAdmin(userId: string, password: string): Promise<AuthUser> {
+  const res = await authFetch(`/v1/auth/users/${encodeURIComponent(userId)}/reset-password`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ password }),
+  });
+  if (!res.ok) {
+    const data = await res.json().catch(() => null);
+    throw new Error(data?.detail || `Failed to reset password: ${res.status}`);
+  }
+  const data = await res.json();
+  return data.user;
+}
+
 export async function getDesktopRuntimeStatus(): Promise<DesktopRuntimeStatus | null> {
   if (!isTauri()) return null;
   try {

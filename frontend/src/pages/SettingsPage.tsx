@@ -18,9 +18,21 @@ import {
   Search,
   AlertTriangle,
   ShieldAlert,
+  UserPlus,
 } from 'lucide-react';
 import { useAppStore, type ThemeMode } from '../lib/store';
-import { checkHealth, fetchRuntimeReadiness, fetchSpeechHealth, fetchWithTimeout, type RuntimeReadiness } from '../lib/api';
+import {
+  checkHealth,
+  fetchRuntimeReadiness,
+  fetchSpeechHealth,
+  fetchWithTimeout,
+  fetchUsers,
+  createUserAdmin,
+  updateUserAdmin,
+  resetUserPasswordAdmin,
+  type RuntimeReadiness,
+  type AuthUser,
+} from '../lib/api';
 
 function OllamaModelList() {
   const [models, setModels] = useState<Array<{ name: string; size: number }>>([]);
@@ -95,6 +107,231 @@ function Section({ title, children }: { title: string; children: React.ReactNode
   );
 }
 
+function UserManagementSection({ currentUser }: { currentUser: AuthUser | null }) {
+  const [users, setUsers] = useState<AuthUser[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+  const [passwordDrafts, setPasswordDrafts] = useState<Record<string, string>>({});
+  const [form, setForm] = useState({
+    username: '',
+    display_name: '',
+    password: '',
+    role: 'user',
+  });
+
+  const canManageUsers = currentUser?.role === 'superadmin' || currentUser?.role === 'admin';
+
+  const loadUsers = async () => {
+    if (!canManageUsers) return;
+    setLoading(true);
+    try {
+      setUsers(await fetchUsers());
+      setError('');
+    } catch (err: any) {
+      setError(err.message || 'Failed to load users');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    void loadUsers();
+  }, [canManageUsers]);
+
+  if (!canManageUsers) return null;
+
+  const createUser = async () => {
+    if (!form.username.trim() || !form.password.trim()) return;
+    setSaving(true);
+    try {
+      const created = await createUserAdmin({
+        username: form.username.trim(),
+        display_name: form.display_name.trim(),
+        password: form.password,
+        role: form.role,
+      });
+      setUsers((prev) => [...prev, created]);
+      setForm({ username: '', display_name: '', password: '', role: 'user' });
+      setError('');
+    } catch (err: any) {
+      setError(err.message || 'Failed to create user');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const patchUser = async (userId: string, payload: Parameters<typeof updateUserAdmin>[1]) => {
+    try {
+      const updated = await updateUserAdmin(userId, payload);
+      setUsers((prev) => prev.map((user) => (user.id === userId ? updated : user)));
+      setError('');
+    } catch (err: any) {
+      setError(err.message || 'Failed to update user');
+    }
+  };
+
+  const resetPassword = async (userId: string) => {
+    const nextPassword = passwordDrafts[userId]?.trim();
+    if (!nextPassword) return;
+    try {
+      const updated = await resetUserPasswordAdmin(userId, nextPassword);
+      setUsers((prev) => prev.map((user) => (user.id === userId ? updated : user)));
+      setPasswordDrafts((prev) => ({ ...prev, [userId]: '' }));
+      setError('');
+    } catch (err: any) {
+      setError(err.message || 'Failed to reset password');
+    }
+  };
+
+  const inputStyle: React.CSSProperties = {
+    background: 'var(--color-bg-secondary)',
+    color: 'var(--color-text)',
+    border: '1px solid var(--color-border)',
+    borderRadius: 8,
+    padding: '8px 10px',
+    fontSize: 12,
+  };
+
+  return (
+    <Section title="User Management">
+      <div className="mb-4 text-xs" style={{ color: 'var(--color-text-tertiary)' }}>
+        Root cause: login alone is not enough for safe household or friend access. JARVIS now has server-side admin controls so you can create users, restrict roles, disable accounts, and reset passwords without crossing privacy boundaries.
+      </div>
+
+      <div className="grid gap-2 mb-4" style={{ gridTemplateColumns: '1fr 1fr 1fr auto' }}>
+        <input
+          value={form.username}
+          onChange={(e) => setForm((prev) => ({ ...prev, username: e.target.value }))}
+          placeholder="username"
+          style={inputStyle}
+        />
+        <input
+          value={form.display_name}
+          onChange={(e) => setForm((prev) => ({ ...prev, display_name: e.target.value }))}
+          placeholder="display name"
+          style={inputStyle}
+        />
+        <input
+          type="password"
+          value={form.password}
+          onChange={(e) => setForm((prev) => ({ ...prev, password: e.target.value }))}
+          placeholder="temporary password"
+          style={inputStyle}
+        />
+        <div className="flex gap-2">
+          <select
+            value={form.role}
+            onChange={(e) => setForm((prev) => ({ ...prev, role: e.target.value }))}
+            style={{ ...inputStyle, minWidth: 110 }}
+          >
+            <option value="user">User</option>
+            <option value="restricted">Restricted</option>
+            {currentUser?.role === 'superadmin' && <option value="admin">Admin</option>}
+          </select>
+          <button
+            onClick={createUser}
+            disabled={saving || !form.username.trim() || !form.password.trim()}
+            className="flex items-center gap-1 px-3 py-2 rounded-lg text-xs font-medium cursor-pointer"
+            style={{
+              background: saving || !form.username.trim() || !form.password.trim() ? '#444' : 'var(--color-accent)',
+              color: 'white',
+              border: 'none',
+            }}
+          >
+            <UserPlus size={13} />
+            {saving ? 'Adding...' : 'Add user'}
+          </button>
+        </div>
+      </div>
+
+      {loading ? (
+        <div className="text-xs" style={{ color: 'var(--color-text-secondary)' }}>Loading users...</div>
+      ) : (
+        <div className="grid gap-3">
+          {users.map((user) => {
+            const isSelf = user.id === currentUser?.id;
+            const isElevated = user.role === 'admin' || user.role === 'superadmin';
+            const canEditElevated = currentUser?.role === 'superadmin';
+            return (
+              <div
+                key={user.id}
+                className="rounded-lg p-3"
+                style={{ background: 'var(--color-bg-secondary)', border: '1px solid var(--color-border)' }}
+              >
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <div className="text-sm" style={{ color: 'var(--color-text)' }}>
+                      {user.display_name}
+                      <span className="ml-2 text-[10px]" style={{ color: 'var(--color-text-tertiary)' }}>
+                        @{user.username}
+                      </span>
+                    </div>
+                    <div className="text-xs mt-1" style={{ color: 'var(--color-text-secondary)' }}>
+                      role: {user.role} · status: {user.status}
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <select
+                      value={user.role}
+                      disabled={isSelf || (isElevated && !canEditElevated)}
+                      onChange={(e) => void patchUser(user.id, { role: e.target.value })}
+                      style={{ ...inputStyle, minWidth: 110, padding: '6px 8px' }}
+                    >
+                      <option value="user">User</option>
+                      <option value="restricted">Restricted</option>
+                      {currentUser?.role === 'superadmin' && <option value="admin">Admin</option>}
+                      {currentUser?.role === 'superadmin' && <option value="superadmin">Superadmin</option>}
+                    </select>
+                    <select
+                      value={user.status}
+                      disabled={isSelf || (isElevated && !canEditElevated)}
+                      onChange={(e) => void patchUser(user.id, { status: e.target.value })}
+                      style={{ ...inputStyle, minWidth: 110, padding: '6px 8px' }}
+                    >
+                      <option value="active">Active</option>
+                      <option value="disabled">Disabled</option>
+                    </select>
+                  </div>
+                </div>
+                {!isSelf && (!isElevated || canEditElevated) && (
+                  <div className="flex items-center gap-2 mt-3">
+                    <input
+                      type="password"
+                      value={passwordDrafts[user.id] || ''}
+                      onChange={(e) => setPasswordDrafts((prev) => ({ ...prev, [user.id]: e.target.value }))}
+                      placeholder="new password"
+                      style={{ ...inputStyle, flex: 1 }}
+                    />
+                    <button
+                      onClick={() => void resetPassword(user.id)}
+                      disabled={!passwordDrafts[user.id]?.trim()}
+                      className="px-3 py-2 rounded-lg text-xs font-medium cursor-pointer"
+                      style={{
+                        background: !passwordDrafts[user.id]?.trim() ? '#444' : 'var(--color-accent)',
+                        color: 'white',
+                        border: 'none',
+                      }}
+                    >
+                      Reset password
+                    </button>
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {error && (
+        <div className="mt-3 text-xs" style={{ color: 'var(--color-error)' }}>
+          {error}
+        </div>
+      )}
+    </Section>
+  );
+}
+
 function SettingRow({ label, description, children }: { label: string; description?: string; children: React.ReactNode }) {
   return (
     <div className="flex items-center justify-between py-3" style={{ borderBottom: '1px solid var(--color-border-subtle)' }}>
@@ -120,6 +357,7 @@ export function SettingsPage() {
   const updateSettings = useAppStore((s) => s.updateSettings);
   const conversations = useAppStore((s) => s.conversations);
   const serverInfo = useAppStore((s) => s.serverInfo);
+  const currentUser = useAppStore((s) => s.currentUser);
   const [healthy, setHealthy] = useState<boolean | null>(null);
   const [speechBackendAvailable, setSpeechBackendAvailable] = useState<boolean | null>(null);
   const [runtimeReadiness, setRuntimeReadiness] = useState<RuntimeReadiness | null>(null);
@@ -206,6 +444,8 @@ export function SettingsPage() {
         </div>
 
         <div className="flex flex-col gap-4">
+          <UserManagementSection currentUser={currentUser} />
+
           {/* Appearance */}
           <Section title="Appearance">
             <SettingRow label="Theme" description="Choose how OpenJarvis looks">

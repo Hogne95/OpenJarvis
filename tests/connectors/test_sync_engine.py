@@ -182,3 +182,36 @@ def test_sync_multiple_connectors(
     assert len(results_b) >= 1
     for r in results_b:
         assert r.metadata.get("source") == "source_b"
+
+
+def test_sync_checkpoint_is_scoped_by_owner_and_account(tmp_path: Path) -> None:
+    """Same connector id keeps separate checkpoints for different scoped pipelines."""
+    store = KnowledgeStore(db_path=tmp_path / "knowledge_scoped.db")
+    shared_state = str(tmp_path / "sync_state_scoped.db")
+
+    pipeline_owner = IngestionPipeline(
+        store,
+        owner_user_id="owner-1",
+        account_key="personal-mail",
+    )
+    pipeline_guest = IngestionPipeline(
+        store,
+        owner_user_id="guest-1",
+        account_key="personal-mail",
+    )
+    engine_owner = SyncEngine(pipeline_owner, state_db=shared_state)
+    engine_guest = SyncEngine(pipeline_guest, state_db=shared_state)
+
+    owner_docs = [_make_doc("doc:owner:1", content="Owner doc")]
+    guest_docs = [_make_doc("doc:guest:1", content="Guest doc")]
+
+    engine_owner.sync(StubConnector(owner_docs))
+    engine_guest.sync(StubConnector(guest_docs))
+
+    owner_cp = engine_owner.get_checkpoint("stub")
+    guest_cp = engine_guest.get_checkpoint("stub")
+
+    assert owner_cp is not None
+    assert guest_cp is not None
+    assert owner_cp["items_synced"] == 1
+    assert guest_cp["items_synced"] == 1

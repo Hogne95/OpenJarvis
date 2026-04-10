@@ -33,9 +33,13 @@ class KnowledgeSearchTool(BaseTool):
         self,
         store: Optional[KnowledgeStore] = None,
         retriever: Optional["TwoStageRetriever"] = None,
+        owner_user_id: str = "",
+        account_key: str = "",
     ) -> None:
         self._store = store
         self._retriever = retriever
+        self._owner_user_id = owner_user_id.strip()
+        self._account_key = account_key.strip()
 
     @property
     def spec(self) -> ToolSpec:
@@ -113,6 +117,8 @@ class KnowledgeSearchTool(BaseTool):
         source: Optional[str] = params.get("source")
         doc_type: Optional[str] = params.get("doc_type")
         author: Optional[str] = params.get("author")
+        owner_user_id: Optional[str] = params.get("owner_user_id") or self._owner_user_id or None
+        account_key: Optional[str] = params.get("account_key") or self._account_key or None
         since: Optional[str] = params.get("since")
         until: Optional[str] = params.get("until")
 
@@ -133,6 +139,8 @@ class KnowledgeSearchTool(BaseTool):
                 source=source,
                 doc_type=doc_type,
                 author=author,
+                owner_user_id=owner_user_id,
+                account_key=account_key,
                 since=since,
                 until=until,
             )
