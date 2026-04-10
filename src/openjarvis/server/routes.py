@@ -9,9 +9,12 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
 
+from openjarvis.assistant import build_assistant_system_context
 from openjarvis.core.types import Message, Role
+from openjarvis.server.auth import get_operator_memory_manager
 from openjarvis.server.models import (
     ChatCompletionChunk,
+    ChatMessage,
     ChatCompletionRequest,
     ChatCompletionResponse,
     Choice,
@@ -43,12 +46,55 @@ def _to_messages(chat_messages) -> list[Message]:
     return messages
 
 
+def _inject_jarvis_identity_context(
+    request_body: ChatCompletionRequest,
+    request: Request,
+) -> None:
+    """Prepend a stable JARVIS identity + relevant operator memory context."""
+
+    if not request_body.messages:
+        return
+
+    query_text = ""
+    for message in reversed(request_body.messages):
+        if message.role == "user" and message.content:
+            query_text = message.content
+            break
+    if not query_text.strip():
+        return
+
+    memory_items: list[dict[str, Any]] = []
+    try:
+        operator_memory = get_operator_memory_manager(request)
+        memory_items = operator_memory.relevant_context(query_text, limit=5)
+    except Exception:
+        logging.getLogger("openjarvis.server").debug(
+            "Operator memory relevance lookup failed",
+            exc_info=True,
+        )
+
+    assistant_system = build_assistant_system_context(
+        query=query_text,
+        surface="chat",
+        memory_items=memory_items,
+    )
+    if not assistant_system.strip():
+        return
+
+    request_body.messages = [
+        ChatMessage(role="system", content=assistant_system),
+        *request_body.messages,
+    ]
+
+
 @router.post("/v1/chat/completions")
 async def chat_completions(request_body: ChatCompletionRequest, request: Request):
     """Handle chat completion requests (streaming and non-streaming)."""
     engine = request.app.state.engine
     agent = getattr(request.app.state, "agent", None)
     model = request_body.model
+
+    _inject_jarvis_identity_context(request_body, request)
 
     # Inject memory context into messages before dispatching
     config = getattr(request.app.state, "config", None)

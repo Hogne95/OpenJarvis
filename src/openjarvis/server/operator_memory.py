@@ -5,7 +5,7 @@ from __future__ import annotations
 import base64
 import json
 from dataclasses import asdict, dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -869,6 +869,149 @@ class OperatorMemory:
             items = [item for _, item in sorted(ranked, key=lambda pair: pair[0], reverse=True)[:limit]]
         return [asdict(item) for item in items]
 
+    def relevant_context(self, query: str, *, limit: int = 6) -> list[dict[str, Any]]:
+        """Return a compact set of high-signal memories relevant to *query*."""
+
+        cleaned = " ".join((query or "").strip().lower().split())
+        if not cleaned:
+            return []
+
+        tokens = {token for token in cleaned.replace("/", " ").replace("-", " ").split() if len(token) >= 3}
+
+        def _score_text(*parts: str) -> float:
+            haystack = " ".join(part for part in parts if part).lower()
+            if not haystack:
+                return 0.0
+            score = 0.0
+            for token in tokens:
+                if token in haystack:
+                    score += 1.0
+            return score
+
+        candidates: list[tuple[float, dict[str, Any]]] = []
+
+        profile_score = 0.0
+        if any(word in cleaned for word in ("reply", "tone", "draft", "email", "message", "write")):
+            profile_score += 1.5
+        if any(word in cleaned for word in ("schedule", "calendar", "meeting", "workday", "today")):
+            profile_score += 1.25
+        if any(word in cleaned for word in ("desktop", "browser", "window", "tab", "app")):
+            profile_score += 1.0
+        profile_score += _score_text(
+            self._profile.reply_tone,
+            " ".join(self._profile.priority_contacts),
+            self._profile.workday_start,
+            self._profile.workday_end,
+            self._profile.active_desktop_target,
+            self._profile.active_browser_target,
+        ) * 0.4
+        if profile_score > 0:
+            candidates.append(
+                (
+                    profile_score,
+                    {
+                        "label": "Known preferences",
+                        "detail": (
+                            f"Reply tone: {self._profile.reply_tone}; "
+                            f"priority contacts: {', '.join(self._profile.priority_contacts) or 'none'}; "
+                            f"workday: {self._profile.workday_start}-{self._profile.workday_end}"
+                        ),
+                        "reason": "user preference profile",
+                    },
+                )
+            )
+
+        for memory in self.search_explicit_memories(cleaned, limit=limit):
+            score = 1.4 + _score_text(memory.get("content", ""), " ".join(memory.get("tags", []))) * 0.5
+            candidates.append(
+                (
+                    score,
+                    {
+                        "label": "Explicit memory",
+                        "detail": str(memory.get("content", "")).strip(),
+                        "reason": "saved memory match",
+                    },
+                )
+            )
+
+        for item in self._learning_experiences:
+            score = _score_text(item.label, item.domain, item.context_key, item.summary, item.lesson, item.reuse_hint, " ".join(item.tags))
+            if score <= 0:
+                continue
+            score += min(max(item.confidence, 0.0), 1.0)
+            if item.use_count > 1:
+                score += 0.4
+            candidates.append(
+                (
+                    score,
+                    {
+                        "label": f"Past lesson: {item.label}",
+                        "detail": item.lesson or item.summary,
+                        "reason": "repeated pattern or prior decision",
+                    },
+                )
+            )
+
+        for mission in self._missions:
+            if mission.status.strip().lower() in {"done", "completed", "archived"}:
+                continue
+            score = _score_text(mission.title, mission.domain, mission.summary, mission.next_step, mission.result, mission.retry_hint)
+            if score <= 0 and not any(word in cleaned for word in ("next", "priority", "unfinished", "stuck", "pending", "plan")):
+                continue
+            score += 0.9
+            candidates.append(
+                (
+                    score,
+                    {
+                        "label": f"Open mission: {mission.title}",
+                        "detail": mission.next_step or mission.summary or mission.result,
+                        "reason": "unfinished work",
+                    },
+                )
+            )
+
+        for project in self._projects.values():
+            score = _score_text(project.key, project.title, project.focus, project.status, project.next_step, project.notes)
+            if score <= 0:
+                continue
+            candidates.append(
+                (
+                    score + 0.6,
+                    {
+                        "label": f"Project context: {project.title or project.key}",
+                        "detail": project.next_step or project.focus or project.notes or project.status,
+                        "reason": "active project context",
+                    },
+                )
+            )
+
+        for relationship in self._relationships.values():
+            score = _score_text(relationship.contact, relationship.name, relationship.relationship, relationship.notes, relationship.importance)
+            if score <= 0:
+                continue
+            candidates.append(
+                (
+                    score + 0.5,
+                    {
+                        "label": f"Relationship context: {relationship.name or relationship.contact}",
+                        "detail": relationship.notes or relationship.relationship or relationship.importance,
+                        "reason": "known contact context",
+                    },
+                )
+            )
+
+        seen: set[tuple[str, str]] = set()
+        ranked: list[dict[str, Any]] = []
+        for _score, item in sorted(candidates, key=lambda pair: pair[0], reverse=True):
+            key = (str(item.get("label", "")), str(item.get("detail", "")))
+            if key in seen:
+                continue
+            seen.add(key)
+            ranked.append(item)
+            if len(ranked) >= max(1, limit):
+                break
+        return ranked
+
     def delete_explicit_memory(self, query: str) -> dict[str, Any]:
         cleaned = query.strip().lower()
         if not cleaned:
@@ -1188,7 +1331,7 @@ class OperatorMemory:
             raise ValueError("Learning experience not found")
         experience.use_count = max(1, int(experience.use_count) + 1)
         experience.confidence = min(1.0, max(0.05, float(experience.confidence) + 0.03))
-        experience.last_reused_at = (reused_at or datetime.utcnow().isoformat()).strip()
+        experience.last_reused_at = (reused_at or datetime.now(timezone.utc).isoformat()).strip()
         self._save()
         return self.snapshot()
 

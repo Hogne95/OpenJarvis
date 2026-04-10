@@ -1,0 +1,130 @@
+from __future__ import annotations
+
+from fastapi.testclient import TestClient
+
+from openjarvis.assistant import analyze_decision_request, build_assistant_system_context
+from openjarvis.server.app import create_app
+from openjarvis.server.operator_memory import OperatorMemory
+
+
+class _EngineStub:
+    def __init__(self) -> None:
+        self.engine_id = "stub"
+        self._last_messages = None
+
+    def health(self) -> bool:
+        return True
+
+    def list_models(self):
+        return ["test-model"]
+
+    def generate(self, messages, **kwargs):
+        self._last_messages = messages
+        return {
+            "content": "Acknowledged.",
+            "usage": {"prompt_tokens": 10, "completion_tokens": 4, "total_tokens": 14},
+            "finish_reason": "stop",
+        }
+
+
+def test_decision_detection_prefers_recommendations() -> None:
+    decision = analyze_decision_request("Should I keep building this locally or move it to the cloud?")
+    assert decision.is_decision is True
+    assert decision.confidence >= 0.7
+    assert decision.matched_signals
+
+    non_decision = analyze_decision_request("What ports is the server using right now?")
+    assert non_decision.is_decision is False
+
+
+def test_assistant_system_context_includes_memory_and_structure() -> None:
+    prompt = build_assistant_system_context(
+        query="Which release plan do you recommend for this repo?",
+        memory_items=[
+            {
+                "label": "Past lesson: Release discipline",
+                "detail": "Ship fewer changes, but verify the risky path before tagging.",
+                "reason": "repeated pattern or prior decision",
+            }
+        ],
+    )
+    assert "You are JARVIS" in prompt
+    assert "Recommendation" in prompt
+    assert "Best next step" in prompt
+    assert "Release discipline" in prompt
+
+
+def test_operator_memory_relevant_context_is_selective(tmp_path) -> None:
+    memory = OperatorMemory(path=str(tmp_path / "operator_memory.json"))
+    memory.update_profile({"reply_tone": "crisp and strategic", "priority_contacts": ["alice@example.com"]})
+    memory.add_learning_experience(
+        label="Release discipline",
+        domain="coding",
+        summary="Rushed releases caused avoidable cleanup.",
+        lesson="Prefer smaller release batches with verification before tagging.",
+        reuse_hint="Use when deciding release timing.",
+        tags=["release", "verification"],
+    )
+    memory.update_mission(
+        "repo-release",
+        {
+            "title": "Prepare repo release",
+            "status": "active",
+            "next_step": "Verify tests and changelog before release.",
+        },
+    )
+    memory.update_relationship(
+        "bob@example.com",
+        {"name": "Bob", "notes": "Prefers short meeting summaries."},
+    )
+
+    relevant = memory.relevant_context("What release plan do you recommend for this repo?", limit=4)
+    details = " ".join(item["detail"] for item in relevant)
+    labels = " ".join(item["label"] for item in relevant)
+
+    assert "smaller release batches" in details.lower()
+    assert "verify tests and changelog" in details.lower()
+    assert "bob" not in labels.lower()
+
+
+def test_chat_route_injects_identity_and_relevant_memory(tmp_path) -> None:
+    engine = _EngineStub()
+    app = create_app(engine, "test-model")
+    memory = OperatorMemory(path=str(tmp_path / "operator_memory.json"))
+    memory.add_learning_experience(
+        label="Infra tradeoffs",
+        domain="ops",
+        summary="Cloud moves increase convenience but add lock-in and cost.",
+        lesson="Recommend local-first unless uptime requirements clearly justify cloud complexity.",
+        reuse_hint="Use when evaluating hosting choices.",
+        tags=["cloud", "local", "hosting"],
+    )
+    memory.update_mission(
+        "hosting-review",
+        {
+            "title": "Hosting review",
+            "status": "active",
+            "next_step": "Compare local reliability gains against cloud operating overhead.",
+        },
+    )
+    app.state.operator_memory = memory
+    client = TestClient(app)
+
+    resp = client.post(
+        "/v1/chat/completions",
+        json={
+            "model": "test-model",
+            "messages": [
+                {"role": "user", "content": "Should I keep JARVIS local or move it to a hosted server?"}
+            ],
+        },
+    )
+
+    assert resp.status_code == 200
+    assert engine._last_messages is not None
+    first = engine._last_messages[0]
+    assert first.role.value == "system"
+    assert "You are JARVIS" in first.content
+    assert "Recommendation" in first.content
+    assert "local-first" in first.content.lower()
+    assert "hosting review" in first.content.lower()
