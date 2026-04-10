@@ -28,6 +28,9 @@ class DesktopStateResponse(BaseModel):
     open_windows: list[dict[str, str]]
     active_desktop_target: str
     active_browser_target: str
+    available: bool = True
+    degraded: bool = False
+    reason: str = ""
 
 
 @dataclass(slots=True)
@@ -450,13 +453,39 @@ def _desktop_state_snapshot(operator_memory=None) -> dict[str, Any]:
             ),
         }
 
+    def _degraded_snapshot(reason: str) -> dict[str, Any]:
+        return _apply_targets(
+            {
+                "active_window_title": "",
+                "active_process_name": "",
+                "open_windows": [],
+                "available": False,
+                "degraded": True,
+                "reason": reason.strip() or "Desktop state unavailable.",
+            }
+        )
+
     if _DESKTOP_STATE_LAST_SUCCESS is not None and (now - _DESKTOP_STATE_LAST_SUCCESS_AT) < _DESKTOP_STATE_CACHE_TTL_SECONDS:
-        return _apply_targets(_DESKTOP_STATE_LAST_SUCCESS)
+        return _apply_targets(
+            {
+                **_DESKTOP_STATE_LAST_SUCCESS,
+                "available": True,
+                "degraded": False,
+                "reason": "",
+            }
+        )
 
     if _DESKTOP_STATE_COOLDOWN_UNTIL > now:
         if _DESKTOP_STATE_LAST_SUCCESS is not None:
-            return _apply_targets(_DESKTOP_STATE_LAST_SUCCESS)
-        raise RuntimeError(_DESKTOP_STATE_LAST_ERROR or "Desktop state unavailable.")
+            return _apply_targets(
+                {
+                    **_DESKTOP_STATE_LAST_SUCCESS,
+                    "available": True,
+                    "degraded": False,
+                    "reason": "",
+                }
+            )
+        return _degraded_snapshot(_DESKTOP_STATE_LAST_ERROR or "Desktop state unavailable.")
 
     command = r"""
 $ErrorActionPreference = 'Stop'
@@ -493,15 +522,29 @@ $openWindows = Get-Process | Where-Object { $_.MainWindowTitle -and $_.MainWindo
         _DESKTOP_STATE_LAST_ERROR = (result.stderr or result.stdout or "Desktop state unavailable.").strip()
         _DESKTOP_STATE_COOLDOWN_UNTIL = now + _DESKTOP_STATE_FAILURE_COOLDOWN_SECONDS
         if _DESKTOP_STATE_LAST_SUCCESS is not None:
-            return _apply_targets(_DESKTOP_STATE_LAST_SUCCESS)
-        raise RuntimeError(_DESKTOP_STATE_LAST_ERROR)
+            return _apply_targets(
+                {
+                    **_DESKTOP_STATE_LAST_SUCCESS,
+                    "available": True,
+                    "degraded": False,
+                    "reason": "",
+                }
+            )
+        return _degraded_snapshot(_DESKTOP_STATE_LAST_ERROR)
     raw = result.stdout.strip()
     if not raw:
         _DESKTOP_STATE_LAST_ERROR = "Desktop state unavailable."
         _DESKTOP_STATE_COOLDOWN_UNTIL = now + _DESKTOP_STATE_FAILURE_COOLDOWN_SECONDS
         if _DESKTOP_STATE_LAST_SUCCESS is not None:
-            return _apply_targets(_DESKTOP_STATE_LAST_SUCCESS)
-        raise RuntimeError(_DESKTOP_STATE_LAST_ERROR)
+            return _apply_targets(
+                {
+                    **_DESKTOP_STATE_LAST_SUCCESS,
+                    "available": True,
+                    "degraded": False,
+                    "reason": "",
+                }
+            )
+        return _degraded_snapshot(_DESKTOP_STATE_LAST_ERROR)
     import json
 
     data = json.loads(raw)
@@ -519,6 +562,9 @@ $openWindows = Get-Process | Where-Object { $_.MainWindowTitle -and $_.MainWindo
             for item in open_windows
             if str(item.get("title", "")).strip()
         ],
+        "available": True,
+        "degraded": False,
+        "reason": "",
     }
     _DESKTOP_STATE_LAST_SUCCESS = snapshot
     _DESKTOP_STATE_LAST_SUCCESS_AT = now

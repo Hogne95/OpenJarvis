@@ -193,6 +193,7 @@ interface AppState {
   selectedModel: string;
   serverInfo: ServerInfo | null;
   savings: SavingsData | null;
+  apiReachable: boolean | null;
 
   // Settings
   settings: Settings;
@@ -240,6 +241,7 @@ interface AppState {
   setSelectedModel: (model: string) => void;
   setServerInfo: (info: ServerInfo | null) => void;
   setSavings: (data: SavingsData | null) => void;
+  setApiReachable: (reachable: boolean | null) => void;
 
   // Actions: settings
   updateSettings: (partial: Partial<Settings>) => void;
@@ -306,6 +308,7 @@ export const useAppStore = create<AppState>((set, get) => {
     selectedModel: '',
     serverInfo: null,
     savings: null,
+    apiReachable: null,
 
     settings: loadSettings(),
     operatorProfile: loadOperatorProfile(),
@@ -458,6 +461,7 @@ export const useAppStore = create<AppState>((set, get) => {
     setSelectedModel: (model: string) => set({ selectedModel: model }),
     setServerInfo: (info: ServerInfo | null) => set({ serverInfo: info }),
     setSavings: (data: SavingsData | null) => set({ savings: data }),
+    setApiReachable: (apiReachable: boolean | null) => set({ apiReachable }),
 
     // ── Settings ───────────────────────────────────────────────────
 

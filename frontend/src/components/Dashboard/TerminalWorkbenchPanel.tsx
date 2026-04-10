@@ -15,7 +15,7 @@ export function TerminalWorkbenchPanel({
   workbenchTimeout: number;
   onWorkbenchTimeoutChange: (value: number) => void;
   onStageWorkbenchCommand: () => void;
-  workbenchBusy: 'stage' | 'approve' | 'hold' | null;
+  workbenchBusy: 'prepare' | 'stage' | 'approve' | 'hold' | null;
 }) {
   return (
     <div className="mt-4 rounded-[1.15rem] border border-cyan-400/10 bg-slate-950/55 p-4">
@@ -47,7 +47,7 @@ export function TerminalWorkbenchPanel({
             disabled={workbenchBusy !== null}
             className="rounded-[0.9rem] border border-cyan-300/20 bg-cyan-400/[0.08] px-4 py-3 text-xs uppercase tracking-[0.28em] text-cyan-100 transition hover:bg-cyan-400/[0.14] disabled:cursor-not-allowed disabled:opacity-50"
           >
-            {workbenchBusy === 'stage' ? 'Staging' : 'Stage Command'}
+            {workbenchBusy === 'stage' ? 'Staging' : workbenchBusy === 'prepare' ? 'Preparing' : 'Stage Command'}
           </button>
         </div>
       </div>

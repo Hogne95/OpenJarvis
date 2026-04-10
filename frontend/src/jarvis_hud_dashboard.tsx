@@ -147,7 +147,6 @@ import { listConnectors } from './lib/connectors-api';
 import { DESIGN_ARCHETYPES, getDesignArchetype } from './lib/designCanon';
 import { useAppStore } from './lib/store';
 import type { ChatMessage, ToolCallInfo } from './types';
-import { InputArea } from './components/Chat/InputArea';
 import type { CommercialOpsBrief } from './components/Dashboard/CommercialOpsPanel';
 import type { FivemCodingBrief } from './components/Dashboard/FivemCodingPanel';
 import type { MissionMatrixItem } from './components/Dashboard/MissionMatrix';
@@ -199,6 +198,9 @@ const TerminalWorkbenchPanel = lazy(() =>
 );
 const VisualIntelPanel = lazy(() =>
   import('./components/Dashboard/VisualIntelPanel').then((module) => ({ default: module.VisualIntelPanel })),
+);
+const HudInputArea = lazy(() =>
+  import('./components/Chat/InputArea').then((module) => ({ default: module.InputArea })),
 );
 
 function getApiBase() {
@@ -508,6 +510,9 @@ export default function JarvisHudDashboard({
   const isWorkspaceView = view === 'workspace';
   const isOperationsView = view === 'operations';
   const isBriefingsView = view === 'briefings';
+  const needsArchitectureTaskPolling = isDashboardView || isWorkspaceView || isOperationsView;
+  const needsWorkspaceStatusPolling = isDashboardView || isWorkspaceView || isOperationsView;
+  const needsExtendedIntelBriefs = isDashboardView || isWorkspaceView || isOperationsView;
   const messages = useAppStore((s) => s.messages);
   const streamState = useAppStore((s) => s.streamState);
   const selectedModel = useAppStore((s) => s.selectedModel);
@@ -518,13 +523,13 @@ export default function JarvisHudDashboard({
   const logEntries = useAppStore((s) => s.logEntries);
   const managedAgents = useAppStore((s) => s.managedAgents);
   const setManagedAgents = useAppStore((s) => s.setManagedAgents);
+  const apiReachable = useAppStore((s) => s.apiReachable);
+  const setApiReachable = useAppStore((s) => s.setApiReachable);
   const setSelectedAgentId = useAppStore((s) => s.setSelectedAgentId);
   const updateOperatorProfile = useAppStore((s) => s.updateOperatorProfile);
   const recordOperatorSignal = useAppStore((s) => s.recordOperatorSignal);
 
-  const [apiReachable, setApiReachable] = useState<boolean | null>(null);
   const [speechAvailable, setSpeechAvailable] = useState<boolean | null>(null);
-  const [runningAgentCount, setRunningAgentCount] = useState(0);
   const [connectorSummary, setConnectorSummary] = useState<ConnectorSummary>({
     totalConnected: 0,
     emailReady: false,
@@ -595,7 +600,7 @@ export default function JarvisHudDashboard({
   const [workbenchCommand, setWorkbenchCommand] = useState('');
   const [workbenchDirectory, setWorkbenchDirectory] = useState('');
   const [workbenchTimeout, setWorkbenchTimeout] = useState(30);
-  const [workbenchBusy, setWorkbenchBusy] = useState<'stage' | 'approve' | 'hold' | null>(null);
+  const [workbenchBusy, setWorkbenchBusy] = useState<'prepare' | 'stage' | 'approve' | 'hold' | null>(null);
   const [workbenchNotice, setWorkbenchNotice] = useState('');
   const [actionMode, setActionMode] = useState<'email' | 'calendar'>('email');
   const [actionBusy, setActionBusy] = useState<'stage' | 'approve' | 'hold' | null>(null);
@@ -736,11 +741,16 @@ export default function JarvisHudDashboard({
     if (hudSpeechTelemetry.noiseFloor >= 0.02) return false;
     return true;
   }, [hudSpeechState, hudSpeechTelemetry.noiseFloor, hudSpeechTelemetry.speechLikely, speechProfile?.auto_speak, streamState.activeToolCalls.length, streamState.isStreaming, voiceLoop?.active]);
+  const runningAgentCount = useMemo(
+    () => managedAgents.filter((agent) => agent.status === 'running').length,
+    [managedAgents],
+  );
 
   useEffect(() => {
     let cancelled = false;
 
     const refreshFastStatus = async () => {
+      if (typeof document !== 'undefined' && document.hidden) return;
       if (fastRefreshInFlightRef.current) return;
       fastRefreshInFlightRef.current = true;
       try {
@@ -765,6 +775,7 @@ export default function JarvisHudDashboard({
           setWorkbenchDirectory((current) => current || wb.value.default_working_dir);
         }
         if (health.status === 'fulfilled') setApiReachable(health.value);
+        if (health.status === 'rejected') setApiReachable(false);
         if (speech.status === 'fulfilled') setSpeechAvailable(speech.value.available);
       } finally {
         fastRefreshInFlightRef.current = false;
@@ -772,11 +783,12 @@ export default function JarvisHudDashboard({
     };
 
     const refreshSlowStatus = async () => {
+      if (typeof document !== 'undefined' && document.hidden) return;
       if (slowRefreshInFlightRef.current) return;
       slowRefreshInFlightRef.current = true;
       try {
         const desktopStateRequest =
-          desktopStateCooldownUntilRef.current > Date.now()
+          !needsWorkspaceStatusPolling || desktopStateCooldownUntilRef.current > Date.now()
             ? Promise.resolve<DesktopState | null>(null)
             : fetchDesktopState()
                 .then((value) => {
@@ -819,11 +831,11 @@ export default function JarvisHudDashboard({
           fetchManagedAgents({ compact: true }),
           listConnectors(),
           fetchSpeechProfile(),
-          fetchWorkspaceSummary(),
-          fetchWorkspaceRepos(),
-          fetchWorkspaceChecks(),
+          needsWorkspaceStatusPolling ? fetchWorkspaceSummary() : Promise.resolve<WorkspaceSummary | null>(null),
+          needsWorkspaceStatusPolling ? fetchWorkspaceRepos() : Promise.resolve<WorkspaceRepoCatalog | null>(null),
+          needsWorkspaceStatusPolling ? fetchWorkspaceChecks() : Promise.resolve<WorkspaceChecks | null>(null),
           desktopStateRequest,
-          fetchAgentArchitectureStatus(),
+          needsArchitectureTaskPolling ? fetchAgentArchitectureStatus() : Promise.resolve<AgentArchitectureStatus | null>(null),
         ]);
 
         if (cancelled) return;
@@ -835,16 +847,13 @@ export default function JarvisHudDashboard({
         if (inbox.status === 'fulfilled') setInboxSummary(inbox.value);
         if (tasks.status === 'fulfilled') setTaskSummary(tasks.value);
         if (reminderItems.status === 'fulfilled') setReminders(reminderItems.value);
-        if (workspace.status === 'fulfilled') setWorkspaceSummary(workspace.value);
-        if (repos.status === 'fulfilled') setWorkspaceRepos(repos.value);
-        if (checks.status === 'fulfilled') setWorkspaceChecks(checks.value);
+        if (workspace.status === 'fulfilled' && workspace.value) setWorkspaceSummary(workspace.value);
+        if (repos.status === 'fulfilled' && repos.value) setWorkspaceRepos(repos.value);
+        if (checks.status === 'fulfilled' && checks.value) setWorkspaceChecks(checks.value);
         if (desktop.status === 'fulfilled' && desktop.value) setDesktopState(desktop.value);
-        if (architecture.status === 'fulfilled') setAgentArchitecture(architecture.value);
+        if (architecture.status === 'fulfilled' && architecture.value) setAgentArchitecture(architecture.value);
         if (profile.status === 'fulfilled') setSpeechProfile(profile.value);
-        if (agents.status === 'fulfilled') {
-          setManagedAgents(agents.value);
-          setRunningAgentCount(agents.value.filter((agent) => agent.status === 'running').length);
-        }
+        if (agents.status === 'fulfilled') setManagedAgents(agents.value);
 
         if (connectors.status === 'fulfilled') {
           const connected = connectors.value.filter((connector) => connector.connected);
@@ -878,16 +887,21 @@ export default function JarvisHudDashboard({
       window.clearInterval(fastInterval);
       window.clearInterval(slowInterval);
     };
-  }, [setManagedAgents]);
+  }, [needsArchitectureTaskPolling, needsWorkspaceStatusPolling, setManagedAgents]);
 
   useEffect(() => {
     let cancelled = false;
+    if (!needsArchitectureTaskPolling) {
+      setAgentRoleTasks({});
+      return;
+    }
     const managedRoles = (agentArchitecture?.roles || []).filter((role) => role.kind === 'managed' && role.agent_id);
     if (!managedRoles.length) {
       setAgentRoleTasks({});
       return;
     }
     const loadRoleTasks = async () => {
+      if (typeof document !== 'undefined' && document.hidden) return;
       const pairs = await Promise.all(
         managedRoles.map(async (role) => {
           try {
@@ -907,7 +921,7 @@ export default function JarvisHudDashboard({
       cancelled = true;
       window.clearInterval(timer);
     };
-  }, [agentArchitecture]);
+  }, [agentArchitecture, needsArchitectureTaskPolling]);
 
   useEffect(() => {
     return () => {
@@ -1534,6 +1548,7 @@ export default function JarvisHudDashboard({
     };
   }, [documentAnalysis, documentAnalysisTitle]);
   const salesBrief = useMemo(() => {
+    if (!needsExtendedIntelBriefs) return null;
     const accounts = Object.values(durableOperatorMemory?.sales_accounts || {});
     const leads = Object.values(durableOperatorMemory?.sales_leads || {});
     const deals = Object.values(durableOperatorMemory?.sales_deals || {});
@@ -1724,9 +1739,10 @@ export default function JarvisHudDashboard({
         ? `${primaryDeal.title || primaryDeal.key} / stage: ${primaryDeal.stage || 'unknown'} / next: ${primaryDeal.next_step || 'missing'}`
         : 'No primary deal selected yet.',
     };
-  }, [durableOperatorMemory?.sales_accounts, durableOperatorMemory?.sales_deals, durableOperatorMemory?.sales_leads, inboxSummary]);
+  }, [durableOperatorMemory?.sales_accounts, durableOperatorMemory?.sales_deals, durableOperatorMemory?.sales_leads, inboxSummary, needsExtendedIntelBriefs]);
 
   const customerBrief = useMemo(() => {
+    if (!needsExtendedIntelBriefs) return null;
     const accounts = Object.values(durableOperatorMemory?.customer_accounts || {});
     const interactions = Object.values(durableOperatorMemory?.customer_interactions || {});
     if (!accounts.length && !interactions.length) return null;
@@ -1831,9 +1847,10 @@ export default function JarvisHudDashboard({
         `Thanks for your patience. We are reviewing this carefully and I want to make sure we give you the clearest next step possible.\n\n` +
         `Best,\nJARVIS`,
     };
-  }, [durableOperatorMemory?.customer_accounts, durableOperatorMemory?.customer_interactions, inboxSummary]);
+  }, [durableOperatorMemory?.customer_accounts, durableOperatorMemory?.customer_interactions, inboxSummary, needsExtendedIntelBriefs]);
 
   const shopifyBrief = useMemo(() => {
+    if (!needsExtendedIntelBriefs) return null;
     if (!shopifySummary) return null;
     const topCustomer = shopifySummary.top_customers[0] || null;
     const topProduct = shopifySummary.top_products[0] || null;
@@ -1907,9 +1924,10 @@ export default function JarvisHudDashboard({
       ],
       focusItems,
     } satisfies ShopifyIntelBrief;
-  }, [shopifySummary]);
+  }, [needsExtendedIntelBriefs, shopifySummary]);
 
   const commercialBrief = useMemo(() => {
+    if (!needsExtendedIntelBriefs) return null;
     if (!salesBrief && !customerBrief && !shopifyBrief) return null;
     const salesAccounts = Object.values(durableOperatorMemory?.sales_accounts || {});
     const salesDeals = Object.values(durableOperatorMemory?.sales_deals || {});
@@ -2041,9 +2059,10 @@ export default function JarvisHudDashboard({
       focusItems,
       timeline: commercialTimeline,
     } satisfies CommercialOpsBrief;
-  }, [customerBrief, durableOperatorMemory?.customer_accounts, durableOperatorMemory?.customer_interactions, durableOperatorMemory?.sales_accounts, durableOperatorMemory?.sales_deals, salesBrief, shopifyBrief, shopifySummary]);
+  }, [customerBrief, durableOperatorMemory?.customer_accounts, durableOperatorMemory?.customer_interactions, durableOperatorMemory?.sales_accounts, durableOperatorMemory?.sales_deals, needsExtendedIntelBriefs, salesBrief, shopifyBrief, shopifySummary]);
 
   const fivemCodingBrief = useMemo(() => {
+    if (!needsExtendedIntelBriefs) return null;
     const changedFiles = workspaceSummary?.changed_files || [];
     const projectMemories = Object.values(durableOperatorMemory?.projects || {});
     const likelyProjectMemory = projectMemories[0] || null;
@@ -2208,7 +2227,7 @@ export default function JarvisHudDashboard({
       canonConsoleChecks: frameworkCanon.consoleChecks,
       focusItems,
     } satisfies FivemCodingBrief;
-  }, [durableOperatorMemory?.projects, editorFilePath, workspaceSummary?.changed_files, workspaceSummary?.root]);
+  }, [durableOperatorMemory?.projects, editorFilePath, needsExtendedIntelBriefs, workspaceSummary?.changed_files, workspaceSummary?.root]);
   const recentLearningExperiences = useMemo(() => durableOperatorMemory?.learning_experiences || [], [durableOperatorMemory?.learning_experiences]);
   const codingLearningContext = useMemo(() => {
     const baseItems = rankedLearningItems.length ? rankedLearningItems : recentLearningExperiences;
@@ -2594,6 +2613,7 @@ export default function JarvisHudDashboard({
       };
     }, [durableOperatorMemory?.missions]);
   const autonomyMissions = useMemo(() => {
+    if (!needsExtendedIntelBriefs) return [];
       const missions: Array<MissionMatrixItem & { action: () => void }> = [];
       const savedDesignBrief = durableOperatorMemory?.design_briefs?.[0] || null;
 
@@ -3053,6 +3073,7 @@ export default function JarvisHudDashboard({
     documentAnalysis,
     documentBrief,
     durableOperatorMemory?.design_briefs,
+    needsExtendedIntelBriefs,
     screenSnapshot?.label,
       selfImproveBrief,
       selfImprovePatchPlan,
@@ -3116,6 +3137,7 @@ export default function JarvisHudDashboard({
     }
   }
   const commanderQueue = useMemo(() => {
+    if (!needsExtendedIntelBriefs) return [];
     const items: Array<{
       id: string;
       priority: number;
@@ -3606,7 +3628,7 @@ export default function JarvisHudDashboard({
     }
 
     return items.sort((left, right) => right.priority - left.priority).slice(0, 6);
-  }, [activeAutomationAlerts, agentArchitecture?.handoff?.brief, agentArchitecture?.handoff?.executor?.task_id, agentArchitecture?.handoff?.planner?.task_id, agentArchitecture?.roles, agentRoleTasks.executor, agentRoleTasks.planner, architectureTaskOutcome, autonomyMissions, commercialBrief, customerBrief, documentBrief, editorFilePath, gitCommitMessage, inboxFocusQueue, latestCodeResult?.file_path, latestValidationFailure, latestValidationSuccess, nextCodingTask, nextReviewQueueItem, pendingAction, pendingCodeEdit, pendingWorkbench, prepQueue, salesBrief, screenSnapshot?.capturedAt, screenSnapshot?.label, selfImproveBrief, selfImprovePatchPlan, selfImproveRuns, shopifyBrief, shopifySummary?.store, visionAnalysis?.content, visionQuery?.answer, visionQuery?.question, visionSignals, visionSuggestedActions?.actions, visionTextExtraction?.content, visionUiPlan?.summary, visionUiPlan?.target_label, visionUiTargets?.targets, visionUiVerify?.summary, visionUiVerify?.risk_level, visionUiVerify?.target_label, visualBrief]);
+  }, [activeAutomationAlerts, agentArchitecture?.handoff?.brief, agentArchitecture?.handoff?.executor?.task_id, agentArchitecture?.handoff?.planner?.task_id, agentArchitecture?.roles, agentRoleTasks.executor, agentRoleTasks.planner, architectureTaskOutcome, autonomyMissions, commercialBrief, customerBrief, documentBrief, editorFilePath, gitCommitMessage, inboxFocusQueue, latestCodeResult?.file_path, latestValidationFailure, latestValidationSuccess, needsExtendedIntelBriefs, nextCodingTask, nextReviewQueueItem, pendingAction, pendingCodeEdit, pendingWorkbench, prepQueue, salesBrief, screenSnapshot?.capturedAt, screenSnapshot?.label, selfImproveBrief, selfImprovePatchPlan, selfImproveRuns, shopifyBrief, shopifySummary?.store, visionAnalysis?.content, visionQuery?.answer, visionQuery?.question, visionSignals, visionSuggestedActions?.actions, visionTextExtraction?.content, visionUiPlan?.summary, visionUiPlan?.target_label, visionUiTargets?.targets, visionUiVerify?.summary, visionUiVerify?.risk_level, visionUiVerify?.target_label, visualBrief]);
   const connectorCapabilities = useMemo(() => {
     const ids = new Set(connectedConnectorIds);
     const gmailConnected = ids.has('gmail') || ids.has('gmail_imap');
@@ -3891,6 +3913,7 @@ export default function JarvisHudDashboard({
     visualBrief,
   ]);
   const designBrief = useMemo(() => {
+    if (!needsExtendedIntelBriefs) return null;
     const sections: string[] = [];
     const summaryParts: string[] = [];
     const archetype = getDesignArchetype(operatorProfile.hudArchetype);
@@ -3968,6 +3991,7 @@ export default function JarvisHudDashboard({
     currentProjectMemory,
     designScorecard,
     documentBrief,
+    needsExtendedIntelBriefs,
     operatorProfile.designGoals,
     operatorProfile.designInfluences,
     operatorProfile.referenceInterfaces,
@@ -5448,6 +5472,7 @@ export default function JarvisHudDashboard({
   }
 
   async function prepareCommitCommand(message: string, notice = 'Commit command prepared. Stage it when ready.') {
+    setWorkbenchBusy('prepare');
     try {
       const prepared = await prepareWorkspaceCommit(message);
       if (!gitCommitMessage.trim()) {
@@ -5458,6 +5483,8 @@ export default function JarvisHudDashboard({
       setWorkbenchNotice(notice);
     } catch (error) {
       setWorkbenchNotice(error instanceof Error ? error.message : 'Unable to prepare commit command.');
+    } finally {
+      setWorkbenchBusy(null);
     }
   }
 
@@ -5466,6 +5493,7 @@ export default function JarvisHudDashboard({
   }
 
   async function loadPreparedStageCommand() {
+    setWorkbenchBusy('prepare');
     try {
       const prepared = await prepareWorkspaceStage();
       setWorkbenchDirectory(prepared.root);
@@ -5473,10 +5501,13 @@ export default function JarvisHudDashboard({
       setWorkbenchNotice('Stage command prepared for the active workspace repo.');
     } catch (error) {
       setWorkbenchNotice(error instanceof Error ? error.message : 'Unable to prepare stage command.');
+    } finally {
+      setWorkbenchBusy(null);
     }
   }
 
   async function loadPreparedPushCommand() {
+    setWorkbenchBusy('prepare');
     try {
       const prepared = await prepareWorkspacePush();
       setWorkbenchDirectory(prepared.root);
@@ -5484,6 +5515,8 @@ export default function JarvisHudDashboard({
       setWorkbenchNotice('Push command prepared. Stage it when ready.');
     } catch (error) {
       setWorkbenchNotice(error instanceof Error ? error.message : 'Unable to prepare push command.');
+    } finally {
+      setWorkbenchBusy(null);
     }
   }
 
@@ -7448,7 +7481,9 @@ export default function JarvisHudDashboard({
                 </div>
 
                 <div className="mt-4 rounded-[1.15rem] border border-cyan-400/10 bg-black/20 py-2">
-                  <InputArea />
+                  <Suspense fallback={<DashboardSectionFallback label="Loading command input..." />}>
+                    <HudInputArea />
+                  </Suspense>
                 </div>
 
                 <div className="mt-4 rounded-[1.15rem] border border-cyan-400/10 bg-slate-950/55 p-4">
@@ -7782,21 +7817,24 @@ ${item.details}`,
                     />
                     <button
                       onClick={loadPreparedStageCommand}
+                      disabled={workbenchBusy !== null}
                       className="rounded-[0.9rem] border border-cyan-400/12 bg-slate-950/70 px-4 py-3 text-xs uppercase tracking-[0.24em] text-cyan-100 transition hover:bg-cyan-400/[0.08]"
                     >
-                      Prepare Stage
+                      {workbenchBusy === 'prepare' ? 'Preparing' : 'Prepare Stage'}
                     </button>
                     <button
                       onClick={loadPreparedCommitCommand}
+                      disabled={workbenchBusy !== null}
                       className="rounded-[0.9rem] border border-cyan-400/12 bg-slate-950/70 px-4 py-3 text-xs uppercase tracking-[0.24em] text-cyan-100 transition hover:bg-cyan-400/[0.08]"
                     >
-                      Prepare Commit
+                      {workbenchBusy === 'prepare' ? 'Preparing' : 'Prepare Commit'}
                     </button>
                     <button
                       onClick={loadPreparedPushCommand}
+                      disabled={workbenchBusy !== null}
                       className="rounded-[0.9rem] border border-cyan-400/12 bg-slate-950/70 px-4 py-3 text-xs uppercase tracking-[0.24em] text-cyan-100 transition hover:bg-cyan-400/[0.08]"
                     >
-                      Prepare Push
+                      {workbenchBusy === 'prepare' ? 'Preparing' : 'Prepare Push'}
                     </button>
                   </div>
                   <div className="mt-3 grid gap-2 sm:grid-cols-2">

@@ -114,7 +114,7 @@ speech-tts-local = [
     "numpy>=1.24",
 ]
 speech-wake = [
-    "openwakeword",
+    "openwakeword; sys_platform != 'linux' or python_version < '3.12'",
     "onnxruntime>=1.16",
     "numpy>=1.24",
 ]

@@ -1038,6 +1038,9 @@ export interface DesktopState {
   }>;
   active_desktop_target: string;
   active_browser_target: string;
+  available?: boolean;
+  degraded?: boolean;
+  reason?: string;
 }
 
 export interface AgentArchitectureRole {
@@ -1654,9 +1657,9 @@ export async function fetchWorkspaceChecks(): Promise<WorkspaceChecks> {
 }
 
 export async function prepareWorkspaceStage(): Promise<{ root: string; command: string }> {
-  const res = await fetch(`${getBase()}/v1/workspace/git/prepare-stage`, {
+  const res = await fetchWithTimeout(`${getBase()}/v1/workspace/git/prepare-stage`, {
     method: 'POST',
-  });
+  }, 7000);
   if (!res.ok) {
     const detail = await res.json().catch(() => ({ detail: res.statusText }));
     throw new Error(detail.detail || `Prepare stage failed: ${res.status}`);
@@ -1665,11 +1668,11 @@ export async function prepareWorkspaceStage(): Promise<{ root: string; command: 
 }
 
 export async function prepareWorkspaceCommit(message: string): Promise<{ root: string; command: string; message: string }> {
-  const res = await fetch(`${getBase()}/v1/workspace/git/prepare-commit`, {
+  const res = await fetchWithTimeout(`${getBase()}/v1/workspace/git/prepare-commit`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ message }),
-  });
+  }, 7000);
   if (!res.ok) {
     const detail = await res.json().catch(() => ({ detail: res.statusText }));
     throw new Error(detail.detail || `Prepare commit failed: ${res.status}`);
@@ -1678,7 +1681,7 @@ export async function prepareWorkspaceCommit(message: string): Promise<{ root: s
 }
 
 export async function prepareWorkspacePush(): Promise<{ root: string; command: string }> {
-  const res = await fetch(`${getBase()}/v1/workspace/git/prepare-push`);
+  const res = await fetchWithTimeout(`${getBase()}/v1/workspace/git/prepare-push`, {}, 7000);
   if (!res.ok) {
     const detail = await res.json().catch(() => ({ detail: res.statusText }));
     throw new Error(detail.detail || `Prepare push failed: ${res.status}`);

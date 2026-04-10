@@ -13,7 +13,6 @@ import {
   fetchSavings,
   fetchSpeechHealth,
   fetchVoiceLoopStatus,
-  initApiBase,
   submitSavings,
   isTauri,
   startVoiceLoop,
@@ -51,6 +50,9 @@ export default function App() {
   const [startupDetail, setStartupDetail] = useState('');
   const [startupDismissed, setStartupDismissed] = useState(false);
   const handleSetupReady = useCallback(() => setSetupDone(true), []);
+  const modelsBootstrapRanRef = useRef(false);
+  const serverInfoBootstrapRanRef = useRef(false);
+  const optInBootstrapRanRef = useRef(false);
   const startupRanRef = useRef(false);
   const setModels = useAppStore((s) => s.setModels);
   const setModelsLoading = useAppStore((s) => s.setModelsLoading);
@@ -72,10 +74,6 @@ export default function App() {
   const markOptInModalSeen = useAppStore((s) => s.markOptInModalSeen);
 
   useEffect(() => {
-    void initApiBase();
-  }, []);
-
-  useEffect(() => {
     const root = document.documentElement;
     root.classList.remove('dark', 'light');
     if (settings.theme === 'dark') root.classList.add('dark');
@@ -83,13 +81,19 @@ export default function App() {
   }, [settings.theme]);
 
   useEffect(() => {
+    if (modelsBootstrapRanRef.current) return;
+    modelsBootstrapRanRef.current = true;
+    let cancelled = false;
+
     fetchModels()
       .then(async (m) => {
+        if (cancelled) return;
         setModels(m);
         if (selectedModel || m.length === 0) return;
 
         try {
           const recommended = await fetchRecommendedModel();
+          if (cancelled) return;
           const recommendedId = recommended.model;
           if (recommendedId && m.some((model) => model.id === recommendedId)) {
             setSelectedModel(recommendedId);
@@ -101,18 +105,41 @@ export default function App() {
 
         setSelectedModel(m[0].id);
       })
-      .catch(() => setModels([]))
-      .finally(() => setModelsLoading(false));
+      .catch(() => {
+        if (!cancelled) setModels([]);
+      })
+      .finally(() => {
+        if (!cancelled) setModelsLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
   }, [selectedModel, setModels, setModelsLoading, setSelectedModel]);
 
   useEffect(() => {
-    fetchServerInfo().then(setServerInfo).catch(() => {});
+    if (serverInfoBootstrapRanRef.current) return;
+    serverInfoBootstrapRanRef.current = true;
+    let cancelled = false;
+
+    fetchServerInfo()
+      .then((info) => {
+        if (!cancelled) setServerInfo(info);
+      })
+      .catch(() => {});
+
+    return () => {
+      cancelled = true;
+    };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
+    let cancelled = false;
+
     const refresh = () =>
       fetchSavings()
         .then((data) => {
+          if (cancelled) return;
           setSavings(data);
           if (optInEnabled && optInDisplayName && data) {
             const claudeEntry = data.per_provider.find(
@@ -143,10 +170,15 @@ export default function App() {
         .catch(() => {});
     refresh();
     const interval = setInterval(refresh, 30000);
-    return () => clearInterval(interval);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
   }, [optInEnabled, optInDisplayName, optInAnonId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
+    if (optInBootstrapRanRef.current) return;
+    optInBootstrapRanRef.current = true;
     if (!optInModalSeen) {
       setOptInModalOpen(true);
       markOptInModalSeen();

@@ -1,6 +1,5 @@
-import { useEffect, useState } from 'react';
+import { useMemo } from 'react';
 import { useAppStore } from '../lib/store';
-import { fetchManagedAgents } from '../lib/api';
 
 type PulseState = 'idle' | 'inferencing' | 'agent-active' | 'hidden';
 
@@ -21,19 +20,11 @@ const PULSE_CONFIG: Record<Exclude<PulseState, 'hidden'>, { color: string; anima
 
 export function SystemPulse({ apiReachable }: { apiReachable: boolean | null }) {
   const isStreaming = useAppStore((s) => s.streamState.isStreaming);
-  const [hasRunningAgent, setHasRunningAgent] = useState(false);
-
-  // Poll for running agents every 30s
-  useEffect(() => {
-    if (apiReachable === false) return;
-    const check = () =>
-      fetchManagedAgents({ compact: true })
-        .then((agents) => setHasRunningAgent(agents.some((a) => a.status === 'running')))
-        .catch(() => {});
-    check();
-    const interval = setInterval(check, 30000);
-    return () => clearInterval(interval);
-  }, [apiReachable]);
+  const managedAgents = useAppStore((s) => s.managedAgents);
+  const hasRunningAgent = useMemo(
+    () => managedAgents.some((agent) => agent.status === 'running'),
+    [managedAgents],
+  );
 
   if (apiReachable === false) return null;
 

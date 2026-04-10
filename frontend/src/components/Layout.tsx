@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect } from 'react';
 import { Outlet, useNavigate } from 'react-router';
 import { Sidebar } from './Sidebar/Sidebar';
 import { SystemPulse } from './SystemPulse';
@@ -7,16 +7,15 @@ import { checkHealth } from '../lib/api';
 
 export function Layout() {
   const sidebarOpen = useAppStore((s) => s.sidebarOpen);
-  const [apiReachable, setApiReachable] = useState<boolean | null>(null);
+  const apiReachable = useAppStore((s) => s.apiReachable);
+  const setApiReachable = useAppStore((s) => s.setApiReachable);
 
   useEffect(() => {
-    const check = () => checkHealth().then(setApiReachable);
+    const check = () => checkHealth().then(setApiReachable).catch(() => setApiReachable(false));
     check();
-    const interval = setInterval(check, 30000);
     const onFocus = () => check();
     window.addEventListener('focus', onFocus);
     return () => {
-      clearInterval(interval);
       window.removeEventListener('focus', onFocus);
     };
   }, []);

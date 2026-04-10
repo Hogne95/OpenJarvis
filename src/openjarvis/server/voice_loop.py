@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import threading
 import time
 import uuid
@@ -35,6 +36,7 @@ class VoiceLoopSnapshot:
     wake_required: bool = True
     wake_detected: bool = False
     last_wake_phrase: str = ""
+    last_wake_at: float | None = None
     last_transcript: str = ""
     last_command: str = ""
     command_count: int = 0
@@ -52,6 +54,8 @@ class VoiceLoopSnapshot:
 
 class VoiceLoopManager:
     """Tracks the active HUD voice session and evaluates continuous audio chunks."""
+
+    _FOLLOWUP_WINDOW_SECONDS = 15.0
 
     def __init__(
         self,
@@ -111,25 +115,34 @@ class VoiceLoopManager:
             return False, ""
 
         for phrase in wake_phrases:
-            candidate = " ".join(phrase.lower().strip().split())
-            if not candidate:
+            pattern = VoiceLoopManager._wake_phrase_pattern(phrase)
+            if pattern is None:
                 continue
-            if normalized == candidate:
-                return True, phrase.strip()
-            if stripped.lower().startswith(f"{candidate} "):
+            if pattern.match(stripped):
                 return True, phrase.strip()
         return False, text.strip()
 
     @staticmethod
+    def _wake_phrase_pattern(wake_phrase: str):
+        words = [re.escape(part) for part in wake_phrase.strip().split() if part]
+        if not words:
+            return None
+        phrase_pattern = r"\s+".join(words)
+        return re.compile(
+            rf"^\s*{phrase_pattern}(?:[\s,.:;!?-]+(?P<rest>.*)|\s*)$",
+            flags=re.IGNORECASE,
+        )
+
+    @staticmethod
     def _remove_wake_prefix(text: str, wake_phrase: str) -> str:
-        normalized_phrase = " ".join(wake_phrase.lower().split())
         original = text.strip()
-        original_lower = " ".join(original.lower().split())
-        if original_lower == normalized_phrase:
-            return ""
-        if original.lower().startswith(f"{normalized_phrase} "):
-            return original[len(wake_phrase.strip()) :].strip()
-        return original
+        pattern = VoiceLoopManager._wake_phrase_pattern(wake_phrase)
+        if pattern is None:
+            return original
+        match = pattern.match(original)
+        if not match:
+            return original
+        return (match.group("rest") or "").strip()
 
     def _transcribe_with_hints(
         self,
@@ -172,6 +185,21 @@ class VoiceLoopManager:
         self._snapshot.backend_available = self._backend_available(backend)
         self._snapshot.backend_name = getattr(backend, "backend_id", None)
 
+    def _wake_session_active(self) -> bool:
+        if not self._snapshot.wake_required:
+            return True
+        if not self._snapshot.wake_detected:
+            return False
+        last_wake_at = self._snapshot.last_wake_at
+        if last_wake_at is None:
+            return False
+        if (time.time() - last_wake_at) <= self._FOLLOWUP_WINDOW_SECONDS:
+            return True
+        self._snapshot.wake_detected = False
+        self._snapshot.last_wake_phrase = ""
+        self._snapshot.last_wake_at = None
+        return False
+
     def status(self) -> dict:
         with self._lock:
             self._refresh_backend()
@@ -201,6 +229,7 @@ class VoiceLoopManager:
             self._snapshot.last_transcript = ""
             self._snapshot.last_command = ""
             self._snapshot.last_wake_phrase = ""
+            self._snapshot.last_wake_at = None
             self._snapshot.command_count = 0
             self._snapshot.interrupted = False
             self._snapshot.last_vad_rms = 0.0
@@ -222,6 +251,7 @@ class VoiceLoopManager:
             self._snapshot.last_error = ""
             self._snapshot.wake_detected = False
             self._snapshot.last_wake_phrase = ""
+            self._snapshot.last_wake_at = None
             self._snapshot.interrupted = False
             self._snapshot.last_vad_rms = 0.0
             self._snapshot.last_wake_score = None
@@ -272,6 +302,7 @@ class VoiceLoopManager:
 
             if not self._snapshot.wake_required:
                 self._snapshot.wake_detected = True
+                self._snapshot.last_wake_at = time.time()
                 self._snapshot.last_command = cleaned
                 self._snapshot.command_count += 1
                 return {
@@ -290,6 +321,7 @@ class VoiceLoopManager:
             if wake_matched:
                 self._snapshot.wake_detected = True
                 self._snapshot.last_wake_phrase = matched_phrase
+                self._snapshot.last_wake_at = time.time()
                 command = self._remove_wake_prefix(cleaned, matched_phrase)
                 if command:
                     self._snapshot.last_command = command
@@ -309,9 +341,10 @@ class VoiceLoopManager:
                     "message": "Wake phrase detected. Awaiting command.",
                 }
 
-            if self._snapshot.wake_detected:
+            if self._wake_session_active():
                 self._snapshot.last_command = cleaned
                 self._snapshot.command_count += 1
+                self._snapshot.last_wake_at = time.time()
                 return {
                     **self._snapshot.to_dict(),
                     "accepted": True,
@@ -325,8 +358,8 @@ class VoiceLoopManager:
                 "accepted": False,
                 "wake_matched": False,
                 "command": "",
-                    "message": "Wake phrase required",
-                }
+                "message": "Wake phrase required",
+            }
 
     def process_audio(
         self,
@@ -361,6 +394,7 @@ class VoiceLoopManager:
                 if analysis.wake_detected:
                     self._snapshot.wake_detected = True
                     self._snapshot.last_wake_phrase = "wake-model"
+                    self._snapshot.last_wake_at = time.time()
             if not analysis.speech_detected:
                 with self._lock:
                     self._snapshot.phase = "listening"
@@ -409,6 +443,7 @@ class VoiceLoopManager:
             with self._lock:
                 self._snapshot.wake_detected = True
                 self._snapshot.last_wake_phrase = "wake-model"
+                self._snapshot.last_wake_at = time.time()
                 self._snapshot.last_command = result.text.strip()
                 self._snapshot.command_count += 1
                 payload = {

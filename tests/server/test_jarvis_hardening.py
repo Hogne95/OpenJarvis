@@ -13,6 +13,7 @@ from openjarvis.core.config import load_config
 from openjarvis.server.action_center import ActionCenterManager
 from openjarvis.server.agent_manager_routes import _make_lightweight_system
 from openjarvis.server.app import create_app
+import openjarvis.server.connectors_router as connectors_router
 from openjarvis.server import jarvis_intent
 from openjarvis.server.voice_loop import VoiceLoopManager
 from openjarvis.server.repo_registry import RepoRegistry
@@ -90,6 +91,78 @@ def test_voice_loop_process_audio_recovers_to_listening_after_transcribe_error()
     assert result["active"] is True
     assert result["message"] == "transcribe failed"
     assert result["last_error"] == "transcribe failed"
+
+
+def test_voice_loop_strips_wake_phrase_with_extra_spacing_and_punctuation():
+    manager = VoiceLoopManager(speech_backend=None)
+    manager._snapshot.wake_required = True
+    manager._snapshot.wake_phrases = ["hey jarvis"]
+
+    result = manager.ingest_transcript("  Hey   Jarvis,   open mail please  ")
+
+    assert result["accepted"] is True
+    assert result["wake_matched"] is True
+    assert result["command"] == "open mail please"
+    assert result["message"] == "Wake phrase detected. Command accepted."
+
+
+def test_voice_loop_follow_up_window_expires_without_new_wake_phrase():
+    manager = VoiceLoopManager(speech_backend=None)
+    manager._snapshot.wake_required = True
+    manager._snapshot.wake_detected = True
+    manager._snapshot.last_wake_phrase = "hey jarvis"
+    manager._snapshot.last_wake_at = 10.0
+
+    with mock.patch("openjarvis.server.voice_loop.time.time", return_value=40.0):
+        result = manager.ingest_transcript("open mail")
+
+    assert result["accepted"] is False
+    assert result["wake_matched"] is False
+    assert result["command"] == ""
+    assert result["message"] == "Wake phrase required"
+    assert manager._snapshot.wake_detected is False
+    assert manager._snapshot.last_wake_at is None
+
+
+def test_voice_loop_follow_up_window_accepts_recent_follow_up():
+    manager = VoiceLoopManager(speech_backend=None)
+    manager._snapshot.wake_required = True
+    manager._snapshot.wake_detected = True
+    manager._snapshot.last_wake_phrase = "hey jarvis"
+    manager._snapshot.last_wake_at = 10.0
+
+    with mock.patch("openjarvis.server.voice_loop.time.time", return_value=20.0):
+        result = manager.ingest_transcript("open mail")
+
+    assert result["accepted"] is True
+    assert result["wake_matched"] is True
+    assert result["command"] == "open mail"
+    assert result["message"] == "Follow-up command accepted."
+    assert manager._snapshot.last_wake_at == 20.0
+
+
+def test_desktop_state_snapshot_degrades_without_cached_success_when_probe_fails():
+    jarvis_intent._DESKTOP_STATE_LAST_SUCCESS = None
+    jarvis_intent._DESKTOP_STATE_LAST_SUCCESS_AT = 0.0
+    jarvis_intent._DESKTOP_STATE_LAST_ERROR = ""
+    jarvis_intent._DESKTOP_STATE_COOLDOWN_UNTIL = 0.0
+
+    result = SimpleNamespace(returncode=1, stdout="", stderr="powershell unavailable")
+    operator_memory = SimpleNamespace(
+        active_desktop_target=lambda: "mail",
+        active_browser_target=lambda: "chrome",
+    )
+
+    with mock.patch("openjarvis.server.jarvis_intent._run_powershell", return_value=result):
+        snapshot = jarvis_intent._desktop_state_snapshot(operator_memory)
+
+    assert snapshot["available"] is False
+    assert snapshot["degraded"] is True
+    assert snapshot["reason"] == "powershell unavailable"
+    assert snapshot["active_window_title"] == ""
+    assert snapshot["open_windows"] == []
+    assert snapshot["active_desktop_target"] == "mail"
+    assert snapshot["active_browser_target"] == "chrome"
 
 
 def test_managed_agents_compact_listing_returns_small_payload(tmp_path: Path):
@@ -299,3 +372,100 @@ def test_repo_registry_summary_rejects_missing_root(tmp_path: Path):
         assert "does not exist" in str(exc)
     else:
         raise AssertionError("Expected summary() to reject a missing repository path")
+
+
+def test_connectors_chunk_counts_reuse_recent_cache():
+    app = create_app(_make_engine(), "test-model")
+
+    class _StubConnector:
+        display_name = "Stub"
+        auth_type = "token"
+
+        def is_connected(self):
+            return True
+
+    class _StubRegistry:
+        @staticmethod
+        def keys():
+            return ["stub"]
+
+        @staticmethod
+        def get(_connector_id):
+            return _StubConnector
+
+    fake_conn = MagicMock()
+    fake_conn.execute.return_value.fetchone.return_value = (7,)
+    fake_store = SimpleNamespace(_conn=fake_conn)
+
+    with mock.patch.object(connectors_router, "_instances", {}), mock.patch.object(
+        connectors_router,
+        "_chunk_count_cache",
+        {},
+    ), mock.patch.object(
+        connectors_router,
+        "_chunk_count_cache_at",
+        {},
+    ), mock.patch.object(
+        connectors_router,
+        "_ensure_connectors_registered",
+        return_value=None,
+    ), mock.patch(
+        "openjarvis.core.registry.ConnectorRegistry",
+        _StubRegistry,
+    ), mock.patch(
+        "openjarvis.connectors.store.KnowledgeStore",
+        return_value=fake_store,
+    ), mock.patch(
+        "openjarvis.server.connectors_router.time.monotonic",
+        side_effect=[10.0, 10.5],
+    ):
+        app.include_router(connectors_router.create_connectors_router())
+        client = TestClient(app)
+        first = client.get("/v1/connectors")
+        second = client.get("/v1/connectors")
+
+    assert first.status_code == 200
+    assert second.status_code == 200
+    assert first.json()["connectors"][0]["chunks"] == 7
+    assert second.json()["connectors"][0]["chunks"] == 7
+    assert fake_conn.execute.call_count == 1
+
+
+def test_connector_sync_status_degrades_when_probe_raises():
+    app = create_app(_make_engine(), "test-model")
+
+    class _BrokenSyncConnector:
+        display_name = "Stub"
+        auth_type = "token"
+
+        def is_connected(self):
+            return True
+
+        def sync_status(self):
+            raise RuntimeError("sync probe failed")
+
+    class _StubRegistry:
+        @staticmethod
+        def contains(connector_id):
+            return connector_id == "stub"
+
+        @staticmethod
+        def get(_connector_id):
+            return _BrokenSyncConnector
+
+    with mock.patch.object(connectors_router, "_instances", {}), mock.patch.object(
+        connectors_router,
+        "_ensure_connectors_registered",
+        return_value=None,
+    ), mock.patch(
+        "openjarvis.core.registry.ConnectorRegistry",
+        _StubRegistry,
+    ):
+        app.include_router(connectors_router.create_connectors_router())
+        client = TestClient(app)
+        response = client.get("/v1/connectors/stub/sync")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["state"] == "idle"
+    assert data["error"] == "sync probe failed"

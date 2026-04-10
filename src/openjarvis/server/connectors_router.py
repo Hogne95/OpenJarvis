@@ -3,12 +3,16 @@
 from __future__ import annotations
 
 import logging
+import time
 from typing import Any, Dict, Optional
 
 logger = logging.getLogger(__name__)
 
 # Module-level cache of connector instances (keyed by connector_id).
 _instances: Dict[str, Any] = {}
+_chunk_count_cache: Dict[str, int] = {}
+_chunk_count_cache_at: Dict[str, float] = {}
+_CHUNK_COUNT_CACHE_TTL_SECONDS = 15.0
 
 
 def _ensure_connectors_registered() -> None:
@@ -102,8 +106,24 @@ def create_connectors_router():
             _instances[connector_id] = cls()
         return _instances[connector_id]
 
-    def _connector_summary(connector_id: str, instance: Any) -> Dict[str, Any]:
-        """Build the dict returned by GET /connectors."""
+    def _invalidate_connector_cache(connector_id: str) -> None:
+        _instances.pop(connector_id, None)
+        _chunk_count_cache.pop(connector_id, None)
+        _chunk_count_cache_at.pop(connector_id, None)
+
+    def _chunk_count(connector_id: str) -> int:
+        """Return cached knowledge chunk counts for connector summaries.
+
+        Root cause: the HUD polls connector status frequently, and opening the
+        knowledge store for every connector on every poll adds avoidable I/O.
+        A short cache keeps the status card responsive without hiding real sync
+        progress for long.
+        """
+        now = time.monotonic()
+        cached_at = _chunk_count_cache_at.get(connector_id, 0.0)
+        if now - cached_at < _CHUNK_COUNT_CACHE_TTL_SECONDS:
+            return _chunk_count_cache.get(connector_id, 0)
+
         chunks = 0
         try:
             from openjarvis.connectors.store import KnowledgeStore
@@ -115,14 +135,20 @@ def create_connectors_router():
             ).fetchone()
             chunks = rows[0] if rows else 0
         except Exception:
-            pass
+            chunks = _chunk_count_cache.get(connector_id, 0)
 
+        _chunk_count_cache[connector_id] = chunks
+        _chunk_count_cache_at[connector_id] = now
+        return chunks
+
+    def _connector_summary(connector_id: str, instance: Any) -> Dict[str, Any]:
+        """Build the dict returned by GET /connectors."""
         return {
             "connector_id": connector_id,
             "display_name": getattr(instance, "display_name", connector_id),
             "auth_type": getattr(instance, "auth_type", "unknown"),
             "connected": instance.is_connected(),
-            "chunks": chunks,
+            "chunks": _chunk_count(connector_id),
         }
 
     # ------------------------------------------------------------------
@@ -268,6 +294,8 @@ def create_connectors_router():
                         "Auto-ingested %s after connect",
                         connector_id,
                     )
+                    _chunk_count_cache.pop(connector_id, None)
+                    _chunk_count_cache_at.pop(connector_id, None)
                 except Exception as exc:
                     logger.warning(
                         "Auto-ingest failed for %s: %s",
@@ -297,6 +325,10 @@ def create_connectors_router():
             instance.disconnect()
         except Exception as exc:
             raise HTTPException(status_code=500, detail=str(exc))
+        _sync_state.pop(connector_id, None)
+        _sync_threads.pop(connector_id, None)
+        _chunk_count_cache.pop(connector_id, None)
+        _chunk_count_cache_at.pop(connector_id, None)
         return {
             "connector_id": connector_id,
             "connected": False,
@@ -427,7 +459,7 @@ def create_connectors_router():
             save_tokens(str(_CONNECTORS_DIR / filename), payload)
 
         # Clear cached instance so it picks up new credentials
-        _instances.pop(connector_id, None)
+        _invalidate_connector_cache(connector_id)
 
         _style = "font-family:system-ui;text-align:center;padding:60px"
         return HTMLResponse(
@@ -485,6 +517,8 @@ def create_connectors_router():
                 engine.sync(inst)
                 logger.info("Sync completed for %s", connector_id)
                 _sync_state[connector_id] = {"state": "complete", "error": None}
+                _chunk_count_cache.pop(connector_id, None)
+                _chunk_count_cache_at.pop(connector_id, None)
             except Exception as exc:
                 error_msg = str(exc)
                 if "401" in error_msg or "Unauthorized" in error_msg:
@@ -520,7 +554,22 @@ def create_connectors_router():
         try:
             status = instance.sync_status()
         except Exception as exc:
-            raise HTTPException(status_code=500, detail=str(exc))
+            logger.warning(
+                "Connector sync status probe failed for %s: %s",
+                connector_id,
+                exc,
+            )
+            status = type(
+                "ConnectorSyncStatusFallback",
+                (),
+                {
+                    "state": "idle",
+                    "items_synced": 0,
+                    "items_total": 0,
+                    "last_sync": None,
+                    "error": str(exc),
+                },
+            )()
 
         # Override with router-level sync state (background thread tracking)
         bg = _sync_state.get(connector_id, {})
