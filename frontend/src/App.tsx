@@ -6,18 +6,23 @@ import { SetupScreen } from './components/SetupScreen';
 import { Toaster } from './components/ui/sonner';
 import { useAppStore } from './lib/store';
 import {
+  bootstrapAuth,
   fetchModels,
+  fetchAuthStatus,
   fetchRecommendedModel,
   fetchRuntimeReadiness,
   fetchServerInfo,
   fetchSavings,
   fetchSpeechHealth,
   fetchVoiceLoopStatus,
+  loginAuth,
   submitSavings,
   isTauri,
   startVoiceLoop,
 } from './lib/api';
 import { OptInModal } from './components/OptInModal';
+import { BootstrapPage } from './pages/BootstrapPage';
+import { LoginPage } from './pages/LoginPage';
 
 const ChatPage = lazy(() => import('./pages/ChatPage').then((module) => ({ default: module.ChatPage })));
 const DashboardPage = lazy(() => import('./pages/DashboardPage').then((module) => ({ default: module.DashboardPage })));
@@ -72,6 +77,10 @@ export default function App() {
   const optInModalOpen = useAppStore((s) => s.optInModalOpen);
   const setOptInModalOpen = useAppStore((s) => s.setOptInModalOpen);
   const markOptInModalSeen = useAppStore((s) => s.markOptInModalSeen);
+  const authStatusResolved = useAppStore((s) => s.authStatusResolved);
+  const authBootstrapRequired = useAppStore((s) => s.authBootstrapRequired);
+  const currentUser = useAppStore((s) => s.currentUser);
+  const setAuthStatus = useAppStore((s) => s.setAuthStatus);
 
   useEffect(() => {
     const root = document.documentElement;
@@ -81,6 +90,43 @@ export default function App() {
   }, [settings.theme]);
 
   useEffect(() => {
+    modelsBootstrapRanRef.current = false;
+    serverInfoBootstrapRanRef.current = false;
+    startupRanRef.current = false;
+    setStartupPhase('idle');
+    setStartupDetail('');
+    setStartupDismissed(false);
+  }, [currentUser?.id]);
+
+  useEffect(() => {
+    if (!setupDone || authStatusResolved) return;
+    let cancelled = false;
+
+    fetchAuthStatus()
+      .then((status) => {
+        if (cancelled) return;
+        setAuthStatus({
+          resolved: true,
+          bootstrapRequired: status.bootstrap_required,
+          currentUser: status.user,
+        });
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setAuthStatus({
+          resolved: true,
+          bootstrapRequired: false,
+          currentUser: null,
+        });
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [authStatusResolved, setAuthStatus, setupDone]);
+
+  useEffect(() => {
+    if (!currentUser) return;
     if (modelsBootstrapRanRef.current) return;
     modelsBootstrapRanRef.current = true;
     let cancelled = false;
@@ -115,9 +161,10 @@ export default function App() {
     return () => {
       cancelled = true;
     };
-  }, [selectedModel, setModels, setModelsLoading, setSelectedModel]);
+  }, [currentUser, selectedModel, setModels, setModelsLoading, setSelectedModel]);
 
   useEffect(() => {
+    if (!currentUser) return;
     if (serverInfoBootstrapRanRef.current) return;
     serverInfoBootstrapRanRef.current = true;
     let cancelled = false;
@@ -131,9 +178,10 @@ export default function App() {
     return () => {
       cancelled = true;
     };
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [currentUser]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
+    if (!currentUser) return;
     let cancelled = false;
 
     const refresh = () =>
@@ -174,7 +222,7 @@ export default function App() {
       cancelled = true;
       clearInterval(interval);
     };
-  }, [optInEnabled, optInDisplayName, optInAnonId]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [currentUser, optInEnabled, optInDisplayName, optInAnonId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     if (optInBootstrapRanRef.current) return;
@@ -186,7 +234,7 @@ export default function App() {
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
-    if (!setupDone || startupRanRef.current) return;
+    if (!setupDone || !currentUser || startupRanRef.current) return;
     startupRanRef.current = true;
     let cancelled = false;
 
@@ -240,7 +288,7 @@ export default function App() {
     return () => {
       cancelled = true;
     };
-  }, [setupDone, settings.speechEnabled, updateSettings]);
+  }, [currentUser, setupDone, settings.speechEnabled, updateSettings]);
 
   const toggleSystemPanel = useAppStore((s) => s.toggleSystemPanel);
 
@@ -261,6 +309,40 @@ export default function App() {
 
   if (!setupDone) {
     return <SetupScreen onReady={handleSetupReady} />;
+  }
+
+  if (!authStatusResolved) {
+    return <RouteFallback />;
+  }
+
+  if (authBootstrapRequired) {
+    return (
+      <BootstrapPage
+        onSubmit={async (payload) => {
+          const result = await bootstrapAuth(payload);
+          setAuthStatus({
+            resolved: true,
+            bootstrapRequired: false,
+            currentUser: result.user,
+          });
+        }}
+      />
+    );
+  }
+
+  if (!currentUser) {
+    return (
+      <LoginPage
+        onSubmit={async (payload) => {
+          const result = await loginAuth(payload);
+          setAuthStatus({
+            resolved: true,
+            bootstrapRequired: false,
+            currentUser: result.user,
+          });
+        }}
+      />
+    );
   }
 
   return (

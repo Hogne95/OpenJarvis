@@ -13,6 +13,7 @@ from fastapi.staticfiles import StaticFiles
 
 from openjarvis.server.api_routes import include_all_routes
 from openjarvis.server.action_center import ActionCenterManager
+from openjarvis.server.auth_routes import create_auth_router
 from openjarvis.server.coding_workspace import CodingWorkspaceManager
 from openjarvis.server.comparison import comparison_router
 from openjarvis.server.connectors_router import create_connectors_router
@@ -23,6 +24,7 @@ from openjarvis.server.operator_memory import OperatorMemory
 from openjarvis.server.repo_registry import RepoRegistry
 from openjarvis.server.routes import router
 from openjarvis.server.upload_router import router as upload_router
+from openjarvis.server.user_store import UserStore
 from openjarvis.server.voice_loop import VoiceLoopManager
 from openjarvis.server.workbench import WorkbenchManager
 
@@ -49,6 +51,12 @@ def _shutdown_background_services(app: FastAPI) -> None:
             scheduler_store.close()
         except Exception:
             logger.debug("Task scheduler store close skipped", exc_info=True)
+    user_store = getattr(app.state, "user_store", None)
+    if user_store is not None:
+        try:
+            user_store.close()
+        except Exception:
+            logger.debug("User store close skipped", exc_info=True)
 
 
 def _bootstrap_core_agent_architecture(app: FastAPI) -> None:
@@ -309,6 +317,7 @@ def create_app(
     app.state.task_scheduler = task_scheduler
     app.state.task_scheduler_store = task_scheduler_store
     app.state.session_start = time.time()
+    app.state.user_store = UserStore()
 
     # Wire up trace store if traces are enabled
     app.state.trace_store = None
@@ -327,6 +336,7 @@ def create_app(
         pass  # traces are optional; don't block server startup
 
     app.include_router(router)
+    app.include_router(create_auth_router())
     app.include_router(dashboard_router)
     app.include_router(comparison_router)
     app.include_router(create_connectors_router(), prefix="/v1")

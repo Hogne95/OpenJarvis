@@ -65,6 +65,13 @@ export async function fetchWithTimeout(input: string, init: RequestInit = {}, ti
   }
 }
 
+async function authFetch(path: string, init: RequestInit = {}, timeoutMs = 8000): Promise<Response> {
+  return fetchWithTimeout(`${getBase()}${path}`, {
+    ...init,
+    credentials: 'include',
+  }, timeoutMs);
+}
+
 async function tauriInvoke<T>(command: string, args: Record<string, unknown> = {}): Promise<T> {
   const { invoke } = await import('@tauri-apps/api/core');
   const apiUrl = getBase();
@@ -117,6 +124,23 @@ export interface RuntimeReadiness {
     };
     guide_path: string;
   };
+}
+
+export interface AuthUser {
+  id: string;
+  username: string;
+  display_name: string;
+  role: string;
+  status: string;
+  created_at: string | null;
+  updated_at: string | null;
+  last_login_at: string | null;
+}
+
+export interface AuthStatus {
+  bootstrap_required: boolean;
+  authenticated: boolean;
+  user: AuthUser | null;
 }
 
 export interface ShopifySummary {
@@ -273,6 +297,60 @@ export async function checkHealth(): Promise<boolean> {
   } catch {
     return false;
   }
+}
+
+export async function fetchAuthStatus(): Promise<AuthStatus> {
+  const res = await authFetch('/v1/auth/status');
+  if (!res.ok) throw new Error(`Failed to fetch auth status: ${res.status}`);
+  return res.json();
+}
+
+export async function bootstrapAuth(payload: {
+  username: string;
+  password: string;
+  display_name?: string;
+}): Promise<{ user: AuthUser }> {
+  const res = await authFetch('/v1/auth/bootstrap', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) {
+    const data = await res.json().catch(() => null);
+    throw new Error(data?.detail || `Bootstrap failed: ${res.status}`);
+  }
+  return res.json();
+}
+
+export async function loginAuth(payload: {
+  username: string;
+  password: string;
+}): Promise<{ user: AuthUser }> {
+  const res = await authFetch('/v1/auth/login', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) {
+    const data = await res.json().catch(() => null);
+    throw new Error(data?.detail || `Login failed: ${res.status}`);
+  }
+  return res.json();
+}
+
+export async function logoutAuth(): Promise<void> {
+  const res = await authFetch('/v1/auth/logout', { method: 'POST' });
+  if (!res.ok) throw new Error(`Logout failed: ${res.status}`);
+}
+
+export async function fetchCurrentUser(): Promise<AuthUser> {
+  const res = await authFetch('/v1/auth/me');
+  if (!res.ok) {
+    const data = await res.json().catch(() => null);
+    throw new Error(data?.detail || `Failed to fetch current user: ${res.status}`);
+  }
+  const data = await res.json();
+  return data.user;
 }
 
 export async function getDesktopRuntimeStatus(): Promise<DesktopRuntimeStatus | null> {

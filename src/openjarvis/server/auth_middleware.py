@@ -15,6 +15,7 @@ logger = logging.getLogger(__name__)
 # Paths exempt from API key auth
 _EXEMPT_PREFIXES = (
     "/health",
+    "/v1/auth/",
     "/webhooks/",
     "/docs",
     "/openapi.json",

@@ -11,7 +11,7 @@ import type {
   ToolCallInfo,
   TokenUsage,
 } from '../types';
-import type { ManagedAgent } from './api';
+import type { AuthUser, ManagedAgent } from './api';
 
 export interface AgentEvent {
   type: string;
@@ -31,6 +31,24 @@ const OPTIN_EMAIL_KEY = 'openjarvis-email';
 const OPTIN_ANONID_KEY = 'openjarvis-anon-id';
 const OPTIN_SEEN_KEY = 'openjarvis-optin-seen';
 
+let _authStorageScope = 'guest';
+
+function scopedStorageKey(base: string): string {
+  return `${base}:${_authStorageScope}`;
+}
+
+function readScopedStorage(base: string): string | null {
+  return localStorage.getItem(scopedStorageKey(base));
+}
+
+function writeScopedStorage(base: string, value: string): void {
+  localStorage.setItem(scopedStorageKey(base), value);
+}
+
+function setAuthStorageScope(scope: string | null | undefined): void {
+  _authStorageScope = (scope || 'guest').trim() || 'guest';
+}
+
 interface ConversationStore {
   version: 1;
   conversations: Record<string, Conversation>;
@@ -43,7 +61,7 @@ function generateId(): string {
 
 function loadConversations(): ConversationStore {
   try {
-    const raw = localStorage.getItem(CONVERSATIONS_KEY);
+    const raw = readScopedStorage(CONVERSATIONS_KEY) ?? localStorage.getItem(CONVERSATIONS_KEY);
     if (!raw) return { version: 1, conversations: {}, activeId: null };
     const parsed = JSON.parse(raw);
     if (parsed.version === 1) return parsed;
@@ -54,7 +72,7 @@ function loadConversations(): ConversationStore {
 }
 
 function saveConversations(store: ConversationStore): void {
-  localStorage.setItem(CONVERSATIONS_KEY, JSON.stringify(store));
+  writeScopedStorage(CONVERSATIONS_KEY, JSON.stringify(store));
 }
 
 export type ThemeMode = 'light' | 'dark' | 'system';
@@ -137,7 +155,7 @@ function loadOperatorProfile(): OperatorProfile {
     inboxFocusCount: 3,
   };
   try {
-    const raw = localStorage.getItem(PROFILE_KEY);
+    const raw = readScopedStorage(PROFILE_KEY);
     if (!raw) return defaults;
     return { ...defaults, ...JSON.parse(raw) };
   } catch {
@@ -146,7 +164,7 @@ function loadOperatorProfile(): OperatorProfile {
 }
 
 function saveOperatorProfile(profile: OperatorProfile): void {
-  localStorage.setItem(PROFILE_KEY, JSON.stringify(profile));
+  writeScopedStorage(PROFILE_KEY, JSON.stringify(profile));
 }
 
 function loadOperatorSignals(): OperatorSignals {
@@ -158,7 +176,7 @@ function loadOperatorSignals(): OperatorSignals {
     topContacts: [],
   };
   try {
-    const raw = localStorage.getItem(OPERATOR_SIGNALS_KEY);
+    const raw = readScopedStorage(OPERATOR_SIGNALS_KEY);
     if (!raw) return defaults;
     return { ...defaults, ...JSON.parse(raw) };
   } catch {
@@ -167,7 +185,7 @@ function loadOperatorSignals(): OperatorSignals {
 }
 
 function saveOperatorSignals(signals: OperatorSignals): void {
-  localStorage.setItem(OPERATOR_SIGNALS_KEY, JSON.stringify(signals));
+  writeScopedStorage(OPERATOR_SIGNALS_KEY, JSON.stringify(signals));
 }
 
 // ── Store ─────────────────────────────────────────────────────────────
@@ -194,6 +212,9 @@ interface AppState {
   serverInfo: ServerInfo | null;
   savings: SavingsData | null;
   apiReachable: boolean | null;
+  authStatusResolved: boolean;
+  authBootstrapRequired: boolean;
+  currentUser: AuthUser | null;
 
   // Settings
   settings: Settings;
@@ -242,6 +263,12 @@ interface AppState {
   setServerInfo: (info: ServerInfo | null) => void;
   setSavings: (data: SavingsData | null) => void;
   setApiReachable: (reachable: boolean | null) => void;
+  setAuthStatus: (payload: {
+    resolved: boolean;
+    bootstrapRequired: boolean;
+    currentUser: AuthUser | null;
+  }) => void;
+  clearCurrentUser: () => void;
 
   // Actions: settings
   updateSettings: (partial: Partial<Settings>) => void;
@@ -309,6 +336,9 @@ export const useAppStore = create<AppState>((set, get) => {
     serverInfo: null,
     savings: null,
     apiReachable: null,
+    authStatusResolved: false,
+    authBootstrapRequired: false,
+    currentUser: null,
 
     settings: loadSettings(),
     operatorProfile: loadOperatorProfile(),
@@ -462,6 +492,61 @@ export const useAppStore = create<AppState>((set, get) => {
     setServerInfo: (info: ServerInfo | null) => set({ serverInfo: info }),
     setSavings: (data: SavingsData | null) => set({ savings: data }),
     setApiReachable: (apiReachable: boolean | null) => set({ apiReachable }),
+    setAuthStatus: ({ resolved, bootstrapRequired, currentUser }) =>
+      {
+        setAuthStorageScope(currentUser?.id);
+        const scopedConversations = loadConversations();
+        const scopedConversationList = Object.values(scopedConversations.conversations).sort(
+          (a, b) => b.updatedAt - a.updatedAt,
+        );
+        const activeConversation =
+          scopedConversations.activeId && scopedConversations.conversations[scopedConversations.activeId]
+            ? scopedConversations.conversations[scopedConversations.activeId]
+            : null;
+        set({
+          authStatusResolved: resolved,
+          authBootstrapRequired: bootstrapRequired,
+          currentUser,
+          conversations: scopedConversationList,
+          activeId: scopedConversations.activeId,
+          messages: activeConversation ? activeConversation.messages : [],
+          operatorProfile: loadOperatorProfile(),
+          operatorSignals: loadOperatorSignals(),
+          optInEnabled: readScopedStorage(OPTIN_KEY) === 'true',
+          optInDisplayName: readScopedStorage(OPTIN_NAME_KEY) || '',
+          optInEmail: readScopedStorage(OPTIN_EMAIL_KEY) || '',
+          optInAnonId: readScopedStorage(OPTIN_ANONID_KEY) || crypto.randomUUID(),
+          optInModalSeen: readScopedStorage(OPTIN_SEEN_KEY) === 'true',
+        });
+      },
+    clearCurrentUser: () =>
+      {
+        setAuthStorageScope(null);
+        const guestConversations = loadConversations();
+        const guestConversationList = Object.values(guestConversations.conversations).sort(
+          (a, b) => b.updatedAt - a.updatedAt,
+        );
+        const activeConversation =
+          guestConversations.activeId && guestConversations.conversations[guestConversations.activeId]
+            ? guestConversations.conversations[guestConversations.activeId]
+            : null;
+        set({
+          currentUser: null,
+          authStatusResolved: true,
+          authBootstrapRequired: false,
+          conversations: guestConversationList,
+          activeId: guestConversations.activeId,
+          messages: activeConversation ? activeConversation.messages : [],
+          operatorProfile: loadOperatorProfile(),
+          operatorSignals: loadOperatorSignals(),
+          optInEnabled: readScopedStorage(OPTIN_KEY) === 'true',
+          optInDisplayName: readScopedStorage(OPTIN_NAME_KEY) || '',
+          optInEmail: readScopedStorage(OPTIN_EMAIL_KEY) || '',
+          optInAnonId: readScopedStorage(OPTIN_ANONID_KEY) || crypto.randomUUID(),
+          optInModalSeen: readScopedStorage(OPTIN_SEEN_KEY) === 'true',
+          optInModalOpen: false,
+        });
+      },
 
     // ── Settings ───────────────────────────────────────────────────
 
@@ -538,15 +623,15 @@ export const useAppStore = create<AppState>((set, get) => {
 
     setOptIn: (enabled: boolean, displayName: string, email: string) => {
       const anonId = get().optInAnonId;
-      localStorage.setItem(OPTIN_KEY, String(enabled));
-      localStorage.setItem(OPTIN_NAME_KEY, displayName);
-      localStorage.setItem(OPTIN_EMAIL_KEY, email);
-      localStorage.setItem(OPTIN_ANONID_KEY, anonId);
+      writeScopedStorage(OPTIN_KEY, String(enabled));
+      writeScopedStorage(OPTIN_NAME_KEY, displayName);
+      writeScopedStorage(OPTIN_EMAIL_KEY, email);
+      writeScopedStorage(OPTIN_ANONID_KEY, anonId);
       set({ optInEnabled: enabled, optInDisplayName: displayName, optInEmail: email });
     },
     setOptInModalOpen: (open: boolean) => set({ optInModalOpen: open }),
     markOptInModalSeen: () => {
-      localStorage.setItem(OPTIN_SEEN_KEY, 'true');
+      writeScopedStorage(OPTIN_SEEN_KEY, 'true');
       set({ optInModalSeen: true });
     },
   };
