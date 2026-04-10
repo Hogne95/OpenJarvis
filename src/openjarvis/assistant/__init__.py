@@ -8,6 +8,7 @@ from .identity import (
     format_memory_context,
     get_default_identity,
 )
+from .memory_layers import AssistantMemoryLayers, format_layered_memory_context
 from .tool_chaining import (
     ToolChainResult,
     ToolChainStep,
@@ -16,11 +17,13 @@ from .tool_chaining import (
 )
 
 __all__ = [
+    "AssistantMemoryLayers",
     "DecisionAnalysis",
     "JarvisIdentityProfile",
     "analyze_decision_request",
     "build_assistant_system_context",
     "format_memory_context",
+    "format_layered_memory_context",
     "get_default_identity",
     "ToolChainResult",
     "ToolChainStep",

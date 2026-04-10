@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from openjarvis.core.config import DEFAULT_CONFIG_DIR
+from openjarvis.assistant.memory_layers import AssistantMemoryLayers
 
 
 @dataclass(slots=True)
@@ -872,9 +873,14 @@ class OperatorMemory:
     def relevant_context(self, query: str, *, limit: int = 6) -> list[dict[str, Any]]:
         """Return a compact set of high-signal memories relevant to *query*."""
 
+        return self.layered_relevant_context(query, limit=limit).flattened(limit=limit)
+
+    def layered_relevant_context(self, query: str, *, limit: int = 6) -> AssistantMemoryLayers:
+        """Return relevant memory separated into identity, session-focus, and long-term layers."""
+
         cleaned = " ".join((query or "").strip().lower().split())
         if not cleaned:
-            return []
+            return AssistantMemoryLayers()
 
         tokens = {token for token in cleaned.replace("/", " ").replace("-", " ").split() if len(token) >= 3}
 
@@ -888,7 +894,9 @@ class OperatorMemory:
                     score += 1.0
             return score
 
-        candidates: list[tuple[float, dict[str, Any]]] = []
+        identity_candidates: list[tuple[float, dict[str, Any]]] = []
+        session_candidates: list[tuple[float, dict[str, Any]]] = []
+        long_term_candidates: list[tuple[float, dict[str, Any]]] = []
 
         profile_score = 0.0
         if any(word in cleaned for word in ("reply", "tone", "draft", "email", "message", "write")):
@@ -897,6 +905,8 @@ class OperatorMemory:
             profile_score += 1.25
         if any(word in cleaned for word in ("desktop", "browser", "window", "tab", "app")):
             profile_score += 1.0
+        if any(word in cleaned for word in ("should", "recommend", "plan", "focus", "next")):
+            profile_score += 0.7
         profile_score += _score_text(
             self._profile.reply_tone,
             " ".join(self._profile.priority_contacts),
@@ -906,7 +916,7 @@ class OperatorMemory:
             self._profile.active_browser_target,
         ) * 0.4
         if profile_score > 0:
-            candidates.append(
+            identity_candidates.append(
                 (
                     profile_score,
                     {
@@ -923,7 +933,7 @@ class OperatorMemory:
 
         for memory in self.search_explicit_memories(cleaned, limit=limit):
             score = 1.4 + _score_text(memory.get("content", ""), " ".join(memory.get("tags", []))) * 0.5
-            candidates.append(
+            long_term_candidates.append(
                 (
                     score,
                     {
@@ -941,7 +951,7 @@ class OperatorMemory:
             score += min(max(item.confidence, 0.0), 1.0)
             if item.use_count > 1:
                 score += 0.4
-            candidates.append(
+            long_term_candidates.append(
                 (
                     score,
                     {
@@ -959,7 +969,7 @@ class OperatorMemory:
             if score <= 0 and not any(word in cleaned for word in ("next", "priority", "unfinished", "stuck", "pending", "plan")):
                 continue
             score += 0.9
-            candidates.append(
+            session_candidates.append(
                 (
                     score,
                     {
@@ -974,7 +984,7 @@ class OperatorMemory:
             score = _score_text(project.key, project.title, project.focus, project.status, project.next_step, project.notes)
             if score <= 0:
                 continue
-            candidates.append(
+            session_candidates.append(
                 (
                     score + 0.6,
                     {
@@ -989,7 +999,7 @@ class OperatorMemory:
             score = _score_text(relationship.contact, relationship.name, relationship.relationship, relationship.notes, relationship.importance)
             if score <= 0:
                 continue
-            candidates.append(
+            long_term_candidates.append(
                 (
                     score + 0.5,
                     {
@@ -1000,17 +1010,29 @@ class OperatorMemory:
                 )
             )
 
-        seen: set[tuple[str, str]] = set()
-        ranked: list[dict[str, Any]] = []
-        for _score, item in sorted(candidates, key=lambda pair: pair[0], reverse=True):
-            key = (str(item.get("label", "")), str(item.get("detail", "")))
-            if key in seen:
-                continue
-            seen.add(key)
-            ranked.append(item)
-            if len(ranked) >= max(1, limit):
-                break
-        return ranked
+        def _rank(items: list[tuple[float, dict[str, Any]]], *, item_limit: int) -> list[dict[str, Any]]:
+            seen: set[tuple[str, str]] = set()
+            ranked: list[dict[str, Any]] = []
+            for _score, item in sorted(items, key=lambda pair: pair[0], reverse=True):
+                key = (str(item.get("label", "")), str(item.get("detail", "")))
+                if key in seen:
+                    continue
+                seen.add(key)
+                ranked.append(item)
+                if len(ranked) >= max(1, item_limit):
+                    break
+            return ranked
+
+        layer_limit = max(1, limit)
+        identity = _rank(identity_candidates, item_limit=min(2, layer_limit))
+        session_focus = _rank(session_candidates, item_limit=min(3, layer_limit))
+        remaining = max(1, layer_limit - len(identity) - len(session_focus))
+        long_term = _rank(long_term_candidates, item_limit=remaining)
+        return AssistantMemoryLayers(
+            identity=identity,
+            session_focus=session_focus,
+            long_term=long_term,
+        )
 
     def delete_explicit_memory(self, query: str) -> dict[str, Any]:
         cleaned = query.strip().lower()

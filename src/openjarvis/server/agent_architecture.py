@@ -60,6 +60,58 @@ def _voice_awareness(app_state: Any) -> dict[str, Any]:
     }
 
 
+def _operating_mode(
+    *,
+    voice: dict[str, Any],
+    memory: dict[str, Any],
+    connectors: dict[str, Any],
+    workspace: dict[str, Any],
+    recent_failures: list[dict[str, Any]],
+) -> dict[str, Any]:
+    reasons: list[str] = []
+    capabilities: list[str] = []
+
+    if memory.get("available"):
+        capabilities.append("memory")
+    else:
+        reasons.append("memory unavailable")
+
+    if workspace.get("available"):
+        capabilities.append("workspace")
+    else:
+        reasons.append("workspace unavailable")
+
+    if voice.get("available"):
+        capabilities.append("voice")
+    else:
+        reasons.append("voice unavailable")
+
+    if connectors.get("multi_account_ready"):
+        capabilities.append("connectors")
+    else:
+        reasons.append("connectors limited")
+
+    if recent_failures:
+        reasons.append(f"{len(recent_failures)} agent blocker{'s' if len(recent_failures) != 1 else ''}")
+
+    if memory.get("available") and workspace.get("available") and not recent_failures:
+        level = "healthy"
+        detail = "Core operator systems are online."
+    elif memory.get("available") or workspace.get("available"):
+        level = "degraded"
+        detail = "JARVIS is operating with reduced capability."
+    else:
+        level = "minimal"
+        detail = "JARVIS is running in fallback mode only."
+
+    return {
+        "level": level,
+        "detail": detail,
+        "reasons": reasons,
+        "capabilities": capabilities,
+    }
+
+
 def _build_system_awareness(app_state: Any, *, owner_user_id: str | None = None) -> dict[str, Any]:
     agent_manager = getattr(app_state, "agent_manager", None)
     if agent_manager is None:
@@ -117,6 +169,13 @@ def _build_system_awareness(app_state: Any, *, owner_user_id: str | None = None)
             )
 
     connector_accounts = getattr(app_state, "connector_account_store", None)
+    voice = _voice_awareness(app_state)
+    memory = _memory_backend_mode(app_state)
+    connectors = {
+        "multi_account_ready": connector_accounts is not None,
+        "runtime_mode": "per-user accounts" if connector_accounts is not None else "unconfigured",
+    }
+    workspace = _workspace_awareness(app_state)
     return {
         "agents": {
             "total": len(agents),
@@ -125,13 +184,17 @@ def _build_system_awareness(app_state: Any, *, owner_user_id: str | None = None)
             "recent_failures": recent_failures[:5],
             "retrying": retrying_agents[:5],
         },
-        "voice": _voice_awareness(app_state),
-        "memory": _memory_backend_mode(app_state),
-        "connectors": {
-            "multi_account_ready": connector_accounts is not None,
-            "runtime_mode": "per-user accounts" if connector_accounts is not None else "unconfigured",
-        },
-        "workspace": _workspace_awareness(app_state),
+        "voice": voice,
+        "memory": memory,
+        "connectors": connectors,
+        "workspace": workspace,
+        "mode": _operating_mode(
+            voice=voice,
+            memory=memory,
+            connectors=connectors,
+            workspace=workspace,
+            recent_failures=recent_failures[:5],
+        ),
     }
 
 

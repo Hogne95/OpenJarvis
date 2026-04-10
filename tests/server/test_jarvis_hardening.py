@@ -257,6 +257,13 @@ def test_core_agent_architecture_bootstraps_on_startup(tmp_path: Path):
     assert awareness["memory"]["available"] is True
     assert awareness["connectors"]["multi_account_ready"] is True
     assert awareness["agents"]["total"] >= 3
+    assert isinstance(awareness["agents"]["recent_failures"], list)
+    assert awareness["voice"]["phase"] in {"idle", "listening", "speaking", "processing", "offline"}
+    assert awareness["workspace"]["available"] is True
+    assert "runtime_mode" in awareness["connectors"]
+    assert awareness["mode"]["level"] in {"healthy", "degraded", "minimal"}
+    assert isinstance(awareness["mode"]["reasons"], list)
+    assert "workspace" in awareness["mode"]["capabilities"]
 
 
 def test_voice_loop_interrupt_route_returns_listening_snapshot():

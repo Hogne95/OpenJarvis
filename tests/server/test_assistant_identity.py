@@ -2,7 +2,11 @@ from __future__ import annotations
 
 from fastapi.testclient import TestClient
 
-from openjarvis.assistant import analyze_decision_request, build_assistant_system_context
+from openjarvis.assistant import (
+    AssistantMemoryLayers,
+    analyze_decision_request,
+    build_assistant_system_context,
+)
 from openjarvis.server.app import create_app
 from openjarvis.server.operator_memory import OperatorMemory
 
@@ -54,6 +58,22 @@ def test_assistant_system_context_includes_memory_and_structure() -> None:
     assert "Release discipline" in prompt
 
 
+def test_assistant_system_context_formats_layered_memory() -> None:
+    prompt = build_assistant_system_context(
+        query="What should I focus on next?",
+        memory_layers=AssistantMemoryLayers(
+            identity=[{"label": "Known preferences", "detail": "Reply tone: crisp and strategic"}],
+            session_focus=[{"label": "Open mission: Release", "detail": "Verify tests and changelog"}],
+            long_term=[{"label": "Past lesson: Releases", "detail": "Ship smaller batches."}],
+        ),
+    )
+
+    assert "Identity/Profile:" in prompt
+    assert "Session Focus:" in prompt
+    assert "Long-Term Memory:" in prompt
+    assert "Ship smaller batches" in prompt
+
+
 def test_operator_memory_relevant_context_is_selective(tmp_path) -> None:
     memory = OperatorMemory(path=str(tmp_path / "operator_memory.json"))
     memory.update_profile({"reply_tone": "crisp and strategic", "priority_contacts": ["alice@example.com"]})
@@ -87,10 +107,38 @@ def test_operator_memory_relevant_context_is_selective(tmp_path) -> None:
     assert "bob" not in labels.lower()
 
 
+def test_operator_memory_layered_relevant_context_separates_layers(tmp_path) -> None:
+    memory = OperatorMemory(path=str(tmp_path / "operator_memory.json"))
+    memory.update_profile({"reply_tone": "crisp and strategic", "priority_contacts": ["alice@example.com"]})
+    memory.add_learning_experience(
+        label="Release discipline",
+        domain="coding",
+        summary="Rushed releases caused avoidable cleanup.",
+        lesson="Prefer smaller release batches with verification before tagging.",
+        reuse_hint="Use when deciding release timing.",
+        tags=["release", "verification"],
+    )
+    memory.update_mission(
+        "repo-release",
+        {
+            "title": "Prepare repo release",
+            "status": "active",
+            "next_step": "Verify tests and changelog before release.",
+        },
+    )
+
+    layers = memory.layered_relevant_context("What release plan should I use?", limit=5)
+
+    assert any("Known preferences" in item["label"] for item in layers.identity)
+    assert any("Open mission" in item["label"] for item in layers.session_focus)
+    assert any("Past lesson" in item["label"] for item in layers.long_term)
+
+
 def test_chat_route_injects_identity_and_relevant_memory(tmp_path) -> None:
     engine = _EngineStub()
     app = create_app(engine, "test-model")
     memory = OperatorMemory(path=str(tmp_path / "operator_memory.json"))
+    memory.update_profile({"reply_tone": "clear and strategic", "priority_contacts": ["alice@example.com"]})
     memory.add_learning_experience(
         label="Infra tradeoffs",
         domain="ops",
@@ -126,5 +174,7 @@ def test_chat_route_injects_identity_and_relevant_memory(tmp_path) -> None:
     assert first.role.value == "system"
     assert "You are JARVIS" in first.content
     assert "Recommendation" in first.content
+    assert "Identity/Profile:" in first.content
+    assert "Session Focus:" in first.content
     assert "local-first" in first.content.lower()
     assert "hosting review" in first.content.lower()

@@ -644,6 +644,11 @@ class OperatorLearningReuseRequest(BaseModel):
     reused_at: Optional[str] = None
 
 
+class OperatorMemoryContextRequest(BaseModel):
+    query: str
+    limit: Optional[int] = 6
+
+
 class OperatorMissionUpdateRequest(BaseModel):
     id: str
     title: str
@@ -2370,6 +2375,20 @@ async def action_center_reminders(request: Request, limit: int = 8):
 async def operator_memory_status(request: Request):
     manager = get_operator_memory_manager(request)
     return manager.snapshot()
+
+
+@operator_memory_router.post("/context")
+async def operator_memory_context(req: OperatorMemoryContextRequest, request: Request):
+    manager = get_operator_memory_manager(request)
+    limit = max(1, min(int(req.limit or 6), 10))
+    layers = manager.layered_relevant_context(req.query, limit=limit)
+    return {
+        "query": req.query,
+        "identity": layers.identity,
+        "session_focus": layers.session_focus,
+        "long_term": layers.long_term,
+        "flattened": layers.flattened(limit=limit),
+    }
 
 
 @operator_memory_router.post("/profile")

@@ -1,21 +1,25 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { CheckCircle2, Cpu, Loader2, Mic, RefreshCw, Siren, XCircle } from 'lucide-react';
 import { useNavigate } from 'react-router';
 import {
   ensureCoreAgentArchitecture,
   fetchAgentArchitectureStatus,
+  fetchOperatorMemoryContext,
   fetchRuntimeReadiness,
   fetchSpeechHealth,
   fetchVoiceLoopStatus,
   startVoiceLoop,
   stopVoiceLoop,
   type AgentArchitectureStatus,
+  type OperatorMemoryContextResponse,
   type RuntimeReadiness,
   type SpeechHealth,
   type VoiceLoopStatus,
 } from '../lib/api';
+import { buildSystemAwarenessCards, buildSystemAwarenessHeadline } from '../lib/systemAwareness';
 
 type RefreshState = 'idle' | 'refreshing' | 'starting-voice' | 'stopping-voice' | 'ensuring-agents';
+type MemoryLayerCard = [string, OperatorMemoryContextResponse['identity']];
 
 export function SystemPage() {
   const navigate = useNavigate();
@@ -23,8 +27,17 @@ export function SystemPage() {
   const [speech, setSpeech] = useState<SpeechHealth | null>(null);
   const [voiceLoop, setVoiceLoop] = useState<VoiceLoopStatus | null>(null);
   const [architecture, setArchitecture] = useState<AgentArchitectureStatus | null>(null);
+  const [memoryContext, setMemoryContext] = useState<OperatorMemoryContextResponse | null>(null);
   const [busy, setBusy] = useState<RefreshState>('idle');
   const [notice, setNotice] = useState('');
+  const awarenessHeadline = useMemo(
+    () => buildSystemAwarenessHeadline(architecture?.awareness),
+    [architecture?.awareness],
+  );
+  const awarenessCards = useMemo(
+    () => buildSystemAwarenessCards(architecture?.awareness),
+    [architecture?.awareness],
+  );
 
   const refresh = useCallback(async () => {
     setBusy('refreshing');
@@ -40,6 +53,12 @@ export function SystemPage() {
       setSpeech(nextSpeech);
       setVoiceLoop(nextVoice);
       setArchitecture(nextArchitecture);
+      setMemoryContext(
+        await fetchOperatorMemoryContext({
+          query: 'What should JARVIS focus on next for this operator?',
+          limit: 5,
+        }).catch(() => null),
+      );
     } finally {
       setBusy('idle');
     }
@@ -164,6 +183,83 @@ export function SystemPage() {
                 ))}
               </div>
             </div>
+
+            <div className="rounded-[1.5rem] border border-cyan-400/12 bg-slate-950/55 p-5">
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <div className="text-[10px] uppercase tracking-[0.3em] text-cyan-300/55">System Awareness</div>
+                  <div className="mt-2 text-lg uppercase tracking-[0.18em] text-cyan-50/92">{awarenessHeadline.title}</div>
+                </div>
+                <div
+                  className={`rounded-full px-3 py-1 text-[10px] uppercase tracking-[0.22em] ${
+                    awarenessHeadline.tone === 'warn'
+                      ? 'bg-amber-300/10 text-amber-200'
+                      : awarenessHeadline.tone === 'good'
+                        ? 'bg-emerald-300/10 text-emerald-200'
+                        : 'bg-cyan-300/10 text-cyan-200'
+                  }`}
+                >
+                  {awarenessHeadline.tone === 'warn'
+                    ? 'Attention'
+                    : awarenessHeadline.tone === 'good'
+                      ? 'Steady'
+                      : 'Monitoring'}
+                </div>
+              </div>
+              <div className="mt-3 text-sm leading-7 text-slate-200/76">{awarenessHeadline.detail}</div>
+              {architecture?.awareness?.mode?.reasons?.length ? (
+                <div className="mt-3 flex flex-wrap gap-2">
+                  {architecture.awareness.mode.reasons.map((reason) => (
+                    <div
+                      key={reason}
+                      className="rounded-full border border-cyan-400/10 bg-black/20 px-3 py-1 text-[10px] uppercase tracking-[0.22em] text-cyan-200/72"
+                    >
+                      {reason}
+                    </div>
+                  ))}
+                </div>
+              ) : null}
+              <div className="mt-4 grid gap-3 lg:grid-cols-2">
+                {awarenessCards.map((card) => (
+                  <div key={card.id} className="rounded-[1rem] border border-cyan-400/10 bg-black/20 px-4 py-3">
+                    <div className="flex items-center justify-between gap-3">
+                      <div className="text-xs uppercase tracking-[0.22em] text-cyan-300/55">{card.label}</div>
+                      <div
+                        className={`text-[10px] uppercase tracking-[0.22em] ${
+                          card.tone === 'warn'
+                            ? 'text-amber-300/75'
+                            : card.tone === 'good'
+                              ? 'text-emerald-300/75'
+                              : 'text-cyan-300/70'
+                        }`}
+                      >
+                        {card.tone === 'warn' ? 'watch' : card.tone === 'good' ? 'ready' : 'info'}
+                      </div>
+                    </div>
+                    <div className="mt-2 text-sm text-cyan-50/92">{card.value}</div>
+                    <div className="mt-1 text-xs leading-6 text-slate-200/72">{card.detail}</div>
+                  </div>
+                ))}
+                {!awarenessCards.length ? (
+                  <div className="rounded-[1rem] border border-cyan-400/10 bg-black/20 px-4 py-3 text-sm text-slate-200/72 lg:col-span-2">
+                    Waiting for the architecture snapshot so JARVIS can summarize agents, voice, memory, connectors, and workspace state.
+                  </div>
+                ) : null}
+              </div>
+              {architecture?.awareness?.agents?.recent_failures?.length ? (
+                <div className="mt-4 space-y-3">
+                  {architecture.awareness.agents.recent_failures.slice(0, 3).map((item) => (
+                    <div
+                      key={item.id}
+                      className="rounded-[1rem] border border-amber-300/18 bg-amber-400/[0.05] px-4 py-3"
+                    >
+                      <div className="text-[10px] uppercase tracking-[0.22em] text-amber-200/70">{item.label}</div>
+                      <div className="mt-1 text-sm leading-6 text-slate-200/78">{item.detail}</div>
+                    </div>
+                  ))}
+                </div>
+              ) : null}
+            </div>
           </div>
 
           <div className="space-y-4">
@@ -234,6 +330,33 @@ export function SystemPage() {
                         <XCircle className="h-4 w-4 text-amber-300" />
                       )}
                     </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div className="rounded-[1.5rem] border border-cyan-400/12 bg-slate-950/55 p-5">
+              <div className="text-[10px] uppercase tracking-[0.3em] text-cyan-300/55">Memory Layers</div>
+              <div className="mt-3 text-sm leading-7 text-slate-200/76">
+                Root cause of earlier memory ambiguity was that profile facts, active work, and longer-lived lessons were blended together.
+                JARVIS now exposes those layers directly so you can inspect what is guiding recommendations.
+              </div>
+              <div className="mt-4 space-y-3">
+                {([
+                  ['Identity/Profile', memoryContext?.identity || []],
+                  ['Session Focus', memoryContext?.session_focus || []],
+                  ['Long-Term Memory', memoryContext?.long_term || []],
+                ] as MemoryLayerCard[]).map(([label, items]) => (
+                  <div key={label} className="rounded-[1rem] border border-cyan-400/10 bg-black/20 px-4 py-3">
+                    <div className="text-xs uppercase tracking-[0.22em] text-cyan-300/55">{label}</div>
+                    <div className="mt-2 text-sm text-cyan-50/92">
+                      {Array.isArray(items) && items.length
+                        ? `${items.length} item${items.length === 1 ? '' : 's'}`
+                        : 'No relevant items'}
+                    </div>
+                    {Array.isArray(items) && items.length ? (
+                      <div className="mt-2 text-xs leading-6 text-slate-200/72">{String(items[0].detail || '')}</div>
+                    ) : null}
                   </div>
                 ))}
               </div>

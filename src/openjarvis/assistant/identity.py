@@ -5,6 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
+from openjarvis.assistant.memory_layers import AssistantMemoryLayers, format_layered_memory_context
+
 
 @dataclass(slots=True)
 class JarvisIdentityProfile:
@@ -121,6 +123,7 @@ def build_assistant_system_context(
     query: str,
     surface: str = "chat",
     memory_items: list[dict[str, Any]] | None = None,
+    memory_layers: AssistantMemoryLayers | None = None,
     identity: JarvisIdentityProfile | None = None,
 ) -> str:
     """Build a reusable JARVIS system context block."""
@@ -153,7 +156,11 @@ def build_assistant_system_context(
             ]
         )
 
-    memory_block = format_memory_context(memory_items or [])
+    memory_block = ""
+    if memory_layers is not None and memory_layers.has_content():
+        memory_block = format_layered_memory_context(memory_layers)
+    else:
+        memory_block = format_memory_context(memory_items or [])
     if memory_block:
         parts.extend(["", memory_block])
 

@@ -147,6 +147,7 @@ import {
 import { listConnectors } from './lib/connectors-api';
 import { DESIGN_ARCHETYPES, getDesignArchetype } from './lib/designCanon';
 import { useAppStore } from './lib/store';
+import { subscribeAgentEvents } from './lib/agentEvents';
 import {
   buildVoiceReactorMetrics,
   getVoiceEnvironmentLabel,
@@ -722,6 +723,7 @@ export default function JarvisHudDashboard({
   const slowRefreshInFlightRef = useRef(false);
   const desktopStateFailureCountRef = useRef(0);
   const desktopStateCooldownUntilRef = useRef(0);
+  const agentEventRefreshTimerRef = useRef<number | null>(null);
 
   const {
     state: hudSpeechState,
@@ -896,6 +898,47 @@ export default function JarvisHudDashboard({
       window.clearInterval(slowInterval);
     };
   }, [needsArchitectureTaskPolling, needsWorkspaceStatusPolling, setManagedAgents]);
+
+  useEffect(() => {
+    if (typeof document !== 'undefined' && document.hidden) return undefined;
+
+    const scheduleRefresh = () => {
+      if (agentEventRefreshTimerRef.current !== null) {
+        window.clearTimeout(agentEventRefreshTimerRef.current);
+      }
+      agentEventRefreshTimerRef.current = window.setTimeout(() => {
+        void Promise.allSettled([
+          fetchManagedAgents({ compact: true }).then(setManagedAgents),
+          needsArchitectureTaskPolling
+            ? fetchAgentArchitectureStatus().then((value) => {
+                if (value) setAgentArchitecture(value);
+              })
+            : Promise.resolve(),
+        ]).finally(() => {
+          agentEventRefreshTimerRef.current = null;
+        });
+      }, 700);
+    };
+
+    const unsubscribe = subscribeAgentEvents((event) => {
+      if (!event?.type) return;
+      scheduleRefresh();
+    });
+
+    const handleVisibility = () => {
+      if (!document.hidden) scheduleRefresh();
+    };
+    document.addEventListener('visibilitychange', handleVisibility);
+
+    return () => {
+      unsubscribe();
+      document.removeEventListener('visibilitychange', handleVisibility);
+      if (agentEventRefreshTimerRef.current !== null) {
+        window.clearTimeout(agentEventRefreshTimerRef.current);
+        agentEventRefreshTimerRef.current = null;
+      }
+    };
+  }, [needsArchitectureTaskPolling, setManagedAgents]);
 
   useEffect(() => {
     let cancelled = false;

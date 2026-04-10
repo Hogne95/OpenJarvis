@@ -1,4 +1,5 @@
 import type { AgentArchitectureStatus, AgentTask } from '../../lib/api';
+import { buildSystemAwarenessCards, buildSystemAwarenessHeadline } from '../../lib/systemAwareness';
 
 type RoleKey = 'voice' | 'planner' | 'executor' | 'vision' | 'memory';
 
@@ -46,6 +47,8 @@ export function CoreAgentsPanel({
   onPlannerHandoff: () => void;
   onRunRole: (role: string) => void;
 }) {
+  const awarenessCards = buildSystemAwarenessCards(architecture?.awareness);
+  const awarenessHeadline = buildSystemAwarenessHeadline(architecture?.awareness);
   return (
     <div className="rounded-[1.15rem] border border-cyan-400/10 bg-slate-950/50 px-4 py-3">
       <div className="flex items-center justify-between gap-3">
@@ -87,6 +90,67 @@ export function CoreAgentsPanel({
           <div className="mt-2 text-[10px] uppercase tracking-[0.22em] text-cyan-300/45">
             Planner {architecture.handoff.planner?.task_id || 'queued'} / Executor {architecture.handoff.executor?.task_id || 'queued'}
           </div>
+        </div>
+      ) : null}
+      {architecture?.awareness ? (
+        <div className="mt-3 rounded-[0.95rem] border border-cyan-400/10 bg-black/20 px-3 py-3">
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <div className="text-[10px] uppercase tracking-[0.22em] text-cyan-300/55">System Awareness</div>
+              <div className="mt-1 text-sm text-cyan-50/92">{awarenessHeadline.title}</div>
+            </div>
+            <div
+              className={`text-[10px] uppercase tracking-[0.22em] ${
+                awarenessHeadline.tone === 'warn'
+                  ? 'text-amber-300/75'
+                  : awarenessHeadline.tone === 'good'
+                    ? 'text-emerald-300/75'
+                    : 'text-cyan-300/70'
+              }`}
+            >
+              {awarenessHeadline.tone === 'warn'
+                ? 'watch'
+                : awarenessHeadline.tone === 'good'
+                  ? 'steady'
+                  : 'monitor'}
+            </div>
+          </div>
+          <div className="mt-2 text-sm text-slate-200/76">{awarenessHeadline.detail}</div>
+          <div className="mt-3 grid gap-2 md:grid-cols-2">
+            {awarenessCards.map((card) => (
+              <div key={card.id} className="rounded-[0.85rem] border border-cyan-400/10 bg-slate-950/55 px-3 py-3">
+                <div className="flex items-center justify-between gap-3">
+                  <div className="text-[10px] uppercase tracking-[0.22em] text-cyan-300/55">{card.label}</div>
+                  <div
+                    className={`text-[10px] uppercase tracking-[0.22em] ${
+                      card.tone === 'warn'
+                        ? 'text-amber-300/75'
+                        : card.tone === 'good'
+                          ? 'text-emerald-300/75'
+                          : 'text-cyan-300/70'
+                    }`}
+                  >
+                    {card.tone === 'warn' ? 'watch' : card.tone === 'good' ? 'ready' : 'info'}
+                  </div>
+                </div>
+                <div className="mt-1 text-sm text-cyan-50/92">{card.value}</div>
+                <div className="mt-1 text-xs leading-6 text-slate-200/72">{card.detail}</div>
+              </div>
+            ))}
+          </div>
+          {architecture.awareness.agents.recent_failures.length ? (
+            <div className="mt-3 space-y-2">
+              {architecture.awareness.agents.recent_failures.slice(0, 2).map((item) => (
+                <div
+                  key={item.id}
+                  className="rounded-[0.85rem] border border-amber-300/18 bg-amber-400/[0.05] px-3 py-2"
+                >
+                  <div className="text-[10px] uppercase tracking-[0.22em] text-amber-200/70">{item.label}</div>
+                  <div className="mt-1 text-sm text-slate-200/78">{item.detail}</div>
+                </div>
+              ))}
+            </div>
+          ) : null}
         </div>
       ) : null}
       {architectureTaskOutcome ? (

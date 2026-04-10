@@ -64,9 +64,11 @@ def _inject_jarvis_identity_context(
         return
 
     memory_items: list[dict[str, Any]] = []
+    memory_layers = None
     try:
         operator_memory = get_operator_memory_manager(request)
-        memory_items = operator_memory.relevant_context(query_text, limit=5)
+        memory_layers = operator_memory.layered_relevant_context(query_text, limit=5)
+        memory_items = memory_layers.flattened(limit=5)
     except Exception:
         logging.getLogger("openjarvis.server").debug(
             "Operator memory relevance lookup failed",
@@ -77,6 +79,7 @@ def _inject_jarvis_identity_context(
         query=query_text,
         surface="chat",
         memory_items=memory_items,
+        memory_layers=memory_layers,
     )
     if not assistant_system.strip():
         return

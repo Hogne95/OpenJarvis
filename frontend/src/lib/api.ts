@@ -1215,6 +1215,64 @@ export interface AgentArchitectureRole {
   active?: boolean;
 }
 
+export interface AgentAwarenessSummary {
+  id: string;
+  label: string;
+  value: string;
+}
+
+export interface AgentAwarenessIssue {
+  id: string;
+  label: string;
+  detail: string;
+  status: string;
+}
+
+export interface AgentArchitectureAwareness {
+  agents: {
+    total: number;
+    statuses: Record<string, number>;
+    active: Array<{
+      id?: string;
+      name?: string;
+      activity?: string;
+      last_activity_at?: number | null;
+    }>;
+    recent_failures: AgentAwarenessIssue[];
+    retrying: Array<{
+      id?: string;
+      name?: string;
+      stall_retries: number;
+      activity?: string;
+    }>;
+  };
+  voice: {
+    available: boolean;
+    phase: string;
+    active?: boolean;
+  };
+  memory: {
+    available: boolean;
+    mode: string;
+    backend?: string | null;
+  };
+  connectors: {
+    multi_account_ready: boolean;
+    runtime_mode: string;
+  };
+  workspace: {
+    available: boolean;
+    active_root: string;
+    repo_count: number;
+  };
+  mode: {
+    level: 'healthy' | 'degraded' | 'minimal';
+    detail: string;
+    reasons: string[];
+    capabilities: string[];
+  };
+}
+
 export interface AgentArchitectureStatus {
   roles: AgentArchitectureRole[];
   summary: {
@@ -1247,6 +1305,7 @@ export interface AgentArchitectureStatus {
       name?: string;
     };
   };
+  awareness?: AgentArchitectureAwareness;
 }
 
 export interface ReminderItem {
@@ -1869,6 +1928,36 @@ export async function fetchOperatorMemory(): Promise<DurableOperatorMemory> {
   if (!res.ok) {
     const detail = await res.json().catch(() => ({ detail: res.statusText }));
     throw new Error(detail.detail || `Operator memory fetch failed: ${res.status}`);
+  }
+  return res.json();
+}
+
+export interface OperatorMemoryContextItem {
+  label: string;
+  detail: string;
+  reason?: string;
+}
+
+export interface OperatorMemoryContextResponse {
+  query: string;
+  identity: OperatorMemoryContextItem[];
+  session_focus: OperatorMemoryContextItem[];
+  long_term: OperatorMemoryContextItem[];
+  flattened: OperatorMemoryContextItem[];
+}
+
+export async function fetchOperatorMemoryContext(body: {
+  query: string;
+  limit?: number;
+}): Promise<OperatorMemoryContextResponse> {
+  const res = await authFetch('/v1/operator-memory/context', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const detail = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(detail.detail || `Operator memory context failed: ${res.status}`);
   }
   return res.json();
 }

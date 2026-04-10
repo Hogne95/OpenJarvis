@@ -1013,3 +1013,52 @@ def test_connector_account_runtime_denies_cross_user_access(tmp_path: Path):
         f"/v1/connectors/account_fake_secure?account_id={guest_account['id']}"
     )
     assert cross_fetch.status_code == 404
+
+
+def test_operator_memory_context_route_returns_layered_results(tmp_path: Path):
+    client = _make_client(tmp_path)
+    bootstrap = client.post(
+        "/v1/auth/bootstrap",
+        json={
+            "username": "owner",
+            "password": "supersecret123",
+            "display_name": "Owner",
+        },
+    )
+    assert bootstrap.status_code == 200
+
+    client.post(
+        "/v1/operator-memory/profile",
+        json={"reply_tone": "clear and strategic", "priority_contacts": ["alice@example.com"]},
+    )
+    client.post(
+        "/v1/operator-memory/mission",
+        json={
+            "id": "release-review",
+            "title": "Release review",
+            "domain": "coding",
+            "status": "active",
+            "next_step": "Verify tests and changelog before release.",
+        },
+    )
+    client.post(
+        "/v1/operator-memory/learning",
+        json={
+            "label": "Release discipline",
+            "domain": "coding",
+            "summary": "Rushed releases caused avoidable cleanup.",
+            "lesson": "Prefer smaller release batches with verification before tagging.",
+        },
+    )
+
+    response = client.post(
+        "/v1/operator-memory/context",
+        json={"query": "What release plan should I use?", "limit": 5},
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["query"] == "What release plan should I use?"
+    assert data["identity"]
+    assert data["session_focus"]
+    assert data["long_term"]
