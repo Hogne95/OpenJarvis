@@ -24,6 +24,7 @@ _AGENT_EVENTS = {
     EventType.AGENT_STALL_DETECTED,
     EventType.AGENT_MESSAGE_RECEIVED,
     EventType.AGENT_CHECKPOINT_SAVED,
+    EventType.TRACE_STEP,
     EventType.TOOL_CALL_START,
     EventType.TOOL_CALL_END,
     EventType.INFERENCE_START,

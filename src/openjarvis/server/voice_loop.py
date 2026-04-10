@@ -34,6 +34,7 @@ class VoiceLoopSnapshot:
     language_hints: list[str] = field(default_factory=lambda: ["no", "en"])
     wake_phrases: list[str] = field(default_factory=lambda: ["hey jarvis", "ok jarvis"])
     wake_required: bool = True
+    wake_requested_backend: str = "transcript"
     wake_detected: bool = False
     last_wake_phrase: str = ""
     last_wake_at: float | None = None
@@ -44,9 +45,19 @@ class VoiceLoopSnapshot:
     live_vad_enabled: bool = True
     vad_backend: str = "energy"
     wake_backend: str = "transcript"
+    wake_available: bool = True
+    wake_reason: str = ""
     last_vad_rms: float = 0.0
     last_wake_score: float | None = None
     last_error: str = ""
+    recent_transcripts: list[str] = field(default_factory=list)
+    last_transcribe_ms: float = 0.0
+    last_process_ms: float = 0.0
+    last_audio_duration_seconds: float = 0.0
+    interruption_count: int = 0
+    last_interruption_at: float | None = None
+    tts_active: bool = False
+    tts_started_at: float | None = None
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -56,6 +67,7 @@ class VoiceLoopManager:
     """Tracks the active HUD voice session and evaluates continuous audio chunks."""
 
     _FOLLOWUP_WINDOW_SECONDS = 15.0
+    _RECENT_TRANSCRIPTS_LIMIT = 4
 
     def __init__(
         self,
@@ -84,6 +96,7 @@ class VoiceLoopManager:
             language_hints=list(language_hints or ["no", "en"]),
             wake_phrases=list(wake_phrases or ["hey jarvis", "ok jarvis"]),
             wake_required=wake_required,
+            wake_requested_backend=wake_backend,
             live_vad_enabled=live_vad_enabled,
             vad_backend=vad_backend,
             wake_backend=wake_backend,
@@ -184,6 +197,19 @@ class VoiceLoopManager:
         backend = self._speech_backend
         self._snapshot.backend_available = self._backend_available(backend)
         self._snapshot.backend_name = getattr(backend, "backend_id", None)
+        wake_status = self._audio_gate.wake_status()
+        self._snapshot.wake_requested_backend = wake_status.requested_backend
+        self._snapshot.wake_backend = wake_status.active_backend
+        self._snapshot.wake_available = wake_status.available
+        self._snapshot.wake_reason = wake_status.reason
+
+    def _remember_transcript(self, transcript: str) -> None:
+        cleaned = transcript.strip()
+        if not cleaned:
+            return
+        history = list(self._snapshot.recent_transcripts)
+        history.append(cleaned)
+        self._snapshot.recent_transcripts = history[-self._RECENT_TRANSCRIPTS_LIMIT :]
 
     def _wake_session_active(self) -> bool:
         if not self._snapshot.wake_required:
@@ -235,6 +261,14 @@ class VoiceLoopManager:
             self._snapshot.last_vad_rms = 0.0
             self._snapshot.last_wake_score = None
             self._snapshot.wake_detected = not self._snapshot.wake_required
+            self._snapshot.recent_transcripts = []
+            self._snapshot.last_transcribe_ms = 0.0
+            self._snapshot.last_process_ms = 0.0
+            self._snapshot.last_audio_duration_seconds = 0.0
+            self._snapshot.interruption_count = 0
+            self._snapshot.last_interruption_at = None
+            self._snapshot.tts_active = False
+            self._snapshot.tts_started_at = None
             if language_hints:
                 self._snapshot.language_hints = list(language_hints)
             return self._snapshot.to_dict()
@@ -255,6 +289,8 @@ class VoiceLoopManager:
             self._snapshot.interrupted = False
             self._snapshot.last_vad_rms = 0.0
             self._snapshot.last_wake_score = None
+            self._snapshot.tts_active = False
+            self._snapshot.tts_started_at = None
             return self._snapshot.to_dict()
 
     def update(
@@ -273,12 +309,39 @@ class VoiceLoopManager:
                 self._snapshot.active = True
             if transcript is not None:
                 self._snapshot.last_transcript = transcript
+                self._remember_transcript(transcript)
             if error is not None:
                 self._snapshot.last_error = error
                 if error:
                     self._snapshot.phase = "error"
                     self._snapshot.active = False
                     self._snapshot.always_listening = False
+            if phase == "speaking":
+                self._snapshot.tts_active = True
+                if self._snapshot.tts_started_at is None:
+                    self._snapshot.tts_started_at = time.time()
+            else:
+                self._snapshot.tts_active = False
+                self._snapshot.tts_started_at = None
+            self._snapshot.updated_at = time.time()
+            return self._snapshot.to_dict()
+
+    def interrupt(self, *, reason: str = "Interrupted by user") -> dict:
+        with self._lock:
+            was_session_active = bool(self._snapshot.active and self._snapshot.always_listening)
+            self._snapshot.interrupted = True
+            self._snapshot.interruption_count += 1
+            self._snapshot.last_interruption_at = time.time()
+            self._snapshot.last_error = reason
+            self._snapshot.tts_active = False
+            self._snapshot.tts_started_at = None
+            if was_session_active:
+                self._snapshot.phase = "listening"
+                self._snapshot.active = True
+            else:
+                self._snapshot.phase = "idle"
+                self._snapshot.active = False
+                self._snapshot.always_listening = False
             self._snapshot.updated_at = time.time()
             return self._snapshot.to_dict()
 
@@ -287,6 +350,7 @@ class VoiceLoopManager:
             self._refresh_backend()
             cleaned = transcript.strip()
             self._snapshot.last_transcript = cleaned
+            self._remember_transcript(cleaned)
             self._snapshot.last_command = ""
             self._snapshot.interrupted = False
             self._snapshot.updated_at = time.time()
@@ -385,12 +449,14 @@ class VoiceLoopManager:
                 self._snapshot.language_hints = list(language_hints)
 
         try:
+            process_started = time.time()
             analysis = self._audio_gate.analyze(audio_bytes, format=format)
             with self._lock:
                 self._snapshot.vad_backend = analysis.vad_backend
                 self._snapshot.wake_backend = analysis.wake_backend
                 self._snapshot.last_vad_rms = analysis.rms_level
                 self._snapshot.last_wake_score = analysis.wake_score
+                self._snapshot.last_audio_duration_seconds = analysis.duration_seconds
                 if analysis.wake_detected:
                     self._snapshot.wake_detected = True
                     self._snapshot.last_wake_phrase = "wake-model"
@@ -413,15 +479,18 @@ class VoiceLoopManager:
                     "interrupted": False,
                 }
 
+            transcribe_started = time.time()
             result = self._transcribe_with_hints(
                 audio_bytes,
                 format=format,
                 language_hints=language_hints,
             )
+            transcribe_ms = (time.time() - transcribe_started) * 1000.0
         except Exception as exc:
             with self._lock:
                 self._refresh_backend()
                 self._snapshot.last_error = str(exc)
+                self._snapshot.last_process_ms = max(0.0, (time.time() - process_started) * 1000.0)
                 self._snapshot.updated_at = time.time()
                 if self._snapshot.backend_available and self._snapshot.always_listening:
                     self._snapshot.phase = "listening"
@@ -455,8 +524,14 @@ class VoiceLoopManager:
                 }
         interrupted = False
         with self._lock:
+            self._snapshot.last_transcribe_ms = transcribe_ms
+            self._snapshot.last_process_ms = max(0.0, (time.time() - process_started) * 1000.0)
             if payload.get("accepted") and previous_phase == "speaking":
                 interrupted = True
+                self._snapshot.interruption_count += 1
+                self._snapshot.last_interruption_at = time.time()
+                self._snapshot.tts_active = False
+                self._snapshot.tts_started_at = None
             self._snapshot.interrupted = interrupted
             self._snapshot.phase = "listening"
             self._snapshot.updated_at = time.time()

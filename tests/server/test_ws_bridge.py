@@ -60,3 +60,20 @@ class TestWSBridge:
             time.sleep(0.05)  # Let call_soon_threadsafe deliver to queue
             data = ws.receive_json()
             assert data["data"]["agent_id"] == "agent-A"
+
+    def test_websocket_forwards_trace_steps(self, app, event_bus):
+        client = TestClient(app)
+        with client.websocket_connect("/v1/agents/events") as ws:
+            event_bus.publish(
+                EventType.TRACE_STEP,
+                {
+                    "agent_id": "agent-42",
+                    "phase": "verify",
+                    "status": "running",
+                    "detail": "Verifying result...",
+                },
+            )
+            time.sleep(0.05)
+            data = ws.receive_json()
+            assert data["type"] == "trace_step"
+            assert data["data"]["phase"] == "verify"

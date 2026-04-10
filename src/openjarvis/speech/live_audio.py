@@ -5,10 +5,11 @@ from __future__ import annotations
 import io
 import wave
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Any
 
 import numpy as np
+
+from openjarvis.speech.wake import WakeDetectorStatus, build_wake_detector
 
 
 def _decode_wav_bytes(audio_bytes: bytes) -> tuple[np.ndarray, int]:
@@ -76,12 +77,13 @@ class LiveAudioGate:
         self._vad_threshold = vad_threshold
         self._vad_min_speech_ms = vad_min_speech_ms
         self._wake_backend = wake_backend
-        self._wake_model_path = wake_model_path
-        self._wake_threshold = wake_threshold
         self._silero_model: Any | None = None
         self._silero_failed = False
-        self._wake_model: Any | None = None
-        self._wake_failed = False
+        self._wake_detector = build_wake_detector(
+            wake_backend,
+            model_path=wake_model_path,
+            threshold=wake_threshold,
+        )
 
     def _load_silero(self) -> Any | None:
         if self._silero_model is not None or self._silero_failed:
@@ -93,27 +95,6 @@ class LiveAudioGate:
         except Exception:
             self._silero_failed = True
         return self._silero_model
-
-    def _load_wake_model(self) -> Any | None:
-        if self._wake_backend != "openwakeword":
-            return None
-        if self._wake_model is not None or self._wake_failed:
-            return self._wake_model
-        try:
-            from openwakeword.model import Model
-
-            if self._wake_model_path:
-                model_path = Path(self._wake_model_path)
-                if not model_path.exists():
-                    self._wake_failed = True
-                    return None
-                self._wake_model = Model(wakeword_models=[str(model_path)])
-            else:
-                # Let openWakeWord load its bundled pretrained models.
-                self._wake_model = Model()
-        except Exception:
-            self._wake_failed = True
-        return self._wake_model
 
     def _detect_speech(self, samples_16k: np.ndarray) -> tuple[bool, str]:
         if not self._vad_enabled:
@@ -141,42 +122,11 @@ class LiveAudioGate:
         return _rms_level(samples_16k) >= self._vad_threshold, "energy"
 
     def _detect_wake(self, samples_16k: np.ndarray) -> tuple[bool, str, float | None]:
-        if self._wake_backend != "openwakeword":
-            return False, "transcript", None
+        result = self._wake_detector.detect(samples_16k)
+        return result.detected, result.backend, result.score
 
-        model = self._load_wake_model()
-        if model is None:
-            return False, "transcript", None
-
-        pcm16 = np.clip(samples_16k * 32767.0, -32768, 32767).astype(np.int16)
-        frame_size = 1280
-        best_score = 0.0
-        try:
-            for start in range(0, max(len(pcm16) - frame_size + 1, 1), frame_size):
-                frame = pcm16[start : start + frame_size]
-                if frame.size < frame_size:
-                    break
-                prediction = model.predict(frame)
-                if isinstance(prediction, dict):
-                    interesting_keys = [
-                        key
-                        for key in prediction.keys()
-                        if "jarvis" in key.lower() or "alexa" in key.lower()
-                    ]
-                    candidates = (
-                        [float(prediction[key]) for key in interesting_keys]
-                        if interesting_keys
-                        else [float(value) for value in prediction.values()]
-                    )
-                    score = max(candidates)
-                else:
-                    score = float(prediction)
-                if score > best_score:
-                    best_score = score
-            return best_score >= self._wake_threshold, "openwakeword", best_score
-        except Exception:
-            self._wake_failed = True
-            return False, "transcript", None
+    def wake_status(self) -> WakeDetectorStatus:
+        return self._wake_detector.status()
 
     def analyze(self, audio_bytes: bytes, *, format: str = "wav") -> LiveAudioAnalysis:
         normalized_format = format.lower().lstrip(".")

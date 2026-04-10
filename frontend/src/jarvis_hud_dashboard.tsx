@@ -74,6 +74,7 @@ import {
   holdActionCenterItem,
   holdCodeEdit,
   holdWorkbenchCommand,
+  interruptVoiceLoop,
   prepareWorkspaceStage,
   prepareWorkspaceCommit,
   prepareWorkspacePush,
@@ -146,6 +147,12 @@ import {
 import { listConnectors } from './lib/connectors-api';
 import { DESIGN_ARCHETYPES, getDesignArchetype } from './lib/designCanon';
 import { useAppStore } from './lib/store';
+import {
+  buildVoiceReactorMetrics,
+  getVoiceEnvironmentLabel,
+  getVoicePhaseLabel,
+  getVoiceReadinessLabel,
+} from './lib/voicePresentation';
 import type { ChatMessage, ToolCallInfo } from './types';
 import type { CommercialOpsBrief } from './components/Dashboard/CommercialOpsPanel';
 import type { FivemCodingBrief } from './components/Dashboard/FivemCodingPanel';
@@ -3837,18 +3844,14 @@ export default function JarvisHudDashboard({
         };
     }
   }, [latestAssistantMessage, latestUserMessage, status, streamState.content, streamState.phase, toolSummary, voiceLoop?.active, voiceLoop?.last_transcript]);
-  const voiceEnvironmentLabel = useMemo(() => {
-    if (!voiceLoop?.active) return 'Idle';
-    if (hudSpeechTelemetry.noiseFloor >= 0.014) return 'Noisy room';
-    if (hudSpeechTelemetry.noiseFloor >= 0.008) return 'Moderate room';
-    return 'Clean room';
-  }, [hudSpeechTelemetry.noiseFloor, voiceLoop?.active]);
-  const voiceReadinessLabel = useMemo(() => {
-    if (!voiceLoop?.active) return 'Standby';
-    if (hudSpeechTelemetry.speechLikely) return 'Speech detected';
-    if (hudSpeechTelemetry.activeRatio >= 0.08) return 'Monitoring';
-    return 'Ready';
-  }, [hudSpeechTelemetry.activeRatio, hudSpeechTelemetry.speechLikely, voiceLoop?.active]);
+  const voiceEnvironmentLabel = useMemo(
+    () => getVoiceEnvironmentLabel(voiceLoop, hudSpeechTelemetry),
+    [hudSpeechTelemetry, voiceLoop],
+  );
+  const voiceReadinessLabel = useMemo(
+    () => getVoiceReadinessLabel(voiceLoop, hudSpeechTelemetry),
+    [hudSpeechTelemetry, voiceLoop],
+  );
   const currentProjectKey = useMemo(
     () => normalizeMeetingKey(workspaceSummary?.root || workspaceSummary?.branch || 'workspace'),
     [workspaceSummary?.branch, workspaceSummary?.root],
@@ -4005,42 +4008,28 @@ export default function JarvisHudDashboard({
     [workspaceRepos],
   );
   const reactorMetrics = useMemo(
-    () => [
-      {
-        label: 'API Link',
-        value: apiReachable ? 'Online' : apiReachable === false ? 'Offline' : 'Checking',
-      },
-      {
-        label: 'Speech Core',
-        value: voiceLoop?.backend_available
-          ? voiceLoop.backend_name || 'Ready'
-          : speechAvailable
-          ? 'Ready'
-          : speechAvailable === false
-          ? 'Offline'
-          : 'Checking',
-      },
-      { label: 'Voice Loop', value: voiceLoop?.active ? voiceLoop.phase : 'Idle' },
-      {
-        label: 'VAD',
-        value: speechProfile?.live_vad_enabled
-          ? voiceLoop?.vad_backend || speechProfile?.vad_backend || 'Active'
-          : 'Disabled',
-      },
-      {
-        label: 'Latency',
-        value: formatElapsed(latestAssistantMessage?.telemetry?.total_ms ?? streamState.elapsedMs),
-      },
-      {
-        label: 'Mic',
-        value: voiceReadinessLabel,
-      },
-      {
-        label: 'Room',
-        value: voiceEnvironmentLabel,
-      },
+    () =>
+      buildVoiceReactorMetrics({
+        apiReachable,
+        speechAvailable,
+        speechProfileVadEnabled: speechProfile?.live_vad_enabled,
+        speechProfileVadBackend: speechProfile?.vad_backend,
+        voiceLoop,
+        voiceReadinessLabel,
+        voiceEnvironmentLabel,
+        latencyLabel: formatElapsed(latestAssistantMessage?.telemetry?.total_ms ?? streamState.elapsedMs),
+      }),
+    [
+      apiReachable,
+      latestAssistantMessage?.telemetry?.total_ms,
+      speechAvailable,
+      speechProfile?.live_vad_enabled,
+      speechProfile?.vad_backend,
+      streamState.elapsedMs,
+      voiceEnvironmentLabel,
+      voiceLoop,
+      voiceReadinessLabel,
     ],
-    [apiReachable, latestAssistantMessage?.telemetry?.total_ms, speechAvailable, speechProfile?.live_vad_enabled, speechProfile?.vad_backend, streamState.elapsedMs, voiceEnvironmentLabel, voiceLoop, voiceReadinessLabel],
   );
 
   const coreMatrix = [
@@ -5144,6 +5133,7 @@ export default function JarvisHudDashboard({
   function interruptAssistantOutput(reason?: string) {
     audioElementRef.current?.pause();
     window.dispatchEvent(new Event('jarvis:interrupt-stream'));
+    void interruptVoiceLoop(reason).then(setVoiceLoop).catch(() => {});
     if (reason) setVoiceNotice(reason);
   }
 
@@ -7016,14 +7006,7 @@ export default function JarvisHudDashboard({
     ? 'Inference active. No tool approval pending.'
     : 'No pending operator decision';
 
-  const voicePhaseLabel =
-    hudSpeechState === 'listening'
-      ? 'Listening'
-      : hudSpeechState === 'transcribing'
-      ? 'Transcribing'
-      : voiceLoop?.active
-      ? voiceLoop.phase[0].toUpperCase() + voiceLoop.phase.slice(1)
-      : 'Idle';
+  const voicePhaseLabel = getVoicePhaseLabel(hudSpeechState, voiceLoop);
 
   const reactorMicDisabledReason = !settings.speechEnabled
     ? 'Enable Speech-to-Text in Settings'
@@ -7350,16 +7333,20 @@ export default function JarvisHudDashboard({
                     <div className="text-sm uppercase tracking-[0.24em] text-cyan-50">
                       {voiceLoop?.active ? 'Active session' : 'Inactive session'}
                     </div>
-                    <div className="mt-2 text-sm leading-7 text-slate-200/75">
-                      {hudSpeechError ||
-                        voiceLoop?.last_error ||
-                        voiceNotice ||
-                        (settings.speechEnabled
-                          ? `Press the reactor mic to toggle the always-listening loop. Wake phrase: ${
-                              speechProfile?.wake_phrases?.[0] || 'hey jarvis'
-                            }. Engine: ${voiceLoop?.wake_backend || speechProfile?.wake_backend || 'transcript'}.`
-                          : 'Enable Speech-to-Text in Settings to activate voice control.')}
-                    </div>
+                      <div className="mt-2 text-sm leading-7 text-slate-200/75">
+                        {hudSpeechError ||
+                         voiceLoop?.last_error ||
+                         voiceNotice ||
+                         (settings.speechEnabled
+                            ? `Press the reactor mic to toggle the always-listening loop. Wake phrase: ${
+                                speechProfile?.wake_phrases?.[0] || 'hey jarvis'
+                             }. Engine: ${voiceLoop?.wake_backend || speechProfile?.wake_backend || 'transcript'}${
+                                voiceLoop?.wake_available === false && voiceLoop?.wake_requested_backend
+                                  ? ` (fallback from ${voiceLoop.wake_requested_backend})`
+                                  : ''
+                              }.`
+                            : 'Enable Speech-to-Text in Settings to activate voice control.')}
+                      </div>
                     <div className="mt-4 flex gap-3">
                       <button
                         onClick={handleReactorMic}
@@ -7405,14 +7392,24 @@ export default function JarvisHudDashboard({
                     <div className="mt-4 text-[11px] uppercase tracking-[0.28em] text-cyan-300/55">
                       Reply voice: {speechProfile?.reply_voice_id || 'am_michael'} via {speechProfile?.reply_backend || 'kokoro'}
                     </div>
-                    <div className="mt-2 text-[11px] uppercase tracking-[0.28em] text-cyan-300/55">
-                      VAD: {voiceLoop?.vad_backend || speechProfile?.vad_backend || 'energy'} · Wake: {voiceLoop?.wake_backend || speechProfile?.wake_backend || 'transcript'}
-                    </div>
-                    {voiceLoop?.last_wake_score != null ? (
                       <div className="mt-2 text-[11px] uppercase tracking-[0.28em] text-cyan-300/55">
-                        Wake score: {voiceLoop.last_wake_score.toFixed(2)}
+                       VAD: {voiceLoop?.vad_backend || speechProfile?.vad_backend || 'energy'} · Wake: {voiceLoop?.wake_backend || speechProfile?.wake_backend || 'transcript'}
                       </div>
-                    ) : null}
+                      {voiceLoop?.wake_available === false && voiceLoop?.wake_reason ? (
+                        <div className="mt-2 text-[11px] leading-5 text-amber-200/80">
+                          Wake fallback active: {voiceLoop.wake_reason}
+                        </div>
+                      ) : null}
+                      {voiceLoop?.last_wake_score != null ? (
+                        <div className="mt-2 text-[11px] uppercase tracking-[0.28em] text-cyan-300/55">
+                          Wake score: {voiceLoop.last_wake_score.toFixed(2)}
+                        </div>
+                      ) : null}
+                      {(voiceLoop?.last_transcribe_ms || voiceLoop?.last_process_ms) ? (
+                        <div className="mt-2 text-[11px] uppercase tracking-[0.28em] text-cyan-300/55">
+                          STT: {Math.round(voiceLoop?.last_transcribe_ms || 0)}ms · Loop: {Math.round(voiceLoop?.last_process_ms || 0)}ms
+                        </div>
+                      ) : null}
                   </div>
                 </div>
               </div>

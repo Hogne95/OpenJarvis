@@ -141,6 +141,58 @@ def test_voice_loop_follow_up_window_accepts_recent_follow_up():
     assert manager._snapshot.last_wake_at == 20.0
 
 
+def test_voice_loop_interrupt_returns_to_listening_and_tracks_diagnostics():
+    manager = VoiceLoopManager(speech_backend=None)
+    manager._snapshot.backend_available = True
+    manager._snapshot.active = True
+    manager._snapshot.always_listening = True
+    manager._snapshot.phase = "speaking"
+    manager._snapshot.tts_active = True
+    manager._snapshot.tts_started_at = 12.0
+
+    result = manager.interrupt(reason="stop")
+
+    assert result["phase"] == "listening"
+    assert result["interrupted"] is True
+    assert result["interruption_count"] == 1
+    assert result["last_error"] == "stop"
+    assert result["tts_active"] is False
+    assert result["tts_started_at"] is None
+
+
+def test_voice_loop_process_audio_records_diagnostics_and_recent_transcripts():
+    manager = VoiceLoopManager(speech_backend=None)
+    manager._snapshot.backend_available = True
+    manager._snapshot.active = True
+    manager._snapshot.always_listening = True
+    manager._snapshot.phase = "speaking"
+    manager._audio_gate.analyze = lambda audio, format="webm": SimpleNamespace(  # type: ignore[method-assign]
+        vad_backend="energy",
+        wake_backend="transcript",
+        rms_level=0.04,
+        wake_score=0.72,
+        wake_detected=True,
+        speech_detected=True,
+        duration_seconds=1.1,
+    )
+    manager._transcribe_with_hints = lambda *args, **kwargs: SimpleNamespace(  # type: ignore[method-assign]
+        text="Hey Jarvis open mail",
+        language="en",
+        confidence=0.91,
+        duration_seconds=1.1,
+    )
+
+    result = manager.process_audio(b"fake-audio", format="webm")
+
+    assert result["accepted"] is True
+    assert result["interrupted"] is True
+    assert result["last_transcribe_ms"] >= 0
+    assert result["last_process_ms"] >= 0
+    assert result["last_audio_duration_seconds"] == 1.1
+    assert result["interruption_count"] == 1
+    assert result["recent_transcripts"][-1] == "Hey Jarvis open mail"
+
+
 def test_desktop_state_snapshot_degrades_without_cached_success_when_probe_fails():
     jarvis_intent._DESKTOP_STATE_LAST_SUCCESS = None
     jarvis_intent._DESKTOP_STATE_LAST_SUCCESS_AT = 0.0
@@ -201,6 +253,42 @@ def test_core_agent_architecture_bootstraps_on_startup(tmp_path: Path):
     assert managed_roles["planner"]["ready"] is True
     assert managed_roles["executor"]["ready"] is True
     assert managed_roles["vision"]["ready"] is True
+    awareness = response.json()["awareness"]
+    assert awareness["memory"]["available"] is True
+    assert awareness["connectors"]["multi_account_ready"] is True
+    assert awareness["agents"]["total"] >= 3
+
+
+def test_voice_loop_interrupt_route_returns_listening_snapshot():
+    app = create_app(_make_engine(), "test-model", speech_backend=_BrokenHealthSpeechBackend())
+    client = TestClient(app)
+    manager = app.state.voice_loop
+    manager._snapshot.backend_available = True
+    manager._snapshot.active = True
+    manager._snapshot.always_listening = True
+    manager._snapshot.phase = "speaking"
+    manager._snapshot.tts_active = True
+
+    response = client.post("/v1/voice-loop/interrupt", json={"reason": "stop"})
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["phase"] == "listening"
+    assert data["interrupted"] is True
+    assert data["last_error"] == "stop"
+
+
+def test_voice_loop_status_surfaces_wake_backend_fallback_reason():
+    manager = VoiceLoopManager(speech_backend=None, wake_backend="openwakeword")
+    detector = manager._audio_gate._wake_detector
+    detector._failed_reason = "openwakeword unavailable on this platform"  # type: ignore[attr-defined]
+
+    snapshot = manager.status()
+
+    assert snapshot["wake_requested_backend"] == "openwakeword"
+    assert snapshot["wake_backend"] == "transcript"
+    assert snapshot["wake_available"] is False
+    assert "unavailable" in snapshot["wake_reason"]
 
 
 def test_run_agent_returns_running_when_agent_is_already_running(tmp_path: Path):

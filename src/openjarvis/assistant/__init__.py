@@ -8,6 +8,12 @@ from .identity import (
     format_memory_context,
     get_default_identity,
 )
+from .tool_chaining import (
+    ToolChainResult,
+    ToolChainStep,
+    ToolChainStepResult,
+    execute_tool_chain,
+)
 
 __all__ = [
     "DecisionAnalysis",
@@ -16,4 +22,8 @@ __all__ = [
     "build_assistant_system_context",
     "format_memory_context",
     "get_default_identity",
+    "ToolChainResult",
+    "ToolChainStep",
+    "ToolChainStepResult",
+    "execute_tool_chain",
 ]

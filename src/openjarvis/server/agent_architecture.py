@@ -6,6 +6,135 @@ from dataclasses import asdict, dataclass
 from typing import Any
 
 
+def _memory_backend_mode(app_state: Any) -> dict[str, Any]:
+    backend = getattr(app_state, "memory_backend", None)
+    operator_memory = getattr(app_state, "operator_memory", None)
+    if backend is None:
+        return {
+            "available": operator_memory is not None,
+            "mode": "operator_only" if operator_memory is not None else "disabled",
+            "backend": None,
+        }
+    backend_name = getattr(backend, "backend_id", None) or type(backend).__name__
+    lowered = str(backend_name).lower()
+    if "sqlite" in lowered:
+        mode = "sqlite"
+    elif "rust" in lowered:
+        mode = "rust"
+    else:
+        mode = "custom"
+    return {"available": True, "mode": mode, "backend": str(backend_name)}
+
+
+def _workspace_awareness(app_state: Any) -> dict[str, Any]:
+    registry = getattr(app_state, "workspace_registry", None)
+    if registry is None:
+        return {"available": False, "active_root": "", "repo_count": 0}
+    try:
+        repos = list(registry.list_repos())
+    except Exception:
+        repos = []
+    try:
+        active_root = str(registry.active_root() or "")
+    except Exception:
+        active_root = ""
+    return {
+        "available": True,
+        "active_root": active_root,
+        "repo_count": len(repos),
+    }
+
+
+def _voice_awareness(app_state: Any) -> dict[str, Any]:
+    voice_loop = getattr(app_state, "voice_loop", None)
+    if voice_loop is None:
+        return {"available": False, "phase": "offline"}
+    try:
+        snapshot = voice_loop.snapshot()
+    except Exception:
+        snapshot = {}
+    return {
+        "available": True,
+        "phase": str(snapshot.get("phase") or "idle"),
+        "active": bool(snapshot.get("active")),
+    }
+
+
+def _build_system_awareness(app_state: Any, *, owner_user_id: str | None = None) -> dict[str, Any]:
+    agent_manager = getattr(app_state, "agent_manager", None)
+    if agent_manager is None:
+        agents: list[dict[str, Any]] = []
+    else:
+        try:
+            agents = list(agent_manager.list_agents(owner_user_id=owner_user_id))
+        except Exception:
+            agents = []
+
+    statuses = {
+        "running": 0,
+        "idle": 0,
+        "paused": 0,
+        "error": 0,
+        "needs_attention": 0,
+        "budget_exceeded": 0,
+        "stalled": 0,
+        "archived": 0,
+    }
+    active_agents: list[dict[str, Any]] = []
+    recent_failures: list[dict[str, Any]] = []
+    retrying_agents: list[dict[str, Any]] = []
+    for agent in agents:
+        status = str(agent.get("status") or "idle")
+        statuses[status] = statuses.get(status, 0) + 1
+        if status == "running":
+            active_agents.append(
+                {
+                    "id": agent.get("id"),
+                    "name": agent.get("name"),
+                    "activity": str(agent.get("current_activity") or "").strip(),
+                    "last_activity_at": agent.get("last_activity_at"),
+                }
+            )
+        if status in {"error", "needs_attention", "budget_exceeded", "stalled"}:
+            recent_failures.append(
+                {
+                    "id": agent.get("id"),
+                    "name": agent.get("name"),
+                    "status": status,
+                    "detail": str(agent.get("summary_memory") or agent.get("current_activity") or "").strip()[:240],
+                    "updated_at": agent.get("updated_at"),
+                }
+            )
+        stall_retries = int(agent.get("stall_retries") or 0)
+        if stall_retries > 0:
+            retrying_agents.append(
+                {
+                    "id": agent.get("id"),
+                    "name": agent.get("name"),
+                    "stall_retries": stall_retries,
+                    "activity": str(agent.get("current_activity") or "").strip(),
+                }
+            )
+
+    connector_accounts = getattr(app_state, "connector_account_store", None)
+    return {
+        "agents": {
+            "total": len(agents),
+            "statuses": statuses,
+            "active": active_agents[:5],
+            "recent_failures": recent_failures[:5],
+            "retrying": retrying_agents[:5],
+        },
+        "voice": _voice_awareness(app_state),
+        "memory": _memory_backend_mode(app_state),
+        "connectors": {
+            "multi_account_ready": connector_accounts is not None,
+            "runtime_mode": "per-user accounts" if connector_accounts is not None else "unconfigured",
+        },
+        "workspace": _workspace_awareness(app_state),
+    }
+
+
 @dataclass(frozen=True)
 class ManagedRoleSpec:
     role: str
@@ -62,23 +191,33 @@ def _agent_matches_role(agent: dict[str, Any], role: str) -> bool:
     return str(agent.get("name", "")).strip().lower() == spec.name.lower()
 
 
-def _find_role_agent(agent_manager: Any, role: str) -> dict[str, Any] | None:
+def _find_role_agent(
+    agent_manager: Any,
+    role: str,
+    *,
+    owner_user_id: str | None = None,
+) -> dict[str, Any] | None:
     if agent_manager is None:
         return None
-    for agent in agent_manager.list_agents():
+    for agent in agent_manager.list_agents(owner_user_id=owner_user_id):
         if _agent_matches_role(agent, role):
             return agent
     return None
 
 
-def _list_role_tasks(agent_manager: Any, role_agent: dict[str, Any] | None) -> list[dict[str, Any]]:
+def _list_role_tasks(
+    agent_manager: Any,
+    role_agent: dict[str, Any] | None,
+    *,
+    owner_user_id: str | None = None,
+) -> list[dict[str, Any]]:
     if agent_manager is None or role_agent is None:
         return []
     agent_id = str(role_agent.get("id", "")).strip()
     if not agent_id:
         return []
     try:
-        return list(agent_manager.list_tasks(agent_id))
+        return list(agent_manager.list_tasks(agent_id, owner_user_id=owner_user_id))
     except Exception:
         return []
 
@@ -118,7 +257,7 @@ def _upsert_architecture_mission(
     )
 
 
-def build_architecture_status(app_state: Any) -> dict[str, Any]:
+def build_architecture_status(app_state: Any, *, owner_user_id: str | None = None) -> dict[str, Any]:
     agent_manager = getattr(app_state, "agent_manager", None)
     voice_loop = getattr(app_state, "voice_loop", None)
     operator_memory = getattr(app_state, "operator_memory", None)
@@ -146,7 +285,7 @@ def build_architecture_status(app_state: Any) -> dict[str, Any]:
     )
 
     for role_name, spec in ROLE_SPECS.items():
-        agent = _find_role_agent(agent_manager, role_name)
+        agent = _find_role_agent(agent_manager, role_name, owner_user_id=owner_user_id)
         role_agents[role_name] = agent
         roles.append(
             {
@@ -201,8 +340,8 @@ def build_architecture_status(app_state: Any) -> dict[str, Any]:
         None,
     )
     if planner_mission and agent_manager is not None:
-        planner_tasks = _list_role_tasks(agent_manager, role_agents.get("planner"))
-        executor_tasks = _list_role_tasks(agent_manager, role_agents.get("executor"))
+        planner_tasks = _list_role_tasks(agent_manager, role_agents.get("planner"), owner_user_id=owner_user_id)
+        executor_tasks = _list_role_tasks(agent_manager, role_agents.get("executor"), owner_user_id=owner_user_id)
         recent_tasks = sorted(
             [*planner_tasks, *executor_tasks],
             key=lambda item: float(item.get("created_at") or 0.0),
@@ -326,10 +465,11 @@ def build_architecture_status(app_state: Any) -> dict[str, Any]:
             "managed_total": len(ROLE_SPECS),
         },
         "mission": planner_mission,
+        "awareness": _build_system_awareness(app_state, owner_user_id=owner_user_id),
     }
 
 
-def ensure_core_team(app_state: Any) -> dict[str, Any]:
+def ensure_core_team(app_state: Any, *, owner_user_id: str | None = None) -> dict[str, Any]:
     agent_manager = getattr(app_state, "agent_manager", None)
     if agent_manager is None:
         raise ValueError("Managed agent system is not configured")
@@ -337,7 +477,7 @@ def ensure_core_team(app_state: Any) -> dict[str, Any]:
     created: list[dict[str, Any]] = []
     existing: list[dict[str, Any]] = []
     for role_name, spec in ROLE_SPECS.items():
-        agent = _find_role_agent(agent_manager, role_name)
+        agent = _find_role_agent(agent_manager, role_name, owner_user_id=owner_user_id)
         if agent is not None:
             existing.append({"role": role_name, "agent_id": agent.get("id"), "name": agent.get("name")})
             continue
@@ -351,25 +491,32 @@ def ensure_core_team(app_state: Any) -> dict[str, Any]:
             name=spec.name,
             agent_type=spec.agent_type,
             config=config,
+            owner_user_id=owner_user_id,
         )
         created.append({"role": role_name, "agent_id": created_agent.get("id"), "name": created_agent.get("name")})
-    status = build_architecture_status(app_state)
+    status = build_architecture_status(app_state, owner_user_id=owner_user_id)
     status["created"] = created
     status["existing"] = existing
     return status
 
 
-def create_role_handoff(app_state: Any, *, brief: str, source: str = "hud") -> dict[str, Any]:
+def create_role_handoff(
+    app_state: Any,
+    *,
+    brief: str,
+    source: str = "hud",
+    owner_user_id: str | None = None,
+) -> dict[str, Any]:
     cleaned_brief = brief.strip()
     if not cleaned_brief:
         raise ValueError("A planner brief is required")
-    status = ensure_core_team(app_state)
+    status = ensure_core_team(app_state, owner_user_id=owner_user_id)
     agent_manager = getattr(app_state, "agent_manager", None)
     if agent_manager is None:
         raise ValueError("Managed agent system is not configured")
 
-    planner = _find_role_agent(agent_manager, "planner")
-    executor = _find_role_agent(agent_manager, "executor")
+    planner = _find_role_agent(agent_manager, "planner", owner_user_id=owner_user_id)
+    executor = _find_role_agent(agent_manager, "executor", owner_user_id=owner_user_id)
     if planner is None or executor is None:
         raise ValueError("Planner and executor roles must be provisioned")
 
@@ -420,7 +567,7 @@ def create_role_handoff(app_state: Any, *, brief: str, source: str = "hud") -> d
         },
     )
 
-    refreshed = build_architecture_status(app_state)
+    refreshed = build_architecture_status(app_state, owner_user_id=owner_user_id)
     refreshed["handoff"] = {
         "source": source,
         "brief": cleaned_brief,

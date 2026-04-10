@@ -582,16 +582,27 @@ export interface VoiceLoopStatus {
   wake_phrases?: string[];
   wake_required?: boolean;
   wake_detected?: boolean;
-  last_wake_phrase?: string;
-  live_vad_enabled?: boolean;
-  vad_backend?: string;
-  wake_backend?: string;
-  last_vad_rms?: number;
+    last_wake_phrase?: string;
+    live_vad_enabled?: boolean;
+    vad_backend?: string;
+    wake_requested_backend?: string;
+    wake_backend?: string;
+    wake_available?: boolean;
+    wake_reason?: string;
+    last_vad_rms?: number;
   last_wake_score?: number | null;
   last_transcript: string;
+  recent_transcripts?: string[];
   last_command?: string;
   command_count?: number;
   interrupted?: boolean;
+  last_transcribe_ms?: number;
+  last_process_ms?: number;
+  last_audio_duration_seconds?: number;
+  interruption_count?: number;
+  last_interruption_at?: number | null;
+  tts_active?: boolean;
+  tts_started_at?: number | null;
   last_error: string;
 }
 
@@ -1372,6 +1383,19 @@ export async function stopVoiceLoop(): Promise<VoiceLoopStatus> {
   if (!res.ok) {
     const detail = await res.json().catch(() => ({ detail: res.statusText }));
     throw new Error(detail.detail || `Voice loop stop failed: ${res.status}`);
+  }
+  return res.json();
+}
+
+export async function interruptVoiceLoop(reason?: string): Promise<VoiceLoopStatus> {
+  const res = await fetch(`${getBase()}/v1/voice-loop/interrupt`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ reason }),
+  });
+  if (!res.ok) {
+    const detail = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(detail.detail || `Voice loop interrupt failed: ${res.status}`);
   }
   return res.json();
 }

@@ -22,6 +22,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 _MAX_RETRIES = 3
+_STEP_HISTORY_LIMIT = 12
 
 
 class AgentExecutor:
@@ -53,6 +54,96 @@ class AgentExecutor:
             self._manager.update_agent(agent_id, current_activity=activity)
         except Exception:
             pass  # Non-critical
+
+    def _primary_task(self, agent_id: str) -> dict[str, Any] | None:
+        """Return the most relevant visible task for progress tracking."""
+        try:
+            tasks = self._manager.list_tasks(agent_id)
+        except Exception:
+            return None
+        for status in ("active", "pending"):
+            task = next((item for item in tasks if item.get("status") == status), None)
+            if task is not None:
+                return task
+        return tasks[0] if tasks else None
+
+    def _record_execution_step(
+        self,
+        agent_id: str,
+        *,
+        phase: str,
+        status: str,
+        detail: str,
+        retry_state: dict[str, Any] | None = None,
+        result_summary: str = "",
+        task_status: str | None = None,
+    ) -> None:
+        """Persist a structured execution step and publish it for observers.
+
+        Root cause: managed agents already emitted raw lifecycle events, but not
+        a normalized plan/execute/verify/report view that the HUD or logs could
+        reliably surface. Recording bounded execution steps on the existing task
+        model keeps the work observable without layering on a second executor.
+        """
+        now = time.time()
+        task = self._primary_task(agent_id)
+        self._set_activity(agent_id, detail)
+
+        if task is not None:
+            progress = dict(task.get("progress") or {})
+            history = list(progress.get("steps") or [])
+            step_entry = {
+                "phase": phase,
+                "status": status,
+                "detail": detail,
+                "timestamp": now,
+            }
+            if retry_state:
+                step_entry["retry_state"] = retry_state
+            if result_summary:
+                step_entry["result_summary"] = result_summary
+            history.append(step_entry)
+            progress.update(
+                {
+                    "current_step": phase,
+                    "step_status": status,
+                    "current_detail": detail,
+                    "updated_at": now,
+                    "steps": history[-_STEP_HISTORY_LIMIT:],
+                }
+            )
+            if retry_state:
+                progress["retry_state"] = retry_state
+            if result_summary:
+                progress["result_summary"] = result_summary
+            next_task_status = task_status
+            if next_task_status is None and task.get("status") == "pending" and status in {
+                "running",
+                "retrying",
+            }:
+                next_task_status = "active"
+            kwargs: dict[str, Any] = {"progress": progress}
+            if next_task_status:
+                kwargs["status"] = next_task_status
+            try:
+                self._manager.update_task(str(task.get("id")), **kwargs)
+            except Exception:
+                pass
+
+        payload: dict[str, Any] = {
+            "agent_id": agent_id,
+            "phase": phase,
+            "status": status,
+            "detail": detail,
+            "timestamp": now,
+        }
+        if task is not None:
+            payload["task_id"] = task.get("id")
+        if retry_state:
+            payload["retry_state"] = retry_state
+        if result_summary:
+            payload["result_summary"] = result_summary
+        self._bus.publish(EventType.TRACE_STEP, payload)
 
     def _inject_tool_deps(self, tool: Any) -> None:
         """Inject runtime dependencies into a tool instance.
@@ -153,12 +244,15 @@ class AgentExecutor:
         if not guard_acquired:
             try:
                 self._manager.start_tick(agent_id)
-                self._set_activity(agent_id, "Preparing tick...")
             except ValueError:
                 logger.warning("Agent %s already running, skipping tick", agent_id)
                 return
-        else:
-            self._set_activity(agent_id, "Preparing tick...")
+        self._record_execution_step(
+            agent_id,
+            phase="plan",
+            status="running",
+            detail="Preparing tick...",
+        )
 
         agent = self._manager.get_agent(agent_id)
         if agent is None:
@@ -253,6 +347,17 @@ class AgentExecutor:
                     raise
                 last_error = e
                 delay = retry_delay(attempt)
+                self._record_execution_step(
+                    agent["id"],
+                    phase="execute",
+                    status="retrying",
+                    detail=f"Retrying after failure: {e}",
+                    retry_state={
+                        "attempt": attempt + 1,
+                        "max_attempts": _MAX_RETRIES,
+                        "delay_seconds": delay,
+                    },
+                )
                 logger.info(
                     "Agent %s tick retry %d/%d in %ds: %s",
                     agent["id"],
@@ -267,6 +372,17 @@ class AgentExecutor:
                 if not classified.retryable or attempt == _MAX_RETRIES - 1:
                     raise classified from e
                 delay = retry_delay(attempt)
+                self._record_execution_step(
+                    agent["id"],
+                    phase="execute",
+                    status="retrying",
+                    detail=f"Retrying after failure: {classified}",
+                    retry_state={
+                        "attempt": attempt + 1,
+                        "max_attempts": _MAX_RETRIES,
+                        "delay_seconds": delay,
+                    },
+                )
                 logger.info(
                     "Agent %s tick retry %d/%d in %ds: %s",
                     agent["id"],
@@ -306,7 +422,12 @@ class AgentExecutor:
             model,
             type(engine).__name__,
         )
-        self._set_activity(agent["id"], f"Loading model {model}...")
+        self._record_execution_step(
+            agent["id"],
+            phase="plan",
+            status="running",
+            detail=f"Loading model {model}...",
+        )
 
         # Optionally override model via router policy
         router_policy_key = config.get("router_policy")
@@ -399,9 +520,11 @@ class AgentExecutor:
                 agent["name"],
                 len(pending),
             )
-            self._set_activity(
+            self._record_execution_step(
                 agent["id"],
-                f"Delivering {len(pending)} message(s)...",
+                phase="execute",
+                status="running",
+                detail=f"Delivering {len(pending)} message(s)...",
             )
         else:
             logger.info(
@@ -460,7 +583,12 @@ class AgentExecutor:
                 pass  # Don't break agent tick if memory retrieval fails
 
         agent_ctx.memory_results = memory_results
-        self._set_activity(agent["id"], "Generating response...")
+        self._record_execution_step(
+            agent["id"],
+            phase="execute",
+            status="running",
+            detail="Generating response...",
+        )
         logger.info(
             "Agent %s: calling agent.run() with %d chars input",
             agent["name"],
@@ -472,15 +600,26 @@ class AgentExecutor:
         # Retry once if the model returned empty content (common with
         # Qwen3.5 thinking mode consuming all tokens).
         if not (result.content or "").strip():
-            self._set_activity(
+            self._record_execution_step(
                 agent["id"],
-                "Retrying (empty response)...",
+                phase="execute",
+                status="retrying",
+                detail="Retrying (empty response)...",
+                retry_state={"attempt": 1, "max_attempts": 2, "reason": "empty_response"},
             )
             logger.warning(
                 "Agent %s: empty content, retrying once",
                 agent["name"],
             )
             result = agent_instance.run(input_text, context=agent_ctx)
+
+        self._record_execution_step(
+            agent["id"],
+            phase="verify",
+            status="running",
+            detail="Verifying result...",
+            result_summary=(result.content or "").strip()[:240],
+        )
 
         _elapsed = time.time() - _t0
         logger.info(
@@ -530,7 +669,12 @@ class AgentExecutor:
         duration: float,
     ) -> None:
         """Update agent state after tick completion or failure."""
-        self._set_activity(agent_id, "Finalizing...")
+        self._record_execution_step(
+            agent_id,
+            phase="report",
+            status="running",
+            detail="Finalizing...",
+        )
         if error is None:
             # Success
             logger.info(
@@ -595,6 +739,14 @@ class AgentExecutor:
                             "max_tokens": max_tokens,
                         },
                     )
+            self._record_execution_step(
+                agent_id,
+                phase="report",
+                status="success",
+                detail="Completed tick successfully.",
+                result_summary=(result.content or "").strip()[:240] if result else "",
+                task_status="completed",
+            )
             self._bus.publish(
                 EventType.AGENT_TICK_END,
                 {
@@ -612,6 +764,14 @@ class AgentExecutor:
             )
             self._manager.end_tick(agent_id)
             self._manager.update_agent(agent_id, status="needs_attention")
+            self._record_execution_step(
+                agent_id,
+                phase="report",
+                status="blocked",
+                detail=f"Needs attention: {error}",
+                result_summary=str(error)[:240],
+                task_status="failed",
+            )
             self._bus.publish(
                 EventType.AGENT_TICK_ERROR,
                 {
@@ -634,6 +794,14 @@ class AgentExecutor:
             # Write error detail to summary_memory so frontend can display it
             error_msg = str(error)[:2000]
             self._manager.update_summary_memory(agent_id, f"ERROR: {error_msg}")
+            self._record_execution_step(
+                agent_id,
+                phase="report",
+                status="error",
+                detail=f"Execution failed: {error}",
+                result_summary=error_msg[:240],
+                task_status="failed",
+            )
             self._bus.publish(
                 EventType.AGENT_TICK_ERROR,
                 {

@@ -71,10 +71,21 @@ def _safe_voice_loop_status(voice_loop: Any) -> dict[str, Any]:
             "language_hints": ["no", "en"],
             "live_vad_enabled": False,
             "vad_backend": "energy",
+            "wake_requested_backend": "transcript",
             "wake_backend": "transcript",
+            "wake_available": True,
+            "wake_reason": "",
             "last_vad_rms": 0.0,
             "last_wake_score": None,
             "last_transcript": "",
+            "recent_transcripts": [],
+            "last_transcribe_ms": 0.0,
+            "last_process_ms": 0.0,
+            "last_audio_duration_seconds": 0.0,
+            "interruption_count": 0,
+            "last_interruption_at": None,
+            "tts_active": False,
+            "tts_started_at": None,
             "last_error": "Voice loop manager not configured",
         }
     try:
@@ -92,10 +103,21 @@ def _safe_voice_loop_status(voice_loop: Any) -> dict[str, Any]:
             "language_hints": ["no", "en"],
             "live_vad_enabled": False,
             "vad_backend": "energy",
+            "wake_requested_backend": "transcript",
             "wake_backend": "transcript",
+            "wake_available": False,
+            "wake_reason": str(exc),
             "last_vad_rms": 0.0,
             "last_wake_score": None,
             "last_transcript": "",
+            "recent_transcripts": [],
+            "last_transcribe_ms": 0.0,
+            "last_process_ms": 0.0,
+            "last_audio_duration_seconds": 0.0,
+            "interruption_count": 0,
+            "last_interruption_at": None,
+            "tts_active": False,
+            "tts_started_at": None,
             "last_error": str(exc),
         }
 
@@ -358,6 +380,10 @@ class VoiceLoopUpdateRequest(BaseModel):
 
 class VoiceLoopIngestRequest(BaseModel):
     transcript: str
+
+
+class VoiceLoopInterruptRequest(BaseModel):
+    reason: Optional[str] = None
 
 
 class VoiceLoopProcessResponse(BaseModel):
@@ -1892,6 +1918,15 @@ async def voice_loop_state(req: VoiceLoopUpdateRequest, request: Request):
     )
 
 
+@voice_loop_router.post("/interrupt")
+async def voice_loop_interrupt(req: VoiceLoopInterruptRequest, request: Request):
+    """Interrupt assistant speech and safely return the loop to listening."""
+    manager = getattr(request.app.state, "voice_loop", None)
+    if manager is None:
+        raise HTTPException(status_code=503, detail="Voice loop manager not configured")
+    return manager.interrupt(reason=req.reason or "Interrupted by user")
+
+
 @voice_loop_router.post("/ingest")
 async def voice_loop_ingest(req: VoiceLoopIngestRequest, request: Request):
     """Evaluate a transcript against the configured wake phrase flow."""
@@ -1932,13 +1967,17 @@ async def voice_loop_process_audio(request: Request):
 
 @agent_architecture_router.get("/status")
 async def agent_architecture_status(request: Request):
-    return build_architecture_status(request.app.state)
+    current_user = require_current_user_if_bootstrapped(request)
+    owner_user_id = str(current_user.get("id") or "").strip() if current_user else None
+    return build_architecture_status(request.app.state, owner_user_id=owner_user_id)
 
 
 @agent_architecture_router.post("/ensure-core")
 async def agent_architecture_ensure_core(request: Request):
     try:
-        return ensure_core_team(request.app.state)
+        current_user = require_current_user_if_bootstrapped(request)
+        owner_user_id = str(current_user.get("id") or "").strip() if current_user else None
+        return ensure_core_team(request.app.state, owner_user_id=owner_user_id)
     except ValueError as exc:
         raise HTTPException(status_code=503, detail=str(exc))
 
@@ -1946,10 +1985,13 @@ async def agent_architecture_ensure_core(request: Request):
 @agent_architecture_router.post("/handoff")
 async def agent_architecture_handoff(req: AgentArchitectureHandoffRequest, request: Request):
     try:
+        current_user = require_current_user_if_bootstrapped(request)
+        owner_user_id = str(current_user.get("id") or "").strip() if current_user else None
         return create_role_handoff(
             request.app.state,
             brief=req.brief,
             source=req.source or "hud",
+            owner_user_id=owner_user_id,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))

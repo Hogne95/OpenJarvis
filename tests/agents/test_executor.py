@@ -139,6 +139,39 @@ class TestExecutorBasic:
         # Agent should still be running (first tick owns it)
         assert manager.get_agent(agent["id"])["status"] == "running"
 
+    def test_execute_tick_records_structured_steps_on_task(self, executor, manager, event_bus):
+        agent = manager.create_agent(name="test", agent_type="monitor_operative")
+        manager.create_task(agent["id"], "Do the thing", status="pending")
+        steps = []
+        event_bus.subscribe(EventType.TRACE_STEP, lambda e: steps.append(e))
+
+        rv = AgentResult(content="result text")
+        with patch.object(executor, "_invoke_agent", return_value=rv):
+            executor.execute_tick(agent["id"])
+
+        updated_task = manager.list_tasks(agent["id"])[0]
+        assert updated_task["status"] == "completed"
+        assert updated_task["progress"]["current_step"] == "report"
+        assert updated_task["progress"]["step_status"] == "success"
+        recorded_steps = updated_task["progress"]["steps"]
+        assert any(step["phase"] == "plan" for step in recorded_steps)
+        assert any(step["phase"] == "report" and step["status"] == "success" for step in recorded_steps)
+        assert any(event.data.get("phase") == "report" for event in steps)
+
+    def test_execute_tick_marks_task_failed_on_error(self, executor, manager):
+        agent = manager.create_agent(name="test", agent_type="monitor_operative")
+        manager.create_task(agent["id"], "Do the thing", status="pending")
+
+        with patch.object(
+            executor, "_invoke_agent", side_effect=FatalError("bad config")
+        ):
+            executor.execute_tick(agent["id"])
+
+        updated_task = manager.list_tasks(agent["id"])[0]
+        assert updated_task["status"] == "failed"
+        assert updated_task["progress"]["step_status"] == "error"
+        assert "bad config" in updated_task["progress"]["result_summary"]
+
 
 def test_finalize_tick_reads_agent_result_metadata(tmp_path):
     """_finalize_tick() accumulates cost/tokens from AgentResult.metadata."""
