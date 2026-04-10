@@ -30,6 +30,18 @@ OpenJarvis is that stack. It is an opinionated framework for local-first persona
 
 ## Installation
 
+### Desktop App
+
+If you want JARVIS to behave like a real local app instead of a browser session, use the desktop shell. The active desktop runtime lives in `frontend/src-tauri`.
+
+For local development:
+
+```powershell
+./start_openjarvis_desktop.ps1
+```
+
+This launches the native Tauri shell, boots the local runtime, and opens the JARVIS HUD with startup and shutdown controls. For more detail, see the desktop deployment guide in [docs/deployment/desktop-app.md](docs/deployment/desktop-app.md).
+
 ### Prerequisites
 
 | Tool | Install |

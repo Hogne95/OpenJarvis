@@ -16,7 +16,7 @@ import {
   MessageSquare,
   ArrowRight,
 } from 'lucide-react';
-import { isTauri, checkHealth } from '../lib/api';
+import { isTauri, checkHealth, getDesktopRuntimeStatus } from '../lib/api';
 
 const GITHUB_BASE =
   'https://github.com/open-jarvis/OpenJarvis/releases/latest/download';
@@ -252,6 +252,14 @@ function HostedView() {
 // ---------------------------------------------------------------------------
 function DesktopView() {
   const navigate = useNavigate();
+  const [detail, setDetail] = useState('Checking desktop runtime...');
+
+  useEffect(() => {
+    getDesktopRuntimeStatus().then((status) => {
+      if (!status) return;
+      setDetail(status.setup.error || status.setup.detail || 'Desktop runtime ready.');
+    });
+  }, []);
 
   return (
     <>
@@ -289,7 +297,7 @@ function DesktopView() {
           <span className="text-sm font-medium">All systems running</span>
         </div>
         <p className="text-xs mb-5" style={{ color: 'var(--color-text-tertiary)' }}>
-          Ollama inference engine, API server, and AI model are active.
+          {detail}
         </p>
         <button
           onClick={() => navigate('/')}
@@ -311,6 +319,19 @@ function DesktopView() {
             <div><kbd className="font-mono px-1.5 py-0.5 rounded" style={{ background: 'var(--color-bg-tertiary)' }}>Cmd+I</kbd> System panel</div>
             <div><kbd className="font-mono px-1.5 py-0.5 rounded" style={{ background: 'var(--color-bg-tertiary)' }}>Cmd+N</kbd> New chat</div>
           </div>
+        </Section>
+        <Section icon={Monitor} title="Desktop Controls">
+          <p className="text-xs" style={{ color: 'var(--color-text-secondary)' }}>
+            Native startup, tray lifecycle, and shutdown now live on the Desktop page.
+          </p>
+          <button
+            onClick={() => navigate('/desktop')}
+            className="inline-flex items-center gap-2.5 px-4 py-2 rounded-xl text-sm font-medium transition-opacity cursor-pointer"
+            style={{ background: 'var(--color-bg-secondary)', color: 'var(--color-text)' }}
+          >
+            Open Desktop Controls
+            <ArrowRight size={16} />
+          </button>
         </Section>
       </div>
     </>

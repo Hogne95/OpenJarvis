@@ -112,6 +112,12 @@ export function SystemPage() {
               {busy === 'refreshing' ? 'Refreshing' : 'Refresh'}
             </button>
             <button
+              onClick={() => navigate('/desktop')}
+              className="rounded-[1rem] border border-cyan-400/15 bg-slate-950/70 px-4 py-3 text-xs uppercase tracking-[0.24em] text-cyan-100 transition hover:bg-cyan-400/[0.08]"
+            >
+              Desktop Shell
+            </button>
+            <button
               onClick={() => navigate('/dashboard')}
               className="rounded-[1rem] border border-cyan-400/15 bg-slate-950/70 px-4 py-3 text-xs uppercase tracking-[0.24em] text-cyan-100 transition hover:bg-cyan-400/[0.08]"
             >

@@ -13,6 +13,7 @@ import {
   fetchSavings,
   fetchSpeechHealth,
   fetchVoiceLoopStatus,
+  initApiBase,
   submitSavings,
   isTauri,
   startVoiceLoop,
@@ -29,6 +30,7 @@ const LogsPage = lazy(() => import('./pages/LogsPage').then((module) => ({ defau
 const WorkspacePage = lazy(() => import('./pages/WorkspacePage').then((module) => ({ default: module.WorkspacePage })));
 const OperationsPage = lazy(() => import('./pages/OperationsPage').then((module) => ({ default: module.OperationsPage })));
 const BriefingsPage = lazy(() => import('./pages/BriefingsPage').then((module) => ({ default: module.BriefingsPage })));
+const DesktopPage = lazy(() => import('./pages/DesktopPage').then((module) => ({ default: module.DesktopPage })));
 const SystemPage = lazy(() => import('./pages/SystemPage').then((module) => ({ default: module.SystemPage })));
 
 function RouteFallback() {
@@ -68,6 +70,10 @@ export default function App() {
   const optInModalOpen = useAppStore((s) => s.optInModalOpen);
   const setOptInModalOpen = useAppStore((s) => s.setOptInModalOpen);
   const markOptInModalSeen = useAppStore((s) => s.markOptInModalSeen);
+
+  useEffect(() => {
+    void initApiBase();
+  }, []);
 
   useEffect(() => {
     const root = document.documentElement;
@@ -236,6 +242,7 @@ export default function App() {
             <Route path="workspace" element={<WorkspacePage />} />
             <Route path="operations" element={<OperationsPage />} />
             <Route path="briefings" element={<BriefingsPage />} />
+            <Route path="desktop" element={<DesktopPage />} />
             <Route path="system" element={<SystemPage />} />
             <Route path="settings" element={<SettingsPage />} />
             <Route path="get-started" element={<GetStartedPage />} />

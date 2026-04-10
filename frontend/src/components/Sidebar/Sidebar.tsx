@@ -21,6 +21,7 @@ import {
   Briefcase,
   PanelsTopLeft,
   RadioTower,
+  AppWindow,
 } from 'lucide-react';
 import { ConversationList } from './ConversationList';
 import { useAppStore } from '../../lib/store';
@@ -61,6 +62,7 @@ export function Sidebar() {
     { path: '/workspace', icon: Briefcase, label: 'Workspace' },
     { path: '/briefings', icon: PanelsTopLeft, label: 'Briefings' },
     { path: '/operations', icon: BarChart3, label: 'Operations' },
+    { path: '/desktop', icon: AppWindow, label: 'Desktop' },
     { path: '/system', icon: RadioTower, label: 'System' },
     { path: '/data-sources', icon: Database, label: 'Data Sources' },
     { path: '/agents', icon: Bot, label: 'Agents' },

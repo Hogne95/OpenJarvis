@@ -71,6 +71,15 @@ export interface SetupStatus {
   error: string | null;
 }
 
+export interface DesktopRuntimeStatus {
+  api_base: string;
+  preferred_model: string;
+  project_root: string | null;
+  window_visible: boolean;
+  hide_to_tray: boolean;
+  setup: SetupStatus;
+}
+
 export interface RuntimeReadinessCheck {
   id: string;
   label: string;
@@ -251,6 +260,58 @@ export async function checkHealth(): Promise<boolean> {
   } catch {
     return false;
   }
+}
+
+export async function getDesktopRuntimeStatus(): Promise<DesktopRuntimeStatus | null> {
+  if (!isTauri()) return null;
+  try {
+    const { invoke } = await import('@tauri-apps/api/core');
+    return await invoke<DesktopRuntimeStatus>('get_desktop_runtime_status');
+  } catch {
+    return null;
+  }
+}
+
+export async function startDesktopRuntime(): Promise<void> {
+  if (!isTauri()) return;
+  const { invoke } = await import('@tauri-apps/api/core');
+  await invoke('start_backend');
+}
+
+export async function stopDesktopRuntime(): Promise<void> {
+  if (!isTauri()) return;
+  const { invoke } = await import('@tauri-apps/api/core');
+  await invoke('stop_backend');
+}
+
+export async function restartDesktopRuntime(): Promise<void> {
+  if (!isTauri()) return;
+  const { invoke } = await import('@tauri-apps/api/core');
+  await invoke('restart_backend');
+}
+
+export async function showDesktopWindow(): Promise<void> {
+  if (!isTauri()) return;
+  const { invoke } = await import('@tauri-apps/api/core');
+  await invoke('show_main_window');
+}
+
+export async function hideDesktopWindow(): Promise<void> {
+  if (!isTauri()) return;
+  const { invoke } = await import('@tauri-apps/api/core');
+  await invoke('hide_main_window');
+}
+
+export async function prepareDesktopShutdown(): Promise<void> {
+  if (!isTauri()) return;
+  const { invoke } = await import('@tauri-apps/api/core');
+  await invoke('prepare_shutdown');
+}
+
+export async function quitDesktopApp(): Promise<void> {
+  if (!isTauri()) return;
+  const { invoke } = await import('@tauri-apps/api/core');
+  await invoke('quit_desktop');
 }
 
 export async function fetchRuntimeReadiness(): Promise<RuntimeReadiness> {
