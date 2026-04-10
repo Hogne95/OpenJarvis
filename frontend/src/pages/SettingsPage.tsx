@@ -23,15 +23,20 @@ import {
 import { useAppStore, type ThemeMode } from '../lib/store';
 import {
   checkHealth,
+  fetchOperatorMemory,
+  fetchOperatorMemoryAnalytics,
   fetchRuntimeReadiness,
   fetchSpeechHealth,
   fetchWithTimeout,
   fetchUsers,
   createUserAdmin,
   updateUserAdmin,
+  updateOperatorMemoryProfile,
   resetUserPasswordAdmin,
   type RuntimeReadiness,
   type AuthUser,
+  type DurableOperatorProfile,
+  type OperatorMemoryAnalyticsResponse,
 } from '../lib/api';
 
 function OllamaModelList() {
@@ -332,6 +337,177 @@ function UserManagementSection({ currentUser }: { currentUser: AuthUser | null }
   );
 }
 
+function AssistantProfileSection({ onSaved }: { onSaved: () => void }) {
+  const [profile, setProfile] = useState<DurableOperatorProfile | null>(null);
+  const [analytics, setAnalytics] = useState<OperatorMemoryAnalyticsResponse | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    let cancelled = false;
+    const load = async () => {
+      try {
+        const [memory, nextAnalytics] = await Promise.all([
+          fetchOperatorMemory(),
+          fetchOperatorMemoryAnalytics().catch(() => null),
+        ]);
+        if (!cancelled) {
+          setProfile(memory.profile);
+          setAnalytics(nextAnalytics);
+          setError('');
+        }
+      } catch (err: any) {
+        if (!cancelled) setError(err.message || 'Failed to load assistant profile');
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    };
+    void load();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const inputStyle: React.CSSProperties = {
+    background: 'var(--color-bg-secondary)',
+    color: 'var(--color-text)',
+    border: '1px solid var(--color-border)',
+    borderRadius: 8,
+    padding: '8px 10px',
+    fontSize: 12,
+  };
+
+  const updateField = (key: keyof DurableOperatorProfile, value: string | string[]) => {
+    setProfile((prev) => (prev ? { ...prev, [key]: value } : prev));
+  };
+
+  const saveProfile = async () => {
+    if (!profile) return;
+    setSaving(true);
+    try {
+      const updated = await updateOperatorMemoryProfile(profile);
+      setProfile(updated.profile);
+      setAnalytics(await fetchOperatorMemoryAnalytics().catch(() => null));
+      setError('');
+      onSaved();
+    } catch (err: any) {
+      setError(err.message || 'Failed to update assistant profile');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Section title="Personal Assistant Profile">
+      <div className="mb-4 text-xs" style={{ color: 'var(--color-text-tertiary)' }}>
+        Root cause: JARVIS could infer your working style, but you could not explicitly shape how it handles you. This profile now lets each user steer tone, depth, autonomy, and decisiveness so personalization is deliberate as well as learned.
+      </div>
+      {loading ? (
+        <div className="text-xs" style={{ color: 'var(--color-text-secondary)' }}>Loading assistant profile...</div>
+      ) : profile ? (
+        <div className="grid gap-4">
+          <div className="grid gap-3 md:grid-cols-2">
+            <div>
+              <div className="mb-1 text-xs" style={{ color: 'var(--color-text-secondary)' }}>Reply tone</div>
+              <input value={profile.reply_tone || ''} onChange={(e) => updateField('reply_tone', e.target.value)} style={inputStyle} />
+            </div>
+            <div>
+              <div className="mb-1 text-xs" style={{ color: 'var(--color-text-secondary)' }}>Honorific</div>
+              <input value={profile.honorific || ''} onChange={(e) => updateField('honorific', e.target.value)} style={inputStyle} />
+            </div>
+            <div>
+              <div className="mb-1 text-xs" style={{ color: 'var(--color-text-secondary)' }}>Verbosity</div>
+              <select value={profile.verbosity_preference || 'adaptive'} onChange={(e) => updateField('verbosity_preference', e.target.value)} style={inputStyle}>
+                <option value="adaptive">Adaptive</option>
+                <option value="concise-first">Concise first</option>
+                <option value="detailed when useful">Detailed when useful</option>
+              </select>
+            </div>
+            <div>
+              <div className="mb-1 text-xs" style={{ color: 'var(--color-text-secondary)' }}>Technical depth</div>
+              <select value={profile.technical_depth || 'adaptive'} onChange={(e) => updateField('technical_depth', e.target.value)} style={inputStyle}>
+                <option value="adaptive">Adaptive</option>
+                <option value="high">High</option>
+                <option value="simple">Simple</option>
+              </select>
+            </div>
+            <div>
+              <div className="mb-1 text-xs" style={{ color: 'var(--color-text-secondary)' }}>Decisiveness</div>
+              <select value={profile.decisiveness_preference || 'recommend clearly'} onChange={(e) => updateField('decisiveness_preference', e.target.value)} style={inputStyle}>
+                <option value="recommend clearly">Recommend clearly</option>
+                <option value="take the lead and recommend strongly">Take the lead</option>
+                <option value="cautious and explicit about tradeoffs">Cautious with tradeoffs</option>
+              </select>
+            </div>
+            <div>
+              <div className="mb-1 text-xs" style={{ color: 'var(--color-text-secondary)' }}>Autonomy</div>
+              <select value={profile.autonomy_preference || 'balanced'} onChange={(e) => updateField('autonomy_preference', e.target.value)} style={inputStyle}>
+                <option value="balanced">Balanced</option>
+                <option value="high initiative">High initiative</option>
+                <option value="guided">Guided</option>
+              </select>
+            </div>
+          </div>
+          <div>
+            <div className="mb-1 text-xs" style={{ color: 'var(--color-text-secondary)' }}>Personality notes</div>
+            <textarea
+              value={profile.personality_notes || ''}
+              onChange={(e) => updateField('personality_notes', e.target.value)}
+              rows={3}
+              style={{ ...inputStyle, width: '100%', resize: 'vertical' }}
+              placeholder="Optional notes about how JARVIS should handle you."
+            />
+          </div>
+          <div
+            className="rounded-lg p-3"
+            style={{ background: 'var(--color-bg-secondary)', border: '1px solid var(--color-border)' }}
+          >
+            <div className="text-xs font-medium" style={{ color: 'var(--color-text)' }}>Current JARVIS Handling</div>
+            <div className="mt-2 text-xs leading-6" style={{ color: 'var(--color-text-secondary)' }}>
+              {analytics?.operating_profile?.summary || 'JARVIS will derive an operating profile once enough profile and usage signals are available.'}
+            </div>
+            <div className="mt-3 grid gap-2 md:grid-cols-3">
+              <div className="rounded-lg px-3 py-2" style={{ background: 'var(--color-surface)', border: '1px solid var(--color-border)' }}>
+                <div className="text-[10px] uppercase" style={{ color: 'var(--color-text-tertiary)' }}>Execution</div>
+                <div className="mt-1 text-xs" style={{ color: 'var(--color-text)' }}>{analytics?.operating_profile?.execution_mode || 'balanced'}</div>
+              </div>
+              <div className="rounded-lg px-3 py-2" style={{ background: 'var(--color-surface)', border: '1px solid var(--color-border)' }}>
+                <div className="text-[10px] uppercase" style={{ color: 'var(--color-text-tertiary)' }}>Briefing</div>
+                <div className="mt-1 text-xs" style={{ color: 'var(--color-text)' }}>{analytics?.operating_profile?.briefing_mode || 'direct'}</div>
+              </div>
+              <div className="rounded-lg px-3 py-2" style={{ background: 'var(--color-surface)', border: '1px solid var(--color-border)' }}>
+                <div className="text-[10px] uppercase" style={{ color: 'var(--color-text-tertiary)' }}>Caution</div>
+                <div className="mt-1 text-xs" style={{ color: 'var(--color-text)' }}>{analytics?.operating_profile?.caution_level || 'measured'}</div>
+              </div>
+            </div>
+            <div className="mt-3 text-xs leading-6" style={{ color: 'var(--color-text-tertiary)' }}>
+              {analytics?.operating_profile?.adaptation_note || 'JARVIS will explain its adaptation strategy here once the signal is clearer.'}
+            </div>
+          </div>
+          <div className="flex items-center gap-3">
+            <button
+              onClick={() => void saveProfile()}
+              disabled={saving}
+              className="px-3 py-2 rounded-lg text-xs font-medium cursor-pointer"
+              style={{
+                background: saving ? '#444' : 'var(--color-accent)',
+                color: 'white',
+                border: 'none',
+              }}
+            >
+              {saving ? 'Saving...' : 'Save Assistant Profile'}
+            </button>
+            {error ? <span className="text-xs" style={{ color: 'var(--color-error)' }}>{error}</span> : null}
+          </div>
+        </div>
+      ) : (
+        <div className="text-xs" style={{ color: 'var(--color-text-secondary)' }}>Assistant profile unavailable.</div>
+      )}
+    </Section>
+  );
+}
+
 function SettingRow({ label, description, children }: { label: string; description?: string; children: React.ReactNode }) {
   return (
     <div className="flex items-center justify-between py-3" style={{ borderBottom: '1px solid var(--color-border-subtle)' }}>
@@ -445,6 +621,7 @@ export function SettingsPage() {
 
         <div className="flex flex-col gap-4">
           <UserManagementSection currentUser={currentUser} />
+          <AssistantProfileSection onSaved={showSaved} />
 
           {/* Appearance */}
           <Section title="Appearance">

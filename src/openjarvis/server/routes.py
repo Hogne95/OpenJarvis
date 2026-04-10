@@ -11,6 +11,7 @@ from fastapi.responses import StreamingResponse
 
 from openjarvis.assistant import build_assistant_system_context
 from openjarvis.assistant import infer_user_interaction_profile
+from openjarvis.assistant import infer_user_temperament
 from openjarvis.core.types import Message, Role
 from openjarvis.server.auth import get_operator_memory_manager
 from openjarvis.server.models import (
@@ -87,6 +88,10 @@ def _inject_jarvis_identity_context(
         recent_user_messages=recent_user_messages,
         stored_profile=stored_profile,
     )
+    user_temperament = infer_user_temperament(
+        stored_profile=stored_profile,
+        interaction_profile=user_interaction,
+    )
 
     assistant_system = build_assistant_system_context(
         query=query_text,
@@ -94,6 +99,7 @@ def _inject_jarvis_identity_context(
         memory_items=memory_items,
         memory_layers=memory_layers,
         user_interaction=user_interaction,
+        user_temperament=user_temperament,
     )
     if not assistant_system.strip():
         return

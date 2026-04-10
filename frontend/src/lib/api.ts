@@ -846,6 +846,11 @@ export interface WorkspaceChecks {
 export interface DurableOperatorProfile {
   honorific: string;
   reply_tone: string;
+  verbosity_preference?: string;
+  technical_depth?: string;
+  decisiveness_preference?: string;
+  autonomy_preference?: string;
+  personality_notes?: string;
   priority_contacts: string[];
   workday_start: string;
   workday_end: string;
@@ -1993,12 +1998,27 @@ export interface OperatorMemoryAnalyticsResponse {
     kind: string;
   }>;
   improvement_opportunities: string[];
+  friction_brief: {
+    summary: string;
+    root_cause: string;
+    pressure_points: string[];
+    recommended_focus: string;
+  };
+  operating_profile: {
+    summary: string;
+    execution_mode: string;
+    briefing_mode: string;
+    caution_level: string;
+    adaptation_note: string;
+  };
 }
 
 export interface OperatorCommanderBriefResponse {
   headline: string;
   recommendation: string;
   why: string;
+  friction_summary: string;
+  root_cause: string;
   risks: string[];
   best_next_step: string;
   queue: Array<{
@@ -2017,6 +2037,9 @@ export interface OperatorCommanderBriefResponse {
   }>;
   operating_mode: string;
   interaction_style: string;
+  user_temperament: string;
+  command_posture: string;
+  guidance_note: string;
   planner_prompt: string;
 }
 

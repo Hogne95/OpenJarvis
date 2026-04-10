@@ -3206,12 +3206,13 @@ export default function JarvisHudDashboard({
     }> = [];
 
     commanderBrief?.queue?.forEach((item) => {
+      const posture = commanderBrief?.command_posture?.trim();
       items.push({
         id: `commander-${item.id}`,
         priority: Math.max(40, Math.min(110, item.priority)),
         label: item.label,
         title: item.title,
-        detail: item.detail,
+        detail: posture ? `${item.detail} Posture: ${posture}.` : item.detail,
         actionLabel: item.action_label,
         action: () => {
           if (item.action_hint === 'planner_handoff') {
@@ -5719,7 +5720,18 @@ export default function JarvisHudDashboard({
       return `Visual brief from ${visualBrief.title}:\n${visualBrief.details}`;
     }
     if (commanderQueue[0]) {
-      return `Commander queue item:\nLabel: ${commanderQueue[0].label}\nTitle: ${commanderQueue[0].title}\nDetail: ${commanderQueue[0].detail}`;
+      const frictionSummary = commanderBrief?.friction_summary?.trim();
+      const rootCause = commanderBrief?.root_cause?.trim();
+      return [
+        'Commander queue item:',
+        `Label: ${commanderQueue[0].label}`,
+        `Title: ${commanderQueue[0].title}`,
+        `Detail: ${commanderQueue[0].detail}`,
+        frictionSummary ? `Friction: ${frictionSummary}` : '',
+        rootCause ? `Root cause: ${rootCause}` : '',
+      ]
+        .filter(Boolean)
+        .join('\n');
     }
     if (screenContextNote.trim()) {
       return `Current screen note: ${screenContextNote.trim()}`;

@@ -8,6 +8,7 @@ import {
   fetchOperatorMemoryAnalytics,
   fetchOperatorCommanderBrief,
   addOperatorReviewItem,
+  handoffAgentArchitecture,
   fetchRuntimeReadiness,
   fetchSpeechHealth,
   fetchVoiceLoopStatus,
@@ -23,7 +24,7 @@ import {
 } from '../lib/api';
 import { buildSystemAwarenessCards, buildSystemAwarenessHeadline } from '../lib/systemAwareness';
 
-type RefreshState = 'idle' | 'refreshing' | 'starting-voice' | 'stopping-voice' | 'ensuring-agents';
+type RefreshState = 'idle' | 'refreshing' | 'starting-voice' | 'stopping-voice' | 'ensuring-agents' | 'routing-commander';
 type MemoryLayerCard = [string, OperatorMemoryContextResponse['identity']];
 
 export function SystemPage() {
@@ -114,6 +115,24 @@ export function SystemPage() {
       setNotice('Core agent architecture checked and refreshed.');
     } catch (error) {
       setNotice(error instanceof Error ? error.message : 'Unable to ensure the core agent team.');
+    } finally {
+      setBusy('idle');
+    }
+  }
+
+  async function handleRouteCommanderPlan() {
+    if (!commanderBrief?.planner_prompt?.trim()) {
+      setNotice('Commander brief is not ready to route yet.');
+      return;
+    }
+    setBusy('routing-commander');
+    setNotice('');
+    try {
+      const next = await handoffAgentArchitecture(commanderBrief.planner_prompt, 'system-commander');
+      setArchitecture(next);
+      setNotice('Commander plan routed to the planner.');
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : 'Unable to route the commander plan.');
     } finally {
       setBusy('idle');
     }
@@ -312,6 +331,18 @@ export function SystemPage() {
                 <div className="mt-2 text-xs leading-6 text-slate-200/72">
                   {commanderBrief?.why || 'Commander logic will explain why this recommendation matters once enough state is available.'}
                 </div>
+                {commanderBrief?.friction_summary ? (
+                  <>
+                    <div className="mt-3 text-[10px] uppercase tracking-[0.22em] text-cyan-300/55">Friction Summary</div>
+                    <div className="mt-1 text-sm text-slate-200/78">{commanderBrief.friction_summary}</div>
+                  </>
+                ) : null}
+                {commanderBrief?.root_cause ? (
+                  <>
+                    <div className="mt-3 text-[10px] uppercase tracking-[0.22em] text-cyan-300/55">Root Cause</div>
+                    <div className="mt-1 text-xs leading-6 text-slate-200/72">{commanderBrief.root_cause}</div>
+                  </>
+                ) : null}
                 <div className="mt-3 text-[10px] uppercase tracking-[0.22em] text-cyan-300/55">Best Next Step</div>
                 <div className="mt-1 text-sm text-slate-200/78">
                   {commanderBrief?.best_next_step || 'No bounded next step selected yet.'}
@@ -320,6 +351,21 @@ export function SystemPage() {
                 <div className="mt-1 text-xs leading-6 text-slate-200/72">
                   {commanderBrief?.interaction_style || 'adaptive'}
                 </div>
+                {commanderBrief?.user_temperament ? (
+                  <>
+                    <div className="mt-3 text-[10px] uppercase tracking-[0.22em] text-cyan-300/55">User Temperament</div>
+                    <div className="mt-1 text-xs leading-6 text-slate-200/72">{commanderBrief.user_temperament}</div>
+                  </>
+                ) : null}
+                {commanderBrief?.command_posture ? (
+                  <>
+                    <div className="mt-3 text-[10px] uppercase tracking-[0.22em] text-cyan-300/55">Command Posture</div>
+                    <div className="mt-1 text-sm text-cyan-50/92">{commanderBrief.command_posture}</div>
+                  </>
+                ) : null}
+                {commanderBrief?.guidance_note ? (
+                  <div className="mt-2 text-xs leading-6 text-slate-200/72">{commanderBrief.guidance_note}</div>
+                ) : null}
                 {commanderBrief?.risks?.length ? (
                   <div className="mt-3 flex flex-wrap gap-2">
                     {commanderBrief.risks.map((risk) => (
@@ -346,6 +392,15 @@ export function SystemPage() {
                     ))}
                   </div>
                 ) : null}
+                <div className="mt-4 flex flex-wrap gap-3">
+                  <button
+                    onClick={() => void handleRouteCommanderPlan()}
+                    disabled={busy !== 'idle' || !commanderBrief?.planner_prompt}
+                    className="rounded-[1rem] border border-cyan-400/15 bg-cyan-400/[0.08] px-4 py-3 text-xs uppercase tracking-[0.24em] text-cyan-100 transition hover:bg-cyan-400/[0.14] disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    {busy === 'routing-commander' ? 'Routing' : 'Route Commander Plan'}
+                  </button>
+                </div>
               </div>
             </div>
 
@@ -462,6 +517,49 @@ export function SystemPage() {
                 JARVIS now turns them into a visible bottleneck summary so repeated friction can shape the next recommendation.
               </div>
               <div className="mt-4 grid gap-3 lg:grid-cols-2">
+                <div className="rounded-[1rem] border border-cyan-400/10 bg-black/20 px-4 py-3">
+                  <div className="text-xs uppercase tracking-[0.22em] text-cyan-300/55">Friction Brief</div>
+                  <div className="mt-2 text-sm text-cyan-50/92">
+                    {memoryAnalytics?.friction_brief?.summary || 'Waiting for enough memory signals to isolate the main pressure loop.'}
+                  </div>
+                  <div className="mt-2 text-xs leading-6 text-slate-200/72">
+                    {memoryAnalytics?.friction_brief?.root_cause || 'JARVIS will explain the underlying cause once recurring pressure becomes clear.'}
+                  </div>
+                  {memoryAnalytics?.friction_brief?.recommended_focus ? (
+                    <div className="mt-3 rounded-[0.9rem] border border-cyan-400/10 bg-slate-950/55 px-3 py-2 text-xs leading-6 text-cyan-200/76">
+                      Focus: {memoryAnalytics.friction_brief.recommended_focus}
+                    </div>
+                  ) : null}
+                  {memoryAnalytics?.friction_brief?.pressure_points?.length ? (
+                    <div className="mt-3 space-y-2">
+                      {memoryAnalytics.friction_brief.pressure_points.slice(0, 3).map((item) => (
+                        <div key={item} className="rounded-[0.9rem] border border-cyan-400/10 bg-slate-950/55 px-3 py-2 text-xs leading-6 text-slate-200/72">
+                          {item}
+                        </div>
+                      ))}
+                    </div>
+                  ) : null}
+                </div>
+                <div className="rounded-[1rem] border border-cyan-400/10 bg-black/20 px-4 py-3">
+                  <div className="text-xs uppercase tracking-[0.22em] text-cyan-300/55">Operating Profile</div>
+                  <div className="mt-2 text-sm text-cyan-50/92">
+                    {memoryAnalytics?.operating_profile?.summary || 'Waiting for enough profile and usage data to model the user operating style.'}
+                  </div>
+                  <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                    <div className="rounded-[0.9rem] border border-cyan-400/10 bg-slate-950/55 px-3 py-2">
+                      <div className="text-[10px] uppercase tracking-[0.22em] text-cyan-300/55">Execution</div>
+                      <div className="mt-1 text-sm text-slate-200/78">{memoryAnalytics?.operating_profile?.execution_mode || 'balanced'}</div>
+                    </div>
+                    <div className="rounded-[0.9rem] border border-cyan-400/10 bg-slate-950/55 px-3 py-2">
+                      <div className="text-[10px] uppercase tracking-[0.22em] text-cyan-300/55">Briefing</div>
+                      <div className="mt-1 text-sm text-slate-200/78">{memoryAnalytics?.operating_profile?.briefing_mode || 'direct'}</div>
+                    </div>
+                    <div className="rounded-[0.9rem] border border-cyan-400/10 bg-slate-950/55 px-3 py-2 sm:col-span-2">
+                      <div className="text-[10px] uppercase tracking-[0.22em] text-cyan-300/55">Adaptation Note</div>
+                      <div className="mt-1 text-xs leading-6 text-slate-200/72">{memoryAnalytics?.operating_profile?.adaptation_note || 'JARVIS will explain how it is adapting to the user style once the signal is clear.'}</div>
+                    </div>
+                  </div>
+                </div>
                 <div className="rounded-[1rem] border border-cyan-400/10 bg-black/20 px-4 py-3">
                   <div className="text-xs uppercase tracking-[0.22em] text-cyan-300/55">Focus Recommendations</div>
                   <div className="mt-2 space-y-2 text-sm text-cyan-50/92">

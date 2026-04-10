@@ -5,6 +5,8 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass
 from typing import Any
 
+from openjarvis.assistant.identity import infer_user_temperament
+
 
 @dataclass(frozen=True)
 class CommanderQueueEntry:
@@ -33,6 +35,24 @@ def _interaction_style(profile: dict[str, Any]) -> str:
     decisiveness = _clean_text(profile.get("decisiveness_preference")) or "recommend clearly"
     verbosity = _clean_text(profile.get("verbosity_preference")) or "adaptive"
     return f"{autonomy} autonomy, {decisiveness}, {verbosity} verbosity"
+
+
+def _command_posture(profile: dict[str, Any]) -> tuple[str, str]:
+    temperament = infer_user_temperament(stored_profile=profile)
+    if temperament.support_level == "light-touch":
+        return (
+            "direct high-initiative execution",
+            "Keep recommendations decisive, compress the briefing, and route bounded work quickly.",
+        )
+    if temperament.support_level in {"guided", "supportive"} or temperament.risk_posture == "cautious":
+        return (
+            "guided risk-aware execution",
+            "Lead with the recommendation, but make safeguards and verification explicit before handoff.",
+        )
+    return (
+        "balanced operator support",
+        "Recommend clearly, explain the tradeoff, and keep the next action bounded and observable.",
+    )
 
 
 def _build_execution_plan(*, recommendation: str, why: str, best_next_step: str, risks: list[str]) -> list[CommanderExecutionPhase]:
@@ -76,6 +96,8 @@ def build_commander_brief(
     lessons = list(analytics.get("top_lessons") or [])
     review_items = list(analytics.get("review_items") or [])
     focus = list(analytics.get("focus_recommendations") or [])
+    improvement_opportunities = list(analytics.get("improvement_opportunities") or [])
+    friction_brief = analytics.get("friction_brief") if isinstance(analytics.get("friction_brief"), dict) else {}
     signals = analytics.get("signals") if isinstance(analytics.get("signals"), dict) else {}
     awareness_mode = awareness.get("mode") if isinstance(awareness.get("mode"), dict) else {}
     recent_failures = (
@@ -83,6 +105,8 @@ def build_commander_brief(
         if isinstance(awareness.get("agents"), dict)
         else []
     )
+    temperament = infer_user_temperament(stored_profile=profile)
+    command_posture, guidance_note = _command_posture(profile)
 
     recommendation = "Stabilize the stack and clear blockers first."
     why = "The fastest path to momentum is clearing work that is already blocked."
@@ -101,9 +125,17 @@ def build_commander_brief(
         primary_active = active[0]
         recommendation = f"Advance {primary_active.get('title') or 'the active mission'} now."
         why = primary_active.get("next_step") or "There is active work ready to move without extra setup."
+    elif improvement_opportunities:
+        recommendation = improvement_opportunities[0]
+        why = "Repeated friction suggests this is worth tightening before it spreads."
     elif focus:
         recommendation = focus[0]
         why = "This is the clearest current direction from your recent operating patterns."
+
+    friction_summary = _clean_text(friction_brief.get("summary"))
+    friction_root_cause = _clean_text(friction_brief.get("root_cause"))
+    if friction_summary and not blocked and not recent_failures:
+        why = friction_root_cause or friction_summary
 
     risks: list[str] = []
     for item in awareness_mode.get("reasons") or []:
@@ -118,6 +150,14 @@ def build_commander_brief(
         summary = _clean_text(item.get("summary"))
         if summary:
             risks.append(f"Review queue: {summary}")
+    for item in improvement_opportunities[:2]:
+        cleaned = _clean_text(item)
+        if cleaned:
+            risks.append(f"Improvement loop: {cleaned}")
+    for item in (friction_brief.get("pressure_points") or [])[:2]:
+        cleaned = _clean_text(item)
+        if cleaned:
+            risks.append(f"Pressure point: {cleaned}")
     risks = risks[:4] or ["No major systemic risk is dominating right now."]
 
     best_next_step = ""
@@ -183,6 +223,19 @@ def build_commander_brief(
                 priority=74,
             )
         )
+    if improvement_opportunities:
+        first = _clean_text(improvement_opportunities[0])
+        queue.append(
+            CommanderQueueEntry(
+                id="improvement-opportunity",
+                label="Improve",
+                title="Tighten a recurring weak spot",
+                detail=first,
+                action_label="Route Improvement",
+                action_hint="planner_handoff",
+                priority=72,
+            )
+        )
     if not queue:
         queue.append(
             CommanderQueueEntry(
@@ -207,6 +260,9 @@ def build_commander_brief(
         "Commander mode directive.\n"
         f"Recommendation: {recommendation}\n"
         f"Why: {why}\n"
+        f"User temperament: {temperament.summary}\n"
+        f"Command posture: {command_posture}\n"
+        f"Guidance note: {guidance_note}\n"
         f"Best next step: {best_next_step}\n"
         "Execution phases:\n"
         + "\n".join(
@@ -218,11 +274,16 @@ def build_commander_brief(
         "headline": "Commander brief ready.",
         "recommendation": recommendation,
         "why": why,
+        "friction_summary": friction_summary,
+        "root_cause": friction_root_cause,
         "risks": risks,
         "best_next_step": best_next_step,
         "queue": [asdict(item) for item in queue],
         "execution_plan": [asdict(item) for item in execution_plan],
         "operating_mode": _clean_text(awareness_mode.get("level")) or "unknown",
         "interaction_style": _interaction_style(profile),
+        "user_temperament": temperament.summary,
+        "command_posture": command_posture,
+        "guidance_note": guidance_note,
         "planner_prompt": planner_prompt,
     }

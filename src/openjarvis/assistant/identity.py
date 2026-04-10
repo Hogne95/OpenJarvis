@@ -55,6 +55,15 @@ class UserInteractionProfile:
     collaboration_style: str = "collaborative"
 
 
+@dataclass(slots=True)
+class UserTemperamentProfile:
+    summary: str = "balanced operator who benefits from clear recommendations"
+    risk_posture: str = "measured"
+    execution_tempo: str = "steady"
+    briefing_style: str = "direct"
+    support_level: str = "balanced"
+
+
 _DECISION_KEYWORDS = {
     "recommend": 0.85,
     "recommendation": 0.9,
@@ -182,6 +191,51 @@ def infer_user_interaction_profile(
     return profile
 
 
+def infer_user_temperament(
+    *,
+    stored_profile: dict[str, Any] | None = None,
+    interaction_profile: UserInteractionProfile | None = None,
+) -> UserTemperamentProfile:
+    stored = stored_profile or {}
+    interaction = interaction_profile or UserInteractionProfile()
+    temperament = UserTemperamentProfile()
+
+    autonomy = str(stored.get("autonomy_preference", interaction.autonomy)).strip().lower()
+    decisiveness = str(stored.get("decisiveness_preference", interaction.decisiveness)).strip().lower()
+    verbosity = str(stored.get("verbosity_preference", interaction.response_depth)).strip().lower()
+    technical_depth = str(stored.get("technical_depth", interaction.technical_depth)).strip().lower()
+    reply_tone = str(stored.get("reply_tone", "")).strip().lower()
+
+    if "high" in autonomy or "initiative" in autonomy:
+        temperament.execution_tempo = "fast-moving"
+        temperament.support_level = "light-touch"
+        temperament.summary = "high-initiative operator who wants decisive momentum with minimal drag"
+    elif "low" in autonomy or "careful" in autonomy or "guided" in autonomy:
+        temperament.execution_tempo = "deliberate"
+        temperament.support_level = "guided"
+        temperament.summary = "careful operator who benefits from explicit safeguards and stepwise confidence"
+
+    if any(token in decisiveness for token in ("strong", "clearly", "lead")):
+        temperament.risk_posture = "assertive"
+    if any(token in decisiveness for token in ("cautious", "careful", "tradeoff")):
+        temperament.risk_posture = "cautious"
+
+    if any(token in verbosity for token in ("concise", "crisp", "brief")):
+        temperament.briefing_style = "compressed"
+    elif any(token in verbosity for token in ("detailed", "thorough", "deep")):
+        temperament.briefing_style = "expanded"
+
+    if any(token in reply_tone for token in ("warm", "supportive", "friendly")):
+        temperament.support_level = "supportive"
+    elif any(token in reply_tone for token in ("clear", "direct", "concise", "crisp")):
+        temperament.briefing_style = "direct"
+
+    if technical_depth == "high":
+        temperament.summary += " and expects technical reasoning without oversimplification"
+
+    return temperament
+
+
 def format_memory_context(items: list[dict[str, Any]]) -> str:
     """Render relevant memory snippets as a compact prompt section."""
 
@@ -209,6 +263,7 @@ def build_assistant_system_context(
     memory_layers: AssistantMemoryLayers | None = None,
     identity: JarvisIdentityProfile | None = None,
     user_interaction: UserInteractionProfile | None = None,
+    user_temperament: UserTemperamentProfile | None = None,
 ) -> str:
     """Build a reusable JARVIS system context block."""
 
@@ -236,6 +291,18 @@ def build_assistant_system_context(
                 f"- Autonomy preference: {user_interaction.autonomy}",
                 f"- Technical level: {user_interaction.technical_depth}",
                 f"- Collaboration style: {user_interaction.collaboration_style}",
+            ]
+        )
+    if user_temperament is not None:
+        parts.extend(
+            [
+                "",
+                "User operating temperament:",
+                f"- Summary: {user_temperament.summary}",
+                f"- Risk posture: {user_temperament.risk_posture}",
+                f"- Execution tempo: {user_temperament.execution_tempo}",
+                f"- Briefing style: {user_temperament.briefing_style}",
+                f"- Support level: {user_temperament.support_level}",
             ]
         )
 

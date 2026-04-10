@@ -1117,6 +1117,11 @@ def test_operator_memory_analytics_route_returns_focus_and_lessons(tmp_path: Pat
     assert payload["focus_recommendations"]
     assert "recurring_patterns" in payload
     assert "improvement_opportunities" in payload
+    assert "friction_brief" in payload
+    assert "operating_profile" in payload
+    assert payload["friction_brief"]["summary"]
+    assert payload["friction_brief"]["root_cause"]
+    assert payload["operating_profile"]["summary"]
 
 
 def test_operator_memory_review_item_is_recorded_and_returned_in_analytics(tmp_path: Path):
@@ -1194,6 +1199,40 @@ def test_operator_memory_analytics_detects_recurring_patterns(tmp_path: Path):
     assert "review_category:quality" in keys
     assert "blocked_domain:voice" in keys
     assert payload["improvement_opportunities"]
+    assert payload["friction_brief"]["summary"]
+    assert payload["friction_brief"]["recommended_focus"]
+    assert payload["operating_profile"]["execution_mode"]
+
+
+def test_operator_memory_analytics_reflects_explicit_profile_preferences(tmp_path: Path):
+    client = _make_client(tmp_path)
+    bootstrap = client.post(
+        "/v1/auth/bootstrap",
+        json={
+            "username": "owner",
+            "password": "supersecret123",
+            "display_name": "Owner",
+        },
+    )
+    assert bootstrap.status_code == 200
+
+    profile = client.post(
+        "/v1/operator-memory/profile",
+        json={
+            "reply_tone": "warm and supportive",
+            "verbosity_preference": "concise-first",
+            "autonomy_preference": "high initiative",
+            "decisiveness_preference": "recommend clearly",
+        },
+    )
+    assert profile.status_code == 200
+
+    analytics = client.get("/v1/operator-memory/analytics")
+    assert analytics.status_code == 200
+    payload = analytics.json()
+    assert payload["operating_profile"]["execution_mode"] == "high-initiative"
+    assert payload["operating_profile"]["briefing_mode"] == "compressed"
+    assert "supportive framing" in payload["operating_profile"]["adaptation_note"].lower()
 
 
 def test_operator_memory_commander_brief_is_user_scoped_and_structured(tmp_path: Path):
@@ -1235,6 +1274,10 @@ def test_operator_memory_commander_brief_is_user_scoped_and_structured(tmp_path:
     assert owner_brief.status_code == 200
     owner_data = owner_brief.json()
     assert owner_data["recommendation"] == "Unblock Repair voice loop first."
+    assert owner_data["friction_summary"]
+    assert owner_data["root_cause"]
+    assert "User temperament:" in owner_data["planner_prompt"]
+    assert "Command posture:" in owner_data["planner_prompt"]
     assert owner_data["queue"][0]["action_hint"] == "planner_handoff"
 
     guest_brief = guest.get("/v1/operator-memory/commander-brief")

@@ -253,6 +253,23 @@ class ReviewItem:
     created_at: str = ""
 
 
+@dataclass(slots=True)
+class FrictionBrief:
+    summary: str = ""
+    root_cause: str = ""
+    pressure_points: list[str] = field(default_factory=list)
+    recommended_focus: str = ""
+
+
+@dataclass(slots=True)
+class OperatingProfileBrief:
+    summary: str = ""
+    execution_mode: str = "balanced"
+    briefing_mode: str = "direct"
+    caution_level: str = "measured"
+    adaptation_note: str = ""
+
+
 class OperatorMemory:
     """Simple JSON-backed operator memory for cross-session HUD personalization."""
 
@@ -1543,6 +1560,89 @@ class OperatorMemory:
                 f"Build a reusable recovery routine for {first.title or 'the current blocked mission'}."
             )
 
+        friction_summary = "No major friction loop is dominating right now."
+        friction_root_cause = "Signals are currently spread across normal background work."
+        pressure_points: list[str] = []
+        if blocked_missions:
+            pressure_points.append(
+                f"{len(blocked_missions)} blocked mission{'s' if len(blocked_missions) != 1 else ''} need recovery."
+            )
+        if self._signals.urgent_reviews:
+            pressure_points.append(
+                f"{self._signals.urgent_reviews} urgent review signal{'s' if self._signals.urgent_reviews != 1 else ''} are still open."
+            )
+        if recurring_patterns:
+            primary_pattern = recurring_patterns[0]
+            if primary_pattern["kind"] == "review_category":
+                friction_summary = f"Repeated {primary_pattern['key']} issues are slowing confidence."
+                friction_root_cause = (
+                    f"The same review category has appeared {primary_pattern['count']} times, which suggests "
+                    "a prompt, workflow, or tool path is consistently underperforming."
+                )
+            else:
+                friction_summary = f"{primary_pattern['key'].title()} work is stalling repeatedly."
+                friction_root_cause = (
+                    f"The same work domain has blocked {primary_pattern['count']} times, which suggests "
+                    "a missing checklist, recovery path, or execution handoff."
+                )
+            pressure_points.append(f"Primary recurring pattern: {primary_pattern['kind'].replace('_', ' ')}::{primary_pattern['key']}")
+        elif blocked_missions:
+            first = blocked_missions[0]
+            friction_summary = f"{first.title or 'The top mission'} is creating the main drag right now."
+            friction_root_cause = first.next_step or "A blocked mission is not getting a clean recovery loop."
+        elif self._review_items:
+            first = self._review_items[0]
+            friction_summary = f"{first.label or 'A review item'} is the clearest quality signal right now."
+            friction_root_cause = first.summary or "A recent response or workflow needs review before it repeats."
+        elif bottlenecks:
+            first = bottlenecks[0]
+            friction_summary = f"{first.get('label', 'Recent work')} still carries reusable friction."
+            friction_root_cause = first.get("lesson", "") or "A recent lesson should be operationalized before it repeats."
+
+        friction_brief = FrictionBrief(
+            summary=friction_summary,
+            root_cause=friction_root_cause,
+            pressure_points=pressure_points[:4],
+            recommended_focus=(improvement_opportunities[0] if improvement_opportunities else focus[0]),
+        )
+        execution_mode = "balanced"
+        briefing_mode = "direct"
+        caution_level = "measured"
+        adaptation_note = "JARVIS is balancing momentum with verification."
+        summary = "Balanced operator who benefits from clear recommendations and bounded next steps."
+        autonomy = self._profile.autonomy_preference.strip().lower()
+        decisiveness = self._profile.decisiveness_preference.strip().lower()
+        verbosity = self._profile.verbosity_preference.strip().lower()
+        reply_tone = self._profile.reply_tone.strip().lower()
+        if "high" in autonomy or "initiative" in autonomy:
+            execution_mode = "high-initiative"
+            summary = "High-initiative operator who wants fast execution with minimal drag."
+            adaptation_note = "JARVIS should compress the brief, recommend strongly, and route work quickly."
+        elif "low" in autonomy or "careful" in autonomy or "guided" in autonomy:
+            execution_mode = "guided"
+            summary = "Careful operator who benefits from explicit safeguards and stepwise confidence."
+            adaptation_note = "JARVIS should slow the tempo slightly and make verification visible."
+
+        if any(token in decisiveness for token in ("cautious", "careful", "tradeoff")) or self._signals.urgent_reviews >= 3:
+            caution_level = "elevated"
+        elif any(token in decisiveness for token in ("strong", "clearly", "lead")):
+            caution_level = "assertive"
+
+        if any(token in verbosity for token in ("concise", "brief", "crisp")):
+            briefing_mode = "compressed"
+        elif any(token in verbosity for token in ("detailed", "thorough", "deep")):
+            briefing_mode = "expanded"
+        if "supportive" in reply_tone or "warm" in reply_tone:
+            adaptation_note = "JARVIS should keep the recommendation clear while using a more supportive framing."
+
+        operating_profile = OperatingProfileBrief(
+            summary=summary,
+            execution_mode=execution_mode,
+            briefing_mode=briefing_mode,
+            caution_level=caution_level,
+            adaptation_note=adaptation_note,
+        )
+
         return {
             "signals": asdict(self._signals),
             "active_missions": [
@@ -1570,6 +1670,8 @@ class OperatorMemory:
             "review_items": [asdict(item) for item in self._review_items[:8]],
             "recurring_patterns": recurring_patterns,
             "improvement_opportunities": improvement_opportunities,
+            "friction_brief": asdict(friction_brief),
+            "operating_profile": asdict(operating_profile),
         }
 
     def add_review_item(

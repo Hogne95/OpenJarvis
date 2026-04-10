@@ -664,6 +664,8 @@ class OperatorMemoryAnalyticsResponse(BaseModel):
     review_items: list[dict[str, Any]]
     recurring_patterns: list[dict[str, Any]]
     improvement_opportunities: list[str]
+    friction_brief: dict[str, Any]
+    operating_profile: dict[str, Any]
 
 
 class OperatorCommanderQueueItem(BaseModel):
@@ -686,12 +688,17 @@ class OperatorCommanderBriefResponse(BaseModel):
     headline: str
     recommendation: str
     why: str
+    friction_summary: str
+    root_cause: str
     risks: list[str]
     best_next_step: str
     queue: list[OperatorCommanderQueueItem]
     execution_plan: list[OperatorCommanderExecutionPhase]
     operating_mode: str
     interaction_style: str
+    user_temperament: str
+    command_posture: str
+    guidance_note: str
     planner_prompt: str
 
 

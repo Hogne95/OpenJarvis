@@ -7,6 +7,7 @@ from openjarvis.assistant import (
     analyze_decision_request,
     build_assistant_system_context,
     infer_user_interaction_profile,
+    infer_user_temperament,
 )
 from openjarvis.server.app import create_app
 from openjarvis.server.operator_memory import OperatorMemory
@@ -90,6 +91,33 @@ def test_infer_user_interaction_profile_detects_fast_autonomous_technical_style(
     assert profile.pace == "fast-moving"
     assert profile.technical_depth == "high"
     assert "lead" in profile.decisiveness.lower() or "recommend" in profile.decisiveness.lower()
+
+
+def test_infer_user_temperament_recognizes_high_initiative_operator() -> None:
+    interaction = infer_user_interaction_profile(
+        query="Continue until done and keep it concise.",
+        recent_user_messages=["go ahead", "just do it", "double check the backend"],
+        stored_profile={
+            "reply_tone": "clear and concise",
+            "autonomy_preference": "high initiative",
+            "verbosity_preference": "concise-first",
+            "technical_depth": "high",
+        },
+    )
+    temperament = infer_user_temperament(
+        stored_profile={
+            "reply_tone": "clear and concise",
+            "autonomy_preference": "high initiative",
+            "verbosity_preference": "concise-first",
+            "technical_depth": "high",
+        },
+        interaction_profile=interaction,
+    )
+
+    assert temperament.execution_tempo == "fast-moving"
+    assert temperament.support_level == "light-touch"
+    assert temperament.briefing_style in {"compressed", "direct"}
+    assert "high-initiative operator" in temperament.summary
 
 
 def test_operator_memory_relevant_context_is_selective(tmp_path) -> None:
@@ -217,6 +245,8 @@ def test_chat_route_injects_identity_and_relevant_memory(tmp_path) -> None:
     assert "Recommendation" in first.content
     assert "User interaction profile:" in first.content
     assert "Autonomy preference: high initiative" in first.content
+    assert "User operating temperament:" in first.content
+    assert "Support level: light-touch" in first.content
     assert "Identity/Profile:" in first.content
     assert "Session Focus:" in first.content
     assert "local-first" in first.content.lower()
