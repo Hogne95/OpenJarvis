@@ -16,6 +16,7 @@ from openjarvis.security.file_policy import (
 )
 from openjarvis.security.guardrails import GuardrailsEngine, SecurityBlockError
 from openjarvis.security.scanner import PIIScanner, SecretScanner
+from openjarvis.security.secrets import apply_secret_file_overrides, resolve_secret
 from openjarvis.security.ssrf import check_ssrf, is_private_ip
 from openjarvis.security.types import (
     RedactionMode,
@@ -115,9 +116,11 @@ __all__ = [
     "SecurityEvent",
     "SecurityEventType",
     "ThreatLevel",
+    "apply_secret_file_overrides",
     "check_ssrf",
     "filter_sensitive_paths",
     "is_private_ip",
     "is_sensitive_file",
+    "resolve_secret",
     "setup_security",
 ]

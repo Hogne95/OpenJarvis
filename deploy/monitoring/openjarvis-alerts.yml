@@ -1,0 +1,30 @@
+groups:
+  - name: openjarvis
+    rules:
+      - alert: OpenJarvisDown
+        expr: up{job="openjarvis"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: OpenJarvis is unreachable
+          description: Prometheus could not scrape the OpenJarvis endpoint for two minutes.
+
+      - alert: OpenJarvisVoiceLoopInactive
+        expr: openjarvis_voice_loop_active == 0
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: Voice loop inactive
+          description: Voice loop has been inactive for at least ten minutes.
+
+      - alert: OpenJarvisManagedAgentsBusy
+        expr: openjarvis_managed_agents_running > 8
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: High managed-agent concurrency
+          description: More than eight managed agents are running concurrently.
+

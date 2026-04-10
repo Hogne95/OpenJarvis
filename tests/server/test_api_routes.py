@@ -6,7 +6,9 @@ fastapi = pytest.importorskip("fastapi")
 from fastapi import FastAPI  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
 
+from openjarvis.core.types import TelemetryRecord  # noqa: E402
 from openjarvis.server.api_routes import include_all_routes  # noqa: E402
+from openjarvis.telemetry.store import TelemetryStore  # noqa: E402
 
 
 def _make_app():
@@ -70,7 +72,39 @@ class TestMetricsRoute:
         client = TestClient(_make_app())
         resp = client.get("/metrics")
         assert resp.status_code == 200
-        assert "openjarvis" in resp.text or "No metrics" in resp.text
+        assert "openjarvis_build_info" in resp.text
+
+    def test_metrics_endpoint_reports_telemetry_totals(self, tmp_path, monkeypatch):
+        from openjarvis.core import config as core_config
+
+        telemetry_db = tmp_path / "telemetry.db"
+        store = TelemetryStore(telemetry_db)
+        store.record(
+            TelemetryRecord(
+                timestamp=1.0,
+                model_id="qwen3:8b",
+                engine="ollama",
+                total_tokens=42,
+                prompt_tokens=12,
+                completion_tokens=30,
+                latency_seconds=1.5,
+                cost_usd=0.0025,
+                energy_joules=3.5,
+            )
+        )
+        store.close()
+        monkeypatch.setattr(core_config, "DEFAULT_CONFIG_DIR", tmp_path)
+
+        app = _make_app()
+        app.state.session_start = 0.0
+        client = TestClient(app)
+        resp = client.get("/metrics")
+
+        assert resp.status_code == 200
+        assert "openjarvis_telemetry_calls_total 1" in resp.text
+        assert "openjarvis_telemetry_tokens_total 42" in resp.text
+        assert "openjarvis_telemetry_cost_usd_total 0.002500" in resp.text
+        assert "openjarvis_telemetry_latency_seconds_total 1.500000" in resp.text
 
 
 class TestSkillRoutes:

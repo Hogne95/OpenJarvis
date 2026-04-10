@@ -14,6 +14,7 @@ from openjarvis.cli.doctor_cmd import (
     _check_default_model,
     _check_nodejs,
     _check_python_version,
+    CheckResult,
 )
 
 
@@ -23,6 +24,7 @@ class TestDoctorHelp:
         assert result.exit_code == 0
         out = result.output.lower()
         assert "diagnostic" in out or "doctor" in out
+        assert "production" in out
 
 
 class TestDoctorRuns:
@@ -70,6 +72,28 @@ class TestDoctorJsonOutput:
             assert "name" in entry
             assert "status" in entry
             assert "message" in entry
+
+    def test_doctor_json_output_with_production(self) -> None:
+        mock_config = MagicMock()
+        mock_config.intelligence.default_model = ""
+
+        with (
+            patch("openjarvis.cli.doctor_cmd.load_config", return_value=mock_config),
+            patch(
+                "openjarvis.cli.doctor_cmd.DEFAULT_CONFIG_PATH",
+                Path("/tmp/nonexistent/config.toml"),
+            ),
+            patch("openjarvis.cli.doctor_cmd._check_engines", return_value=[]),
+            patch("openjarvis.cli.doctor_cmd._check_models", return_value=[]),
+            patch(
+                "openjarvis.cli.doctor_cmd._check_production_bundle",
+                return_value=CheckResult("Production deployment", "ok", "ready"),
+            ),
+        ):
+            result = CliRunner().invoke(cli, ["doctor", "--json", "--production"])
+        assert result.exit_code == 0
+        data = json.loads(result.output)
+        assert any(entry["name"] == "Production deployment" for entry in data)
 
 
 class TestCheckPythonVersion:

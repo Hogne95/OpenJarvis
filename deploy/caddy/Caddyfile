@@ -1,0 +1,15 @@
+{$OPENJARVIS_DOMAIN} {
+    encode zstd gzip
+
+    @api path /v1/* /health /docs* /openapi.json /assets/*
+
+    reverse_proxy @api jarvis:8000
+    reverse_proxy jarvis:8000
+
+    header {
+        Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
+        X-Content-Type-Options "nosniff"
+        X-Frame-Options "DENY"
+        Referrer-Policy "strict-origin-when-cross-origin"
+    }
+}

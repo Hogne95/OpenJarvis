@@ -1,0 +1,19 @@
+services:
+  prometheus:
+    image: prom/prometheus:latest
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --web.enable-lifecycle
+    environment:
+      - OPENJARVIS_DOMAIN=${OPENJARVIS_DOMAIN}
+    volumes:
+      - ../monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ../monitoring/openjarvis-alerts.yml:/etc/prometheus/openjarvis-alerts.yml:ro
+      - prometheus-data:/prometheus
+    ports:
+      - "9090:9090"
+    restart: unless-stopped
+
+volumes:
+  prometheus-data:
+

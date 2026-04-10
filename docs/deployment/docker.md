@@ -29,6 +29,23 @@ Expected response:
 {"status": "ok"}
 ```
 
+## Production Stack
+
+For broader-user deployments, use the production reference stack instead of the
+basic compose file. It adds:
+
+- Caddy reverse proxy with TLS
+- internal Docker-only JARVIS/Ollama networking
+- env-file based secret injection
+- stricter origin and host defaults
+
+See [Production Hardening](production-hardening.md) and:
+
+```bash
+cp deploy/env/openjarvis.production.env.example deploy/env/openjarvis.production.env
+docker compose -f deploy/docker/docker-compose.production.yml up -d --build
+```
+
 ## Docker Images
 
 ### CPU-Only Image (`Dockerfile`)

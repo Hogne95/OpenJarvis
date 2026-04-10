@@ -1,0 +1,10 @@
+[Unit]
+Description=OpenJarvis backup snapshot
+After=network.target
+
+[Service]
+Type=oneshot
+User=openjarvis
+WorkingDirectory=/opt/openjarvis
+ExecStart=/opt/openjarvis/scripts/backup_openjarvis.sh
+Environment=HOME=/opt/openjarvis

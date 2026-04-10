@@ -40,6 +40,8 @@ Thumbs.db
 # Secrets
 .env
 .env.*
+deploy/env/secrets/
+deploy/env/*.env
 
 # Project
 *.sqlite

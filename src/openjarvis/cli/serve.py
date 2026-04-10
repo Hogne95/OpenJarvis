@@ -50,6 +50,23 @@ def serve(
     """Start the OpenAI-compatible API server."""
     console = Console(stderr=True)
 
+    from openjarvis.security.secrets import apply_secret_file_overrides, resolve_secret
+
+    apply_secret_file_overrides(
+        [
+            "OPENJARVIS_API_KEY",
+            "OPENAI_API_KEY",
+            "ANTHROPIC_API_KEY",
+            "GEMINI_API_KEY",
+            "GOOGLE_API_KEY",
+            "OPENROUTER_API_KEY",
+            "TWILIO_AUTH_TOKEN",
+            "BLUEBUBBLES_PASSWORD",
+            "WHATSAPP_VERIFY_TOKEN",
+            "WHATSAPP_APP_SECRET",
+        ]
+    )
+
     # Check for server dependencies
     try:
         import uvicorn  # noqa: F401
@@ -108,11 +125,11 @@ def serve(
     import os
 
     _has_cloud = (
-        os.environ.get("OPENAI_API_KEY")
-        or os.environ.get("ANTHROPIC_API_KEY")
-        or os.environ.get("GEMINI_API_KEY")
-        or os.environ.get("GOOGLE_API_KEY")
-        or os.environ.get("OPENROUTER_API_KEY")
+        resolve_secret("OPENAI_API_KEY")
+        or resolve_secret("ANTHROPIC_API_KEY")
+        or resolve_secret("GEMINI_API_KEY")
+        or resolve_secret("GOOGLE_API_KEY")
+        or resolve_secret("OPENROUTER_API_KEY")
     )
     if _has_cloud and engine_name != "cloud":
         try:
@@ -434,7 +451,7 @@ def serve(
     # --- Channel Gateway: API key, sessions, ChannelBridge ---
     import os as _os
 
-    api_key = _os.environ.get("OPENJARVIS_API_KEY", "")
+    api_key = resolve_secret("OPENJARVIS_API_KEY")
     if not api_key:
         try:
             import tomllib
@@ -466,10 +483,10 @@ def serve(
         logger.info("Credentials loaded — %s", ", ".join(_cred_parts))
 
     webhook_config = {
-        "twilio_auth_token": _os.environ.get("TWILIO_AUTH_TOKEN", ""),
-        "bluebubbles_password": _os.environ.get("BLUEBUBBLES_PASSWORD", ""),
-        "whatsapp_verify_token": _os.environ.get("WHATSAPP_VERIFY_TOKEN", ""),
-        "whatsapp_app_secret": _os.environ.get("WHATSAPP_APP_SECRET", ""),
+        "twilio_auth_token": resolve_secret("TWILIO_AUTH_TOKEN"),
+        "bluebubbles_password": resolve_secret("BLUEBUBBLES_PASSWORD"),
+        "whatsapp_verify_token": resolve_secret("WHATSAPP_VERIFY_TOKEN"),
+        "whatsapp_app_secret": resolve_secret("WHATSAPP_APP_SECRET"),
     }
 
     # Wrap existing channel in ChannelBridge orchestrator

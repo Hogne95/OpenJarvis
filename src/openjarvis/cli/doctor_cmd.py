@@ -7,6 +7,7 @@ import shutil
 import subprocess
 import sys
 from dataclasses import asdict, dataclass
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import click
@@ -281,6 +282,32 @@ def _check_nodejs() -> CheckResult:
         return CheckResult("Node.js", "warn", f"Error checking version: {exc}")
 
 
+def _check_production_bundle() -> CheckResult:
+    """Check whether production deployment assets are ready."""
+    try:
+        from scripts.validate_openjarvis_production import validate_production
+
+        repo_root = Path(__file__).resolve().parents[3]
+        errors, warnings, _voice_note = validate_production(repo_root)
+        if errors:
+            return CheckResult(
+                "Production deployment",
+                "fail",
+                "Production bundle is not ready",
+                details="; ".join(errors),
+            )
+        if warnings:
+            return CheckResult(
+                "Production deployment",
+                "warn",
+                "Production bundle is ready with warnings",
+                details="; ".join(warnings),
+            )
+        return CheckResult("Production deployment", "ok", "Production bundle is ready")
+    except Exception as exc:
+        return CheckResult("Production deployment", "warn", f"Check unavailable ({exc})")
+
+
 # -- Main command -------------------------------------------------------------
 
 _STATUS_ICONS = {
@@ -290,7 +317,7 @@ _STATUS_ICONS = {
 }
 
 
-def _run_all_checks() -> List[CheckResult]:
+def _run_all_checks(*, include_production: bool = False) -> List[CheckResult]:
     """Run all diagnostic checks and return results."""
     checks: List[CheckResult] = []
     checks.append(_check_python_version())
@@ -302,6 +329,8 @@ def _run_all_checks() -> List[CheckResult]:
     checks.extend(_check_optional_deps())
     checks.append(_check_nodejs())
     checks.append(_check_security_profile())
+    if include_production:
+        checks.append(_check_production_bundle())
     return checks
 
 
@@ -312,9 +341,15 @@ def _results_to_dicts(checks: List[CheckResult]) -> List[Dict[str, Any]]:
 
 @click.command()
 @click.option("--json", "as_json", is_flag=True, help="Output results as JSON.")
-def doctor(as_json: bool) -> None:
+@click.option(
+    "--production",
+    "production",
+    is_flag=True,
+    help="Include production deployment readiness checks.",
+)
+def doctor(as_json: bool, production: bool) -> None:
     """Run diagnostic checks on your OpenJarvis installation."""
-    checks = _run_all_checks()
+    checks = _run_all_checks(include_production=production)
 
     if as_json:
         click.echo(json.dumps(_results_to_dicts(checks), indent=2))

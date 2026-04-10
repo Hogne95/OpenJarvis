@@ -32,3 +32,10 @@ Register OpenJarvis as a launch agent on macOS.
 Run OpenJarvis as an OpenAI-compatible HTTP server via `jarvis serve`.
 
 [:octicons-arrow-right-24: API server guide](api-server.md)
+
+## Production Hardening
+
+Reference guidance for TLS, secrets, monitoring, backups, and realistic remote
+voice expectations.
+
+[:octicons-arrow-right-24: Production hardening](production-hardening.md)
