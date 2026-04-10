@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import subprocess
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -14,6 +15,7 @@ from openjarvis.connectors.store import KnowledgeStore
 from openjarvis.core.registry import ConnectorRegistry
 from openjarvis.server.app import create_app
 from openjarvis.server.user_store import UserStore
+from openjarvis.server.web_security import AuthRateLimiter
 
 
 def _make_engine():
@@ -36,7 +38,19 @@ def _make_client(tmp_path: Path, *, with_agent_manager: bool = False) -> TestCli
     original_store = app.state.user_store
     original_store.close()
     app.state.user_store = UserStore(str(tmp_path / "web-users.db"))
-    return TestClient(app)
+    client = _browser_client(app)
+    return client
+
+
+def _browser_client(app) -> TestClient:
+    client = TestClient(app)
+    client.headers.update(
+        {
+            "Origin": "http://localhost:5173",
+            "Referer": "http://localhost:5173/",
+        }
+    )
+    return client
 
 
 def _init_git_repo(path: Path) -> Path:
@@ -100,6 +114,25 @@ def test_bootstrap_creates_first_admin_and_session(tmp_path: Path):
     assert me.json()["user"]["username"] == "hogne"
 
 
+def test_bootstrap_sets_secure_cookie_when_request_is_https(tmp_path: Path):
+    client = _make_client(tmp_path)
+
+    response = client.post(
+        "/v1/auth/bootstrap",
+        json={
+            "username": "Hogne",
+            "password": "supersecret123",
+            "display_name": "Hogne",
+        },
+        headers={"X-Forwarded-Proto": "https"},
+    )
+
+    assert response.status_code == 200
+    set_cookie = response.headers.get("set-cookie", "")
+    assert "Secure" in set_cookie
+    assert "SameSite=none" in set_cookie
+
+
 def test_bootstrap_rejects_second_admin_creation(tmp_path: Path):
     client = _make_client(tmp_path)
     first = {
@@ -161,6 +194,86 @@ def test_login_logout_and_me_round_trip(tmp_path: Path):
     assert after_logout.status_code == 401
 
 
+def test_session_idle_timeout_expires_inactive_browser_session(tmp_path: Path):
+    previous = os.environ.get("OPENJARVIS_SESSION_IDLE_MINUTES")
+    os.environ["OPENJARVIS_SESSION_IDLE_MINUTES"] = "1"
+    try:
+        client = _make_client(tmp_path)
+    finally:
+        if previous is None:
+            os.environ.pop("OPENJARVIS_SESSION_IDLE_MINUTES", None)
+        else:
+            os.environ["OPENJARVIS_SESSION_IDLE_MINUTES"] = previous
+
+    bootstrap = client.post(
+        "/v1/auth/bootstrap",
+        json={
+            "username": "owner",
+            "password": "supersecret123",
+            "display_name": "Owner",
+        },
+    )
+    assert bootstrap.status_code == 200
+
+    token = bootstrap.cookies.get("openjarvis_session")
+    token_hash = client.app.state.user_store._db.execute(
+        "SELECT session_token_hash FROM web_sessions"
+    ).fetchone()["session_token_hash"]
+    client.app.state.user_store._db.execute(
+        "UPDATE web_sessions SET last_seen_at = datetime('now', '-5 minutes') WHERE session_token_hash = ?",
+        (token_hash,),
+    )
+    client.app.state.user_store._db.commit()
+
+    client.cookies.set("openjarvis_session", token)
+    expired = client.get("/v1/auth/me")
+    assert expired.status_code == 401
+
+
+def test_login_rate_limit_blocks_repeated_failures(tmp_path: Path):
+    client = _make_client(tmp_path)
+    client.app.state.auth_rate_limiter = AuthRateLimiter(max_attempts=2, window_seconds=60)
+    client.post(
+        "/v1/auth/bootstrap",
+        json={
+            "username": "owner",
+            "password": "supersecret123",
+            "display_name": "Owner",
+        },
+    )
+    client.post("/v1/auth/logout")
+
+    first = client.post("/v1/auth/login", json={"username": "owner", "password": "wrong-password"})
+    second = client.post("/v1/auth/login", json={"username": "owner", "password": "wrong-password"})
+    third = client.post("/v1/auth/login", json={"username": "owner", "password": "wrong-password"})
+
+    assert first.status_code == 401
+    assert second.status_code == 401
+    assert third.status_code == 429
+    assert "too many authentication attempts" in third.json()["detail"].lower()
+    assert 1 <= int(third.headers.get("retry-after") or "0") <= 60
+
+
+def test_default_cors_allows_localhost_but_not_arbitrary_origins(tmp_path: Path):
+    client = _make_client(tmp_path)
+
+    allowed = client.get("/health", headers={"Origin": "http://localhost:5173"})
+    denied = client.get("/health", headers={"Origin": "https://evil.example"})
+
+    assert allowed.headers.get("access-control-allow-origin") == "http://localhost:5173"
+    assert denied.headers.get("access-control-allow-origin") is None
+
+
+def test_default_trusted_hosts_reject_unknown_host_header(tmp_path: Path):
+    client = _make_client(tmp_path)
+
+    allowed = client.get("/health", headers={"Host": "localhost"})
+    denied = client.get("/health", headers={"Host": "evil.example"})
+
+    assert allowed.status_code == 200
+    assert denied.status_code == 400
+
+
 def test_superadmin_can_create_and_list_users(tmp_path: Path):
     client = _make_client(tmp_path)
     bootstrap = client.post(
@@ -216,7 +329,7 @@ def test_admin_routes_enforce_role_boundaries(tmp_path: Path):
         role="user",
     )
 
-    manager = TestClient(app)
+    manager = _browser_client(app)
     login_manager = manager.post(
         "/v1/auth/login",
         json={"username": "manager", "password": "managersecret123"},
@@ -272,7 +385,7 @@ def test_superadmin_can_update_user_and_reset_password(tmp_path: Path):
     assert updated["role"] == "restricted"
     assert updated["status"] == "disabled"
 
-    guest = TestClient(app)
+    guest = _browser_client(app)
     disabled_login = guest.post(
         "/v1/auth/login",
         json={"username": "guest", "password": "guestsecret123"},
@@ -324,7 +437,7 @@ def test_operator_memory_routes_are_isolated_per_authenticated_user(tmp_path: Pa
     )
 
     owner = app_client
-    guest = TestClient(app)
+    guest = _browser_client(app)
     login_guest = guest.post(
         "/v1/auth/login",
         json={"username": "guest", "password": "guestsecret123"},
@@ -370,7 +483,7 @@ def test_managed_agents_are_isolated_per_authenticated_user(tmp_path: Path):
         role="user",
     )
 
-    guest = TestClient(app)
+    guest = _browser_client(app)
     login_guest = guest.post(
         "/v1/auth/login",
         json={"username": "guest", "password": "guestsecret123"},
@@ -428,7 +541,7 @@ def test_workspace_and_workbench_state_are_isolated_per_authenticated_user(tmp_p
     repo_owner = _init_git_repo(tmp_path / "repo-owner")
     repo_guest = _init_git_repo(tmp_path / "repo-guest")
 
-    guest = TestClient(app)
+    guest = _browser_client(app)
     login_guest = guest.post(
         "/v1/auth/login",
         json={"username": "guest", "password": "guestsecret123"},
@@ -492,7 +605,7 @@ def test_coding_workspace_state_is_isolated_per_authenticated_user(tmp_path: Pat
     target = repo / "note.txt"
     target.write_text("old content\n", encoding="utf-8")
 
-    guest = TestClient(app)
+    guest = _browser_client(app)
     login_guest = guest.post(
         "/v1/auth/login",
         json={"username": "guest", "password": "guestsecret123"},
@@ -544,7 +657,7 @@ def test_action_center_state_is_isolated_per_authenticated_user(tmp_path: Path):
         role="user",
     )
 
-    guest = TestClient(app)
+    guest = _browser_client(app)
     login_guest = guest.post(
         "/v1/auth/login",
         json={"username": "guest", "password": "guestsecret123"},
@@ -599,7 +712,7 @@ def test_connector_backed_routes_require_superadmin_until_per_user_accounts_exis
         role="user",
     )
 
-    guest = TestClient(app)
+    guest = _browser_client(app)
     login_guest = guest.post(
         "/v1/auth/login",
         json={"username": "guest", "password": "guestsecret123"},
@@ -639,7 +752,7 @@ def test_action_center_knowledge_summaries_are_scoped_per_authenticated_user(tmp
     assert owner_me.status_code == 200
     owner_user_id = owner_me.json()["user"]["id"]
 
-    guest = TestClient(app)
+    guest = _browser_client(app)
     login_guest = guest.post(
         "/v1/auth/login",
         json={"username": "guest", "password": "guestsecret123"},
@@ -753,7 +866,7 @@ def test_connector_accounts_are_isolated_per_authenticated_user(tmp_path: Path):
         role="user",
     )
 
-    guest = TestClient(app)
+    guest = _browser_client(app)
     login_guest = guest.post(
         "/v1/auth/login",
         json={"username": "guest", "password": "guestsecret123"},
@@ -818,7 +931,7 @@ def test_connector_accounts_cannot_be_modified_across_users(tmp_path: Path):
         role="user",
     )
 
-    guest = TestClient(app)
+    guest = _browser_client(app)
     login_guest = guest.post(
         "/v1/auth/login",
         json={"username": "guest", "password": "guestsecret123"},
@@ -908,7 +1021,7 @@ def test_connector_runtime_is_scoped_per_account(tmp_path: Path):
         role="user",
     )
 
-    guest = TestClient(app)
+    guest = _browser_client(app)
     login_guest = guest.post(
         "/v1/auth/login",
         json={"username": "guest", "password": "guestsecret123"},
@@ -1005,7 +1118,7 @@ def test_connector_account_runtime_denies_cross_user_access(tmp_path: Path):
         role="user",
     )
 
-    guest = TestClient(app)
+    guest = _browser_client(app)
     login_guest = guest.post(
         "/v1/auth/login",
         json={"username": "guest", "password": "guestsecret123"},
@@ -1266,7 +1379,7 @@ def test_operator_memory_commander_brief_is_user_scoped_and_structured(tmp_path:
         },
     )
 
-    guest = TestClient(app)
+    guest = _browser_client(app)
     guest_login = guest.post("/v1/auth/login", json={"username": "guest", "password": "guestsecret123"})
     assert guest_login.status_code == 200
 

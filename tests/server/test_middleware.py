@@ -1,10 +1,17 @@
-"""Tests for security middleware -- HTTP security headers."""
+"""Tests for security middleware -- HTTP security headers and request guards."""
 
 from __future__ import annotations
 
 from unittest.mock import patch
 
-from openjarvis.server.middleware import SECURITY_HEADERS, create_security_middleware
+from openjarvis.server.auth import SESSION_COOKIE_NAME
+from openjarvis.server.web_security import ApiRateLimiter
+from openjarvis.server.middleware import (
+    SECURITY_HEADERS,
+    create_api_rate_limit_middleware,
+    create_csrf_middleware,
+    create_security_middleware,
+)
 
 
 class TestSecurityHeaders:
@@ -118,3 +125,105 @@ class TestSecurityHeaders:
         assert "access-control-allow-origin" in resp.headers
         # Security headers should NOT be present on preflight
         assert "X-Frame-Options" not in resp.headers
+
+    def test_csrf_middleware_blocks_cross_site_cookie_post(self) -> None:
+        import pytest
+
+        fastapi = pytest.importorskip("fastapi")
+        from fastapi.testclient import TestClient
+
+        app = fastapi.FastAPI()
+        middleware_cls = create_csrf_middleware(["http://localhost:5173"])
+        assert middleware_cls is not None
+        app.add_middleware(middleware_cls)
+
+        @app.post("/v1/protected")
+        def protected() -> dict:
+            return {"ok": True}
+
+        client = TestClient(app)
+        client.cookies.set(SESSION_COOKIE_NAME, "session-token")
+        resp = client.post(
+            "/v1/protected",
+            headers={"Origin": "https://evil.example"},
+        )
+        assert resp.status_code == 403
+        assert "cross-site" in resp.json()["detail"].lower()
+
+    def test_csrf_middleware_allows_same_origin_cookie_post(self) -> None:
+        import pytest
+
+        fastapi = pytest.importorskip("fastapi")
+        from fastapi.testclient import TestClient
+
+        app = fastapi.FastAPI()
+        middleware_cls = create_csrf_middleware(["http://localhost:5173"])
+        assert middleware_cls is not None
+        app.add_middleware(middleware_cls)
+
+        @app.post("/v1/protected")
+        def protected() -> dict:
+            return {"ok": True}
+
+        client = TestClient(app)
+        client.cookies.set(SESSION_COOKIE_NAME, "session-token")
+        resp = client.post(
+            "/v1/protected",
+            headers={"Origin": "http://localhost:5173"},
+        )
+        assert resp.status_code == 200
+
+    def test_api_rate_limit_middleware_blocks_bursty_cookie_posts(self) -> None:
+        import pytest
+
+        fastapi = pytest.importorskip("fastapi")
+        from fastapi.testclient import TestClient
+
+        app = fastapi.FastAPI()
+        app.state.api_rate_limiter = ApiRateLimiter(max_attempts=2, window_seconds=60)
+        csrf_middleware_cls = create_csrf_middleware(["http://localhost:5173"])
+        rate_limit_middleware_cls = create_api_rate_limit_middleware()
+        assert csrf_middleware_cls is not None
+        assert rate_limit_middleware_cls is not None
+        app.add_middleware(rate_limit_middleware_cls)
+        app.add_middleware(csrf_middleware_cls)
+
+        @app.post("/v1/protected")
+        def protected() -> dict:
+            return {"ok": True}
+
+        client = TestClient(app)
+        client.cookies.set(SESSION_COOKIE_NAME, "session-token")
+        headers = {"Origin": "http://localhost:5173"}
+        first = client.post("/v1/protected", headers=headers)
+        second = client.post("/v1/protected", headers=headers)
+        third = client.post("/v1/protected", headers=headers)
+
+        assert first.status_code == 200
+        assert second.status_code == 200
+        assert third.status_code == 429
+        assert "slow down" in third.json()["detail"].lower()
+
+    def test_api_rate_limit_middleware_skips_voice_routes(self) -> None:
+        import pytest
+
+        fastapi = pytest.importorskip("fastapi")
+        from fastapi.testclient import TestClient
+
+        app = fastapi.FastAPI()
+        app.state.api_rate_limiter = ApiRateLimiter(max_attempts=1, window_seconds=60)
+        rate_limit_middleware_cls = create_api_rate_limit_middleware()
+        assert rate_limit_middleware_cls is not None
+        app.add_middleware(rate_limit_middleware_cls)
+
+        @app.post("/v1/voice-loop/interrupt")
+        def interrupt() -> dict:
+            return {"ok": True}
+
+        client = TestClient(app)
+        client.cookies.set(SESSION_COOKIE_NAME, "session-token")
+        first = client.post("/v1/voice-loop/interrupt")
+        second = client.post("/v1/voice-loop/interrupt")
+
+        assert first.status_code == 200
+        assert second.status_code == 200

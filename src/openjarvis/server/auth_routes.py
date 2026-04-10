@@ -12,6 +12,7 @@ from openjarvis.server.auth import (
     get_current_user,
     require_role_if_bootstrapped,
 )
+from openjarvis.server.web_security import resolve_cookie_settings
 
 
 class BootstrapRequest(BaseModel):
@@ -45,16 +46,38 @@ class AdminResetPasswordRequest(BaseModel):
 def create_auth_router() -> APIRouter:
     router = APIRouter(prefix="/v1/auth", tags=["auth"])
 
-    def _set_session_cookie(response: Response, token: str) -> None:
+    def _set_session_cookie(request: Request, response: Response, token: str) -> None:
+        settings = resolve_cookie_settings(request)
         response.set_cookie(
             key=SESSION_COOKIE_NAME,
             value=token,
             httponly=True,
-            samesite="lax",
-            secure=False,
-            max_age=60 * 60 * 24 * 30,
+            samesite=settings.same_site,
+            secure=settings.secure,
+            domain=settings.domain,
+            max_age=settings.max_age,
             path="/",
         )
+
+    def _auth_limit_key(request: Request, req_username: str = "") -> str:
+        forwarded_for = (request.headers.get("x-forwarded-for", "") or "").split(",")[0].strip()
+        client_host = forwarded_for or (request.client.host if request.client else "unknown")
+        username = req_username.strip().lower()
+        return f"{request.url.path}:{client_host}:{username}"
+
+    def _check_auth_rate_limit(request: Request, req_username: str = "") -> str:
+        limiter = getattr(request.app.state, "auth_rate_limiter", None)
+        if limiter is None:
+            return ""
+        key = _auth_limit_key(request, req_username)
+        allowed, retry_after = limiter.check(key)
+        if not allowed:
+            raise HTTPException(
+                status_code=429,
+                detail="Too many authentication attempts. Please wait and try again.",
+                headers={"Retry-After": str(retry_after)},
+            )
+        return key
 
     @router.get("/status")
     async def auth_status(request: Request):
@@ -73,6 +96,7 @@ def create_auth_router() -> APIRouter:
         store = getattr(request.app.state, "user_store", None)
         if store is None:
             raise HTTPException(status_code=503, detail="User store is unavailable")
+        limit_key = _check_auth_rate_limit(request, req.username)
         try:
             user = store.bootstrap_admin(
                 username=req.username,
@@ -80,9 +104,15 @@ def create_auth_router() -> APIRouter:
                 display_name=req.display_name,
             )
         except ValueError as exc:
+            limiter = getattr(request.app.state, "auth_rate_limiter", None)
+            if limiter is not None:
+                limiter.record_failure(limit_key)
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         token = store.create_session(user["id"])
-        _set_session_cookie(response, token)
+        limiter = getattr(request.app.state, "auth_rate_limiter", None)
+        if limiter is not None:
+            limiter.reset(limit_key)
+        _set_session_cookie(request, response, token)
         return {"user": user}
 
     @router.post("/login")
@@ -90,11 +120,18 @@ def create_auth_router() -> APIRouter:
         store = getattr(request.app.state, "user_store", None)
         if store is None:
             raise HTTPException(status_code=503, detail="User store is unavailable")
+        limit_key = _check_auth_rate_limit(request, req.username)
         user = store.authenticate(req.username, req.password)
         if user is None:
+            limiter = getattr(request.app.state, "auth_rate_limiter", None)
+            if limiter is not None:
+                limiter.record_failure(limit_key)
             raise HTTPException(status_code=401, detail="Invalid username or password")
         token = store.create_session(user["id"])
-        _set_session_cookie(response, token)
+        limiter = getattr(request.app.state, "auth_rate_limiter", None)
+        if limiter is not None:
+            limiter.reset(limit_key)
+        _set_session_cookie(request, response, token)
         return {"user": user}
 
     @router.post("/logout")
@@ -103,7 +140,14 @@ def create_auth_router() -> APIRouter:
         if store is not None:
             token = request.cookies.get(SESSION_COOKIE_NAME, "")
             store.revoke_session(token)
-        response.delete_cookie(SESSION_COOKIE_NAME, path="/")
+        settings = resolve_cookie_settings(request)
+        response.delete_cookie(
+            SESSION_COOKIE_NAME,
+            path="/",
+            domain=settings.domain,
+            secure=settings.secure,
+            samesite=settings.same_site,
+        )
         return {"ok": True}
 
     @router.get("/me")

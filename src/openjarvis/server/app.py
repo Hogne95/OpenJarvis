@@ -27,6 +27,12 @@ from openjarvis.server.routes import router
 from openjarvis.server.upload_router import router as upload_router
 from openjarvis.server.user_store import UserStore
 from openjarvis.server.voice_loop import VoiceLoopManager
+from openjarvis.server.web_security import (
+    ApiRateLimiter,
+    AuthRateLimiter,
+    resolve_allowed_hosts,
+    resolve_cors_origins,
+)
 from openjarvis.server.workbench import WorkbenchManager
 
 logger = logging.getLogger(__name__)
@@ -261,14 +267,19 @@ def create_app(
     )
 
     from fastapi.middleware.cors import CORSMiddleware
+    from starlette.middleware.trustedhost import TrustedHostMiddleware
 
-    _origins = cors_origins if cors_origins is not None else ["*"]
+    _origins = resolve_cors_origins(cors_origins)
     app.add_middleware(
         CORSMiddleware,
         allow_origins=_origins,
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
+    )
+    app.add_middleware(
+        TrustedHostMiddleware,
+        allowed_hosts=resolve_allowed_hosts(),
     )
 
     # Store dependencies in app state
@@ -326,6 +337,8 @@ def create_app(
     app.state.session_start = time.time()
     app.state.user_store = UserStore()
     app.state.connector_account_store = ConnectorAccountStore()
+    app.state.auth_rate_limiter = AuthRateLimiter()
+    app.state.api_rate_limiter = ApiRateLimiter()
 
     # Wire up trace store if traces are enabled
     app.state.trace_store = None
@@ -361,11 +374,21 @@ def create_app(
 
     # Add security headers middleware
     try:
-        from openjarvis.server.middleware import create_security_middleware
+        from openjarvis.server.middleware import (
+            create_api_rate_limit_middleware,
+            create_csrf_middleware,
+            create_security_middleware,
+        )
 
         middleware_cls = create_security_middleware()
         if middleware_cls is not None:
             app.add_middleware(middleware_cls)
+        api_rate_limit_middleware_cls = create_api_rate_limit_middleware()
+        if api_rate_limit_middleware_cls is not None:
+            app.add_middleware(api_rate_limit_middleware_cls)
+        csrf_middleware_cls = create_csrf_middleware(_origins)
+        if csrf_middleware_cls is not None:
+            app.add_middleware(csrf_middleware_cls)
     except Exception as exc:
         logger.debug("Security middleware init skipped: %s", exc)
 

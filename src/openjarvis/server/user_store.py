@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import hmac
+import os
 import secrets
 import sqlite3
 from pathlib import Path
@@ -26,6 +27,8 @@ class UserStore:
     def __init__(self, db_path: str = "") -> None:
         if not db_path:
             db_path = str(DEFAULT_CONFIG_DIR / "web_users.db")
+        self._session_ttl_days = _env_int("OPENJARVIS_SESSION_TTL_DAYS", 30)
+        self._session_idle_minutes = _env_int("OPENJARVIS_SESSION_IDLE_MINUTES", 60 * 24 * 7)
         secure_create(Path(db_path))
         self._db = sqlite3.connect(db_path, check_same_thread=False)
         self._db.row_factory = sqlite3.Row
@@ -180,10 +183,11 @@ class UserStore:
         self._db.commit()
         return self.get_user_by_id(user["id"])
 
-    def create_session(self, user_id: str, *, ttl_days: int = 30) -> str:
+    def create_session(self, user_id: str, *, ttl_days: int | None = None) -> str:
         token = secrets.token_urlsafe(32)
         token_hash = hashlib.sha256(token.encode("utf-8")).hexdigest()
         session_id = secrets.token_hex(16)
+        ttl_days = ttl_days or self._session_ttl_days
         self._db.execute(
             """
             INSERT INTO web_sessions (id, user_id, session_token_hash, expires_at)
@@ -210,6 +214,9 @@ class UserStore:
             (token_hash,),
         ).fetchone()
         if row is None:
+            return None
+        if self._session_is_idle_expired(token_hash):
+            self.revoke_session(token)
             return None
         self._db.execute(
             f"UPDATE web_sessions SET last_seen_at = ({_now_sql()}) WHERE session_token_hash = ?",
@@ -315,6 +322,31 @@ class UserStore:
 
     def close(self) -> None:
         self._db.close()
+
+    def _session_is_idle_expired(self, token_hash: str) -> bool:
+        if self._session_idle_minutes <= 0:
+            return False
+        row = self._db.execute(
+            """
+            SELECT 1
+            FROM web_sessions
+            WHERE session_token_hash = ?
+              AND last_seen_at <= datetime('now', ?)
+            """,
+            (token_hash, f"-{self._session_idle_minutes} minutes"),
+        ).fetchone()
+        return row is not None
+
+
+def _env_int(name: str, default: int) -> int:
+    raw = (os.environ.get(name, "") or "").strip()
+    if not raw:
+        return default
+    try:
+        value = int(raw)
+    except ValueError:
+        return default
+    return value if value > 0 else default
 
 
 __all__ = ["UserStore"]
