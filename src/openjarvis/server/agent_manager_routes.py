@@ -7,6 +7,7 @@ import re as _re
 from typing import Any, Dict, List, Optional, Tuple
 
 from openjarvis.agents.manager import AgentManager
+from openjarvis.server.auth import require_current_user_if_bootstrapped
 
 try:
     from fastapi import APIRouter, HTTPException, Request
@@ -1164,22 +1165,42 @@ def create_agent_manager_router(
             "config": agent.get("config", {}),
         }
 
+    def _request_user(request: Request) -> Dict[str, Any] | None:
+        user = require_current_user_if_bootstrapped(request)
+        if user is not None and str(user.get("role", "")).strip().lower() == "superadmin":
+            try:
+                manager.claim_unowned_agents(str(user["id"]))
+            except Exception:
+                logger.debug("Legacy agent ownership claim skipped", exc_info=True)
+        return user
+
+    def _owner_id(request: Request) -> str | None:
+        user = _request_user(request)
+        return str(user["id"]) if user is not None else None
+
     @agents_router.get("")
-    async def list_agents(compact: bool = False):
-        agents = manager.list_agents()
+    async def list_agents(request: Request, compact: bool = False):
+        agents = manager.list_agents(owner_user_id=_owner_id(request))
         if compact:
             return {"agents": [_compact_agent(agent) for agent in agents]}
         return {"agents": agents}
 
     @agents_router.post("")
     async def create_agent(req: CreateAgentRequest, request: Request):
+        owner_user_id = _owner_id(request)
         if req.template_id:
             agent = manager.create_from_template(
-                req.template_id, req.name, overrides=req.config
+                req.template_id,
+                req.name,
+                overrides=req.config,
+                owner_user_id=owner_user_id,
             )
         else:
             agent = manager.create_agent(
-                name=req.name, agent_type=req.agent_type, config=req.config
+                name=req.name,
+                agent_type=req.agent_type,
+                config=req.config,
+                owner_user_id=owner_user_id,
             )
 
         # Register with scheduler if cron/interval
@@ -1191,15 +1212,15 @@ def create_agent_manager_router(
         return agent
 
     @agents_router.get("/{agent_id}")
-    async def get_agent(agent_id: str):
-        agent = manager.get_agent(agent_id)
+    async def get_agent(agent_id: str, request: Request):
+        agent = manager.get_agent(agent_id, owner_user_id=_owner_id(request))
         if not agent:
             raise HTTPException(status_code=404, detail="Agent not found")
         return agent
 
     @agents_router.patch("/{agent_id}")
-    async def update_agent(agent_id: str, req: UpdateAgentRequest):
-        if not manager.get_agent(agent_id):
+    async def update_agent(agent_id: str, req: UpdateAgentRequest, request: Request):
+        if not manager.get_agent(agent_id, owner_user_id=_owner_id(request)):
             raise HTTPException(status_code=404, detail="Agent not found")
         kwargs: Dict[str, Any] = {}
         if req.name is not None:
@@ -1211,22 +1232,22 @@ def create_agent_manager_router(
         return manager.update_agent(agent_id, **kwargs)
 
     @agents_router.delete("/{agent_id}")
-    async def delete_agent(agent_id: str):
-        if not manager.get_agent(agent_id):
+    async def delete_agent(agent_id: str, request: Request):
+        if not manager.get_agent(agent_id, owner_user_id=_owner_id(request)):
             raise HTTPException(status_code=404, detail="Agent not found")
         manager.delete_agent(agent_id)
         return {"status": "archived"}
 
     @agents_router.post("/{agent_id}/pause")
-    async def pause_agent(agent_id: str):
-        if not manager.get_agent(agent_id):
+    async def pause_agent(agent_id: str, request: Request):
+        if not manager.get_agent(agent_id, owner_user_id=_owner_id(request)):
             raise HTTPException(status_code=404, detail="Agent not found")
         manager.pause_agent(agent_id)
         return {"status": "paused"}
 
     @agents_router.post("/{agent_id}/resume")
-    async def resume_agent(agent_id: str):
-        if not manager.get_agent(agent_id):
+    async def resume_agent(agent_id: str, request: Request):
+        if not manager.get_agent(agent_id, owner_user_id=_owner_id(request)):
             raise HTTPException(status_code=404, detail="Agent not found")
         manager.resume_agent(agent_id)
         return {"status": "idle"}
@@ -1236,7 +1257,8 @@ def create_agent_manager_router(
         import threading
         import time as _time
 
-        agent = manager.get_agent(agent_id)
+        owner_user_id = _owner_id(request)
+        agent = manager.get_agent(agent_id, owner_user_id=owner_user_id)
         if not agent:
             raise HTTPException(status_code=404, detail="Agent not found")
         if agent["status"] == "archived":
@@ -1245,7 +1267,7 @@ def create_agent_manager_router(
         # Auto-recover from error/needs_attention state
         if agent["status"] in ("error", "needs_attention"):
             manager.update_agent(agent_id, status="idle")
-            agent = manager.get_agent(agent_id) or agent
+            agent = manager.get_agent(agent_id, owner_user_id=owner_user_id) or agent
 
         seeded_task: Dict[str, Any] | None = _ensure_manual_run_task(manager, agent)
 
@@ -1265,7 +1287,7 @@ def create_agent_manager_router(
         try:
             manager.start_tick(agent_id)
         except ValueError:
-            refreshed = manager.get_agent(agent_id) or agent
+            refreshed = manager.get_agent(agent_id, owner_user_id=owner_user_id) or agent
             if _is_stale_running(refreshed):
                 logger.warning("Recovering stale running state for agent %s", agent_id)
                 manager.end_tick(agent_id)
@@ -1331,7 +1353,7 @@ def create_agent_manager_router(
                 )
 
         threading.Thread(target=_run_tick, daemon=True).start()
-        refreshed = manager.get_agent(agent_id) or agent
+        refreshed = manager.get_agent(agent_id, owner_user_id=owner_user_id) or agent
         return {
             "status": "running",
             "agent_id": agent_id,
@@ -1343,8 +1365,9 @@ def create_agent_manager_router(
     # ── Recover ──────────────────────────────────────────────
 
     @agents_router.post("/{agent_id}/recover")
-    def recover_agent(agent_id: str):
-        if not manager.get_agent(agent_id):
+    def recover_agent(agent_id: str, request: Request):
+        owner_user_id = _owner_id(request)
+        if not manager.get_agent(agent_id, owner_user_id=owner_user_id):
             raise HTTPException(status_code=404, detail="Agent not found")
         checkpoint = manager.recover_agent(agent_id)
         return {"recovered": True, "checkpoint": checkpoint}
@@ -1352,24 +1375,30 @@ def create_agent_manager_router(
     # ── Tasks ────────────────────────────────────────────────
 
     @agents_router.get("/{agent_id}/tasks")
-    async def list_tasks(agent_id: str, status: Optional[str] = None):
-        return {"tasks": manager.list_tasks(agent_id, status=status)}
+    async def list_tasks(agent_id: str, request: Request, status: Optional[str] = None):
+        owner_user_id = _owner_id(request)
+        if not manager.get_agent(agent_id, owner_user_id=owner_user_id):
+            raise HTTPException(status_code=404, detail="Agent not found")
+        return {"tasks": manager.list_tasks(agent_id, status=status, owner_user_id=owner_user_id)}
 
     @agents_router.post("/{agent_id}/tasks")
-    async def create_task(agent_id: str, req: CreateTaskRequest):
-        if not manager.get_agent(agent_id):
+    async def create_task(agent_id: str, req: CreateTaskRequest, request: Request):
+        if not manager.get_agent(agent_id, owner_user_id=_owner_id(request)):
             raise HTTPException(status_code=404, detail="Agent not found")
         return manager.create_task(agent_id, description=req.description)
 
     @agents_router.get("/{agent_id}/tasks/{task_id}")
-    async def get_task(agent_id: str, task_id: str):
-        task = manager._get_task(task_id)
-        if not task:
+    async def get_task(agent_id: str, task_id: str, request: Request):
+        task = manager._get_task(task_id, owner_user_id=_owner_id(request))
+        if not task or task["agent_id"] != agent_id:
             raise HTTPException(status_code=404, detail="Task not found")
         return task
 
     @agents_router.patch("/{agent_id}/tasks/{task_id}")
-    async def update_task(agent_id: str, task_id: str, req: UpdateTaskRequest):
+    async def update_task(agent_id: str, task_id: str, req: UpdateTaskRequest, request: Request):
+        task = manager._get_task(task_id, owner_user_id=_owner_id(request))
+        if not task or task["agent_id"] != agent_id:
+            raise HTTPException(status_code=404, detail="Task not found")
         kwargs: Dict[str, Any] = {}
         if req.description is not None:
             kwargs["description"] = req.description
@@ -1382,15 +1411,22 @@ def create_agent_manager_router(
         return manager.update_task(task_id, **kwargs)
 
     @agents_router.delete("/{agent_id}/tasks/{task_id}")
-    async def delete_task(agent_id: str, task_id: str):
-        manager.delete_task(task_id)
+    async def delete_task(agent_id: str, task_id: str, request: Request):
+        owner_user_id = _owner_id(request)
+        task = manager._get_task(task_id, owner_user_id=owner_user_id)
+        if not task or task["agent_id"] != agent_id:
+            raise HTTPException(status_code=404, detail="Task not found")
+        manager.delete_task(task_id, owner_user_id=owner_user_id)
         return {"status": "deleted"}
 
     # ── Channel bindings ─────────────────────────────────────
 
     @agents_router.get("/{agent_id}/channels")
-    async def list_channels(agent_id: str):
-        return {"bindings": manager.list_channel_bindings(agent_id)}
+    async def list_channels(agent_id: str, request: Request):
+        owner_user_id = _owner_id(request)
+        if not manager.get_agent(agent_id, owner_user_id=owner_user_id):
+            raise HTTPException(status_code=404, detail="Agent not found")
+        return {"bindings": manager.list_channel_bindings(agent_id, owner_user_id=owner_user_id)}
 
     @agents_router.post("/{agent_id}/channels")
     async def bind_channel(
@@ -1398,7 +1434,8 @@ def create_agent_manager_router(
         req: BindChannelRequest,
         request: Request,
     ):
-        if not manager.get_agent(agent_id):
+        owner_user_id = _owner_id(request)
+        if not manager.get_agent(agent_id, owner_user_id=owner_user_id):
             raise HTTPException(status_code=404, detail="Agent not found")
         binding = manager.bind_channel(
             agent_id,
@@ -1587,7 +1624,7 @@ def create_agent_manager_router(
         request: Request,
     ):
         try:
-            binding = manager._get_binding(binding_id)
+            binding = manager._get_binding(binding_id, owner_user_id=_owner_id(request))
             if binding:
                 ch_type = binding.get("channel_type")
                 if ch_type == "imessage":
@@ -1604,18 +1641,22 @@ def create_agent_manager_router(
                     stop_slack_daemon()
         except Exception:
             pass
-        manager.unbind_channel(binding_id)
+        manager.unbind_channel(binding_id, owner_user_id=_owner_id(request))
         return {"status": "unbound"}
 
     # ── Messaging ────────────────────────────────────────────
 
     @agents_router.get("/{agent_id}/messages")
-    def list_messages(agent_id: str):
-        return {"messages": manager.list_messages(agent_id)}
+    def list_messages(agent_id: str, request: Request):
+        owner_user_id = _owner_id(request)
+        if not manager.get_agent(agent_id, owner_user_id=owner_user_id):
+            raise HTTPException(status_code=404, detail="Agent not found")
+        return {"messages": manager.list_messages(agent_id, owner_user_id=owner_user_id)}
 
     @agents_router.post("/{agent_id}/messages")
     async def send_message(agent_id: str, req: SendMessageRequest, request: Request):
-        agent_record = manager.get_agent(agent_id)
+        owner_user_id = _owner_id(request)
+        agent_record = manager.get_agent(agent_id, owner_user_id=owner_user_id)
         if not agent_record:
             raise HTTPException(status_code=404, detail="Agent not found")
 
@@ -1723,29 +1764,31 @@ def create_agent_manager_router(
     # ── State inspection ─────────────────────────────────────
 
     @agents_router.get("/{agent_id}/state")
-    def get_agent_state(agent_id: str):
-        agent = manager.get_agent(agent_id)
+    def get_agent_state(agent_id: str, request: Request):
+        owner_user_id = _owner_id(request)
+        agent = manager.get_agent(agent_id, owner_user_id=owner_user_id)
         if agent is None:
             raise HTTPException(status_code=404, detail="Agent not found")
         return {
             "agent": agent,
-            "tasks": manager.list_tasks(agent_id),
-            "channels": manager.list_channel_bindings(agent_id),
-            "messages": manager.list_messages(agent_id),
+            "tasks": manager.list_tasks(agent_id, owner_user_id=owner_user_id),
+            "channels": manager.list_channel_bindings(agent_id, owner_user_id=owner_user_id),
+            "messages": manager.list_messages(agent_id, owner_user_id=owner_user_id),
             "checkpoint": manager.get_latest_checkpoint(agent_id),
         }
 
     # ── Learning ─────────────────────────────────────────────
 
     @agents_router.get("/{agent_id}/learning")
-    def get_learning_log(agent_id: str):
-        if not manager.get_agent(agent_id):
+    def get_learning_log(agent_id: str, request: Request):
+        owner_user_id = _owner_id(request)
+        if not manager.get_agent(agent_id, owner_user_id=owner_user_id):
             raise HTTPException(status_code=404, detail="Agent not found")
-        return {"learning_log": manager.list_learning_log(agent_id)}
+        return {"learning_log": manager.list_learning_log(agent_id, owner_user_id=owner_user_id)}
 
     @agents_router.post("/{agent_id}/learning/run")
-    def trigger_learning(agent_id: str):
-        if not manager.get_agent(agent_id):
+    def trigger_learning(agent_id: str, request: Request):
+        if not manager.get_agent(agent_id, owner_user_id=_owner_id(request)):
             raise HTTPException(status_code=404, detail="Agent not found")
         from openjarvis.core.events import EventType, get_event_bus
 
@@ -1756,8 +1799,8 @@ def create_agent_manager_router(
     # ── Traces ───────────────────────────────────────────────
 
     @agents_router.get("/{agent_id}/traces")
-    def list_traces(agent_id: str, limit: int = 20):
-        if not manager.get_agent(agent_id):
+    def list_traces(agent_id: str, request: Request, limit: int = 20):
+        if not manager.get_agent(agent_id, owner_user_id=_owner_id(request)):
             raise HTTPException(status_code=404, detail="Agent not found")
         try:
             from openjarvis.core.config import load_config
@@ -1830,8 +1873,8 @@ def create_agent_manager_router(
     global_router = APIRouter(tags=["agents-global"])
 
     @global_router.get("/v1/agents/errors")
-    def list_error_agents():
-        all_agents = manager.list_agents()
+    def list_error_agents(request: Request):
+        all_agents = manager.list_agents(owner_user_id=_owner_id(request))
         error_agents = [
             a
             for a in all_agents
@@ -1840,8 +1883,8 @@ def create_agent_manager_router(
         return {"agents": error_agents}
 
     @global_router.get("/v1/agents/health")
-    def agents_health():
-        all_agents = manager.list_agents()
+    def agents_health(request: Request):
+        all_agents = manager.list_agents(owner_user_id=_owner_id(request))
         from collections import Counter
 
         counts = Counter(a["status"] for a in all_agents)

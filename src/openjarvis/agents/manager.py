@@ -17,6 +17,7 @@ from uuid import uuid4
 _CREATE_AGENTS = """\
 CREATE TABLE IF NOT EXISTS managed_agents (
     id              TEXT PRIMARY KEY,
+    owner_user_id   TEXT,
     name            TEXT NOT NULL,
     agent_type      TEXT NOT NULL DEFAULT 'monitor_operative',
     config_json     TEXT NOT NULL DEFAULT '{}',
@@ -105,6 +106,7 @@ class AgentManager:
         self._conn.commit()
         # Schema migrations for runtime columns
         _MIGRATIONS = [
+            "ALTER TABLE managed_agents ADD COLUMN owner_user_id TEXT",
             "ALTER TABLE managed_agents ADD COLUMN total_tokens INTEGER DEFAULT 0",
             "ALTER TABLE managed_agents ADD COLUMN total_cost REAL DEFAULT 0",
             "ALTER TABLE managed_agents ADD COLUMN total_runs INTEGER DEFAULT 0",
@@ -132,32 +134,54 @@ class AgentManager:
         name: str,
         agent_type: str = "monitor_operative",
         config: Optional[Dict[str, Any]] = None,
+        owner_user_id: str | None = None,
     ) -> Dict[str, Any]:
         agent_id = uuid.uuid4().hex[:12]
         now = time.time()
         config_json = json.dumps(config or {})
         self._conn.execute(
             "INSERT INTO managed_agents"
-            " (id, name, agent_type, config_json,"
+            " (id, owner_user_id, name, agent_type, config_json,"
             " status, summary_memory, created_at, updated_at)"
-            " VALUES (?, ?, ?, ?, 'idle', '', ?, ?)",
-            (agent_id, name, agent_type, config_json, now, now),
+            " VALUES (?, ?, ?, ?, ?, 'idle', '', ?, ?)",
+            (agent_id, owner_user_id, name, agent_type, config_json, now, now),
         )
         self._conn.commit()
         return self.get_agent(agent_id)  # type: ignore[return-value]
 
-    def list_agents(self, include_archived: bool = False) -> List[Dict[str, Any]]:
+    def list_agents(
+        self,
+        include_archived: bool = False,
+        owner_user_id: str | None = None,
+    ) -> List[Dict[str, Any]]:
         query = "SELECT * FROM managed_agents"
+        where: list[str] = []
+        params: list[Any] = []
+        if owner_user_id is not None:
+            where.append("owner_user_id = ?")
+            params.append(owner_user_id)
         if not include_archived:
-            query += " WHERE status != 'archived'"
+            where.append("status != 'archived'")
+        if where:
+            query += " WHERE " + " AND ".join(where)
         query += " ORDER BY updated_at DESC"
-        rows = self._conn.execute(query).fetchall()
+        rows = self._conn.execute(query, params).fetchall()
         return [self._row_to_agent(r) for r in rows]
 
-    def get_agent(self, agent_id: str) -> Optional[Dict[str, Any]]:
-        row = self._conn.execute(
-            "SELECT * FROM managed_agents WHERE id = ?", (agent_id,)
-        ).fetchone()
+    def get_agent(
+        self,
+        agent_id: str,
+        owner_user_id: str | None = None,
+    ) -> Optional[Dict[str, Any]]:
+        if owner_user_id is None:
+            row = self._conn.execute(
+                "SELECT * FROM managed_agents WHERE id = ?", (agent_id,)
+            ).fetchone()
+        else:
+            row = self._conn.execute(
+                "SELECT * FROM managed_agents WHERE id = ? AND owner_user_id = ?",
+                (agent_id, owner_user_id),
+            ).fetchone()
         return self._row_to_agent(row) if row else None
 
     def update_agent(self, agent_id: str, **kwargs: Any) -> Dict[str, Any]:
@@ -340,14 +364,20 @@ class AgentManager:
         return self._get_task(task_id)  # type: ignore[return-value]
 
     def list_tasks(
-        self, agent_id: str, status: Optional[str] = None
+        self,
+        agent_id: str,
+        status: Optional[str] = None,
+        owner_user_id: str | None = None,
     ) -> List[Dict[str, Any]]:
-        query = "SELECT * FROM agent_tasks WHERE agent_id = ?"
+        query = "SELECT t.* FROM agent_tasks t JOIN managed_agents a ON a.id = t.agent_id WHERE t.agent_id = ?"
         params: List[Any] = [agent_id]
+        if owner_user_id is not None:
+            query += " AND a.owner_user_id = ?"
+            params.append(owner_user_id)
         if status:
-            query += " AND status = ?"
+            query += " AND t.status = ?"
             params.append(status)
-        query += " ORDER BY created_at DESC"
+        query += " ORDER BY t.created_at DESC"
         rows = self._conn.execute(query, params).fetchall()
         return [self._row_to_task(r) for r in rows]
 
@@ -373,14 +403,32 @@ class AgentManager:
         self._conn.commit()
         return self._get_task(task_id)  # type: ignore[return-value]
 
-    def delete_task(self, task_id: str) -> None:
-        self._conn.execute("DELETE FROM agent_tasks WHERE id = ?", (task_id,))
+    def delete_task(self, task_id: str, owner_user_id: str | None = None) -> None:
+        if owner_user_id is None:
+            self._conn.execute("DELETE FROM agent_tasks WHERE id = ?", (task_id,))
+        else:
+            self._conn.execute(
+                "DELETE FROM agent_tasks WHERE id = ? AND agent_id IN"
+                " (SELECT id FROM managed_agents WHERE owner_user_id = ?)",
+                (task_id, owner_user_id),
+            )
         self._conn.commit()
 
-    def _get_task(self, task_id: str) -> Optional[Dict[str, Any]]:
-        row = self._conn.execute(
-            "SELECT * FROM agent_tasks WHERE id = ?", (task_id,)
-        ).fetchone()
+    def _get_task(
+        self,
+        task_id: str,
+        owner_user_id: str | None = None,
+    ) -> Optional[Dict[str, Any]]:
+        if owner_user_id is None:
+            row = self._conn.execute(
+                "SELECT * FROM agent_tasks WHERE id = ?", (task_id,)
+            ).fetchone()
+        else:
+            row = self._conn.execute(
+                "SELECT t.* FROM agent_tasks t JOIN managed_agents a ON a.id = t.agent_id"
+                " WHERE t.id = ? AND a.owner_user_id = ?",
+                (task_id, owner_user_id),
+            ).fetchone()
         return self._row_to_task(row) if row else None
 
     # ── Channel bindings ──────────────────────────────────────────
@@ -404,20 +452,49 @@ class AgentManager:
         self._conn.commit()
         return self._get_binding(binding_id)  # type: ignore[return-value]
 
-    def list_channel_bindings(self, agent_id: str) -> List[Dict[str, Any]]:
-        rows = self._conn.execute(
-            "SELECT * FROM channel_bindings WHERE agent_id = ?", (agent_id,)
-        ).fetchall()
+    def list_channel_bindings(
+        self,
+        agent_id: str,
+        owner_user_id: str | None = None,
+    ) -> List[Dict[str, Any]]:
+        if owner_user_id is None:
+            rows = self._conn.execute(
+                "SELECT * FROM channel_bindings WHERE agent_id = ?", (agent_id,)
+            ).fetchall()
+        else:
+            rows = self._conn.execute(
+                "SELECT b.* FROM channel_bindings b JOIN managed_agents a ON a.id = b.agent_id"
+                " WHERE b.agent_id = ? AND a.owner_user_id = ?",
+                (agent_id, owner_user_id),
+            ).fetchall()
         return [self._row_to_binding(r) for r in rows]
 
-    def unbind_channel(self, binding_id: str) -> None:
-        self._conn.execute("DELETE FROM channel_bindings WHERE id = ?", (binding_id,))
+    def unbind_channel(self, binding_id: str, owner_user_id: str | None = None) -> None:
+        if owner_user_id is None:
+            self._conn.execute("DELETE FROM channel_bindings WHERE id = ?", (binding_id,))
+        else:
+            self._conn.execute(
+                "DELETE FROM channel_bindings WHERE id = ? AND agent_id IN"
+                " (SELECT id FROM managed_agents WHERE owner_user_id = ?)",
+                (binding_id, owner_user_id),
+            )
         self._conn.commit()
 
-    def _get_binding(self, binding_id: str) -> Optional[Dict[str, Any]]:
-        row = self._conn.execute(
-            "SELECT * FROM channel_bindings WHERE id = ?", (binding_id,)
-        ).fetchone()
+    def _get_binding(
+        self,
+        binding_id: str,
+        owner_user_id: str | None = None,
+    ) -> Optional[Dict[str, Any]]:
+        if owner_user_id is None:
+            row = self._conn.execute(
+                "SELECT * FROM channel_bindings WHERE id = ?", (binding_id,)
+            ).fetchone()
+        else:
+            row = self._conn.execute(
+                "SELECT b.* FROM channel_bindings b JOIN managed_agents a ON a.id = b.agent_id"
+                " WHERE b.id = ? AND a.owner_user_id = ?",
+                (binding_id, owner_user_id),
+            ).fetchone()
         return self._row_to_binding(row) if row else None
 
     def find_binding_for_channel(
@@ -476,7 +553,11 @@ class AgentManager:
         return templates
 
     def create_from_template(
-        self, template_id: str, name: str, overrides: Optional[Dict[str, Any]] = None
+        self,
+        template_id: str,
+        name: str,
+        overrides: Optional[Dict[str, Any]] = None,
+        owner_user_id: str | None = None,
     ) -> Dict[str, Any]:
         """Create an agent from a template with optional overrides."""
         templates = self.list_templates()
@@ -497,7 +578,21 @@ class AgentManager:
                 instruction=instruction or "(No specific instruction provided)",
             )
 
-        return self.create_agent(name=name, agent_type=agent_type, config=config)
+        return self.create_agent(
+            name=name,
+            agent_type=agent_type,
+            config=config,
+            owner_user_id=owner_user_id,
+        )
+
+    def claim_unowned_agents(self, owner_user_id: str) -> int:
+        cursor = self._conn.execute(
+            "UPDATE managed_agents SET owner_user_id = ?"
+            " WHERE owner_user_id IS NULL OR owner_user_id = ''",
+            (owner_user_id,),
+        )
+        self._conn.commit()
+        return int(cursor.rowcount or 0)
 
     # ── Message queue ─────────────────────────────────────────────
 
@@ -542,12 +637,25 @@ class AgentManager:
             "created_at": now,
         }
 
-    def list_messages(self, agent_id: str, limit: int = 50) -> list[dict]:
-        rows = self._conn.execute(
-            "SELECT * FROM agent_messages"
-            " WHERE agent_id = ? ORDER BY created_at DESC LIMIT ?",
-            (agent_id, limit),
-        ).fetchall()
+    def list_messages(
+        self,
+        agent_id: str,
+        limit: int = 50,
+        owner_user_id: str | None = None,
+    ) -> list[dict]:
+        if owner_user_id is None:
+            rows = self._conn.execute(
+                "SELECT * FROM agent_messages"
+                " WHERE agent_id = ? ORDER BY created_at DESC LIMIT ?",
+                (agent_id, limit),
+            ).fetchall()
+        else:
+            rows = self._conn.execute(
+                "SELECT m.* FROM agent_messages m JOIN managed_agents a ON a.id = m.agent_id"
+                " WHERE m.agent_id = ? AND a.owner_user_id = ?"
+                " ORDER BY m.created_at DESC LIMIT ?",
+                (agent_id, owner_user_id, limit),
+            ).fetchall()
         return [self._row_to_message(r) for r in rows]
 
     def get_pending_messages(self, agent_id: str) -> list[dict]:
@@ -625,12 +733,25 @@ class AgentManager:
             "created_at": now,
         }
 
-    def list_learning_log(self, agent_id: str, limit: int = 50) -> list[dict]:
-        rows = self._conn.execute(
-            "SELECT * FROM agent_learning_log"
-            " WHERE agent_id = ? ORDER BY created_at DESC LIMIT ?",
-            (agent_id, limit),
-        ).fetchall()
+    def list_learning_log(
+        self,
+        agent_id: str,
+        limit: int = 50,
+        owner_user_id: str | None = None,
+    ) -> list[dict]:
+        if owner_user_id is None:
+            rows = self._conn.execute(
+                "SELECT * FROM agent_learning_log"
+                " WHERE agent_id = ? ORDER BY created_at DESC LIMIT ?",
+                (agent_id, limit),
+            ).fetchall()
+        else:
+            rows = self._conn.execute(
+                "SELECT l.* FROM agent_learning_log l JOIN managed_agents a ON a.id = l.agent_id"
+                " WHERE l.agent_id = ? AND a.owner_user_id = ?"
+                " ORDER BY l.created_at DESC LIMIT ?",
+                (agent_id, owner_user_id, limit),
+            ).fetchall()
         return [
             {
                 "id": r["id"],
@@ -650,6 +771,7 @@ class AgentManager:
         config_raw = row["config_json"]
         return {
             "id": row["id"],
+            "owner_user_id": row["owner_user_id"] or "",
             "name": row["name"],
             "agent_type": row["agent_type"],
             "config": json.loads(config_raw) if config_raw else {},

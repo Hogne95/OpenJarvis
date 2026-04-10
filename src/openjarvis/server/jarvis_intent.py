@@ -15,6 +15,7 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
+from openjarvis.server.auth import get_operator_memory_manager
 from openjarvis.tools.web_search import WebSearchTool
 
 
@@ -1600,7 +1601,7 @@ def create_jarvis_intent_router() -> APIRouter:
 
     @router.get("/desktop/state", response_model=DesktopStateResponse)
     async def desktop_state(request: Request):
-        operator_memory = getattr(request.app.state, "operator_memory", None)
+        operator_memory = get_operator_memory_manager(request)
         try:
             return _desktop_state_snapshot(operator_memory)
         except RuntimeError as exc:
@@ -1609,7 +1610,7 @@ def create_jarvis_intent_router() -> APIRouter:
     @router.post("/intent/execute")
     async def execute_jarvis_intent(req: JarvisIntentRequest, request: Request):
         intent = _parse_intent(req.text)
-        operator_memory = getattr(request.app.state, "operator_memory", None)
+        operator_memory = get_operator_memory_manager(request)
         intent = _resolve_desktop_target(intent, operator_memory)
         payload = intent.to_dict()
 

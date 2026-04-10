@@ -23,6 +23,12 @@ from openjarvis.server.agent_architecture import (
     create_role_handoff,
     ensure_core_team,
 )
+from openjarvis.server.auth import (
+    get_coding_workspace_manager,
+    get_operator_memory_manager,
+    get_workbench_manager,
+    get_workspace_registry,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -894,7 +900,7 @@ def _record_learning_from_mission_action(
             lesson=lesson[:800],
             reuse_hint=reuse_hint[:400],
             tags=[tag for tag in tags if tag],
-            created_at=datetime.utcnow().isoformat(),
+            created_at=datetime.now(timezone.utc).isoformat(),
         )
         if outcome_type == "mistake":
             _promote_antipattern_learning(
@@ -940,7 +946,7 @@ def _record_execution_learning(
             reuse_hint=reuse_hint.strip()[:400],
             tags=[tag.strip().lower() for tag in (tags or []) if tag and tag.strip()],
             confidence=confidence,
-            created_at=datetime.utcnow().isoformat(),
+            created_at=datetime.now(timezone.utc).isoformat(),
         )
         if (outcome_type.strip().lower() or "lesson") == "mistake":
             _promote_antipattern_learning(
@@ -997,7 +1003,7 @@ def _promote_antipattern_learning(
             reuse_hint=(reuse_hint.strip() or "Avoid repeating this pattern in similar contexts.")[:400],
             tags=[*(tags or []), "anti-pattern", "avoid"],
             confidence=0.88,
-            created_at=datetime.utcnow().isoformat(),
+            created_at=datetime.now(timezone.utc).isoformat(),
         )
     except Exception:
         return
@@ -1937,17 +1943,13 @@ async def agent_architecture_handoff(req: AgentArchitectureHandoffRequest, reque
 
 @workbench_router.get("/status")
 async def workbench_status(request: Request):
-    manager = getattr(request.app.state, "workbench", None)
-    if manager is None:
-        raise HTTPException(status_code=503, detail="Workbench manager not configured")
+    manager = get_workbench_manager(request)
     return manager.status()
 
 
 @workbench_router.post("/stage")
 async def workbench_stage(req: WorkbenchStageRequest, request: Request):
-    manager = getattr(request.app.state, "workbench", None)
-    if manager is None:
-        raise HTTPException(status_code=503, detail="Workbench manager not configured")
+    manager = get_workbench_manager(request)
     try:
         return manager.stage(
             command=req.command,
@@ -1960,13 +1962,11 @@ async def workbench_stage(req: WorkbenchStageRequest, request: Request):
 
 @workbench_router.post("/approve")
 async def workbench_approve(request: Request):
-    manager = getattr(request.app.state, "workbench", None)
-    if manager is None:
-        raise HTTPException(status_code=503, detail="Workbench manager not configured")
+    manager = get_workbench_manager(request)
     try:
         result = await run_in_threadpool(manager.approve)
         latest = result.get("result", {}) if isinstance(result, dict) else {}
-        operator_memory = getattr(request.app.state, "operator_memory", None)
+        operator_memory = get_operator_memory_manager(request)
         command = str(latest.get("command", "")).lower()
         is_validation = any(
             token in command
@@ -2033,9 +2033,7 @@ async def workbench_approve(request: Request):
 
 @workbench_router.post("/hold")
 async def workbench_hold(request: Request):
-    manager = getattr(request.app.state, "workbench", None)
-    if manager is None:
-        raise HTTPException(status_code=503, detail="Workbench manager not configured")
+    manager = get_workbench_manager(request)
     return manager.hold()
 
 
@@ -2296,25 +2294,19 @@ async def action_center_reminders(limit: int = 8):
 
 @operator_memory_router.get("")
 async def operator_memory_status(request: Request):
-    manager = getattr(request.app.state, "operator_memory", None)
-    if manager is None:
-        raise HTTPException(status_code=503, detail="Operator memory not configured")
+    manager = get_operator_memory_manager(request)
     return manager.snapshot()
 
 
 @operator_memory_router.post("/profile")
 async def operator_memory_update_profile(req: OperatorProfileUpdateRequest, request: Request):
-    manager = getattr(request.app.state, "operator_memory", None)
-    if manager is None:
-        raise HTTPException(status_code=503, detail="Operator memory not configured")
+    manager = get_operator_memory_manager(request)
     return manager.update_profile(req.model_dump(exclude_none=True))
 
 
 @operator_memory_router.post("/signal")
 async def operator_memory_record_signal(req: OperatorSignalRequest, request: Request):
-    manager = getattr(request.app.state, "operator_memory", None)
-    if manager is None:
-        raise HTTPException(status_code=503, detail="Operator memory not configured")
+    manager = get_operator_memory_manager(request)
     try:
         return manager.record_signal(req.kind, req.contact or "")
     except ValueError as exc:
@@ -2326,9 +2318,7 @@ async def operator_memory_update_relationship(
     req: OperatorRelationshipUpdateRequest,
     request: Request,
 ):
-    manager = getattr(request.app.state, "operator_memory", None)
-    if manager is None:
-        raise HTTPException(status_code=503, detail="Operator memory not configured")
+    manager = get_operator_memory_manager(request)
     try:
         return manager.update_relationship(req.contact, req.model_dump(exclude_none=True))
     except ValueError as exc:
@@ -2340,9 +2330,7 @@ async def operator_memory_update_meeting(
     req: OperatorMeetingUpdateRequest,
     request: Request,
 ):
-    manager = getattr(request.app.state, "operator_memory", None)
-    if manager is None:
-        raise HTTPException(status_code=503, detail="Operator memory not configured")
+    manager = get_operator_memory_manager(request)
     try:
         return manager.update_meeting(req.key, req.model_dump(exclude_none=True))
     except ValueError as exc:
@@ -2354,9 +2342,7 @@ async def operator_memory_update_project(
     req: OperatorProjectUpdateRequest,
     request: Request,
 ):
-    manager = getattr(request.app.state, "operator_memory", None)
-    if manager is None:
-        raise HTTPException(status_code=503, detail="Operator memory not configured")
+    manager = get_operator_memory_manager(request)
     try:
         return manager.update_project(req.key, req.model_dump(exclude_none=True))
     except ValueError as exc:
@@ -2368,9 +2354,7 @@ async def operator_memory_update_sales_account(
     req: OperatorSalesAccountUpdateRequest,
     request: Request,
 ):
-    manager = getattr(request.app.state, "operator_memory", None)
-    if manager is None:
-        raise HTTPException(status_code=503, detail="Operator memory not configured")
+    manager = get_operator_memory_manager(request)
     try:
         return manager.update_sales_account(req.key, req.model_dump(exclude_none=True))
     except ValueError as exc:
@@ -2382,9 +2366,7 @@ async def operator_memory_update_sales_lead(
     req: OperatorSalesLeadUpdateRequest,
     request: Request,
 ):
-    manager = getattr(request.app.state, "operator_memory", None)
-    if manager is None:
-        raise HTTPException(status_code=503, detail="Operator memory not configured")
+    manager = get_operator_memory_manager(request)
     try:
         return manager.update_sales_lead(req.key, req.model_dump(exclude_none=True))
     except ValueError as exc:
@@ -2396,9 +2378,7 @@ async def operator_memory_update_sales_deal(
     req: OperatorSalesDealUpdateRequest,
     request: Request,
 ):
-    manager = getattr(request.app.state, "operator_memory", None)
-    if manager is None:
-        raise HTTPException(status_code=503, detail="Operator memory not configured")
+    manager = get_operator_memory_manager(request)
     try:
         return manager.update_sales_deal(req.key, req.model_dump(exclude_none=True))
     except ValueError as exc:
@@ -2410,9 +2390,7 @@ async def operator_memory_update_customer_account(
     req: OperatorCustomerAccountUpdateRequest,
     request: Request,
 ):
-    manager = getattr(request.app.state, "operator_memory", None)
-    if manager is None:
-        raise HTTPException(status_code=503, detail="Operator memory not configured")
+    manager = get_operator_memory_manager(request)
     try:
         return manager.update_customer_account(req.key, req.model_dump(exclude_none=True))
     except ValueError as exc:
@@ -2424,9 +2402,7 @@ async def operator_memory_update_customer_interaction(
     req: OperatorCustomerInteractionUpdateRequest,
     request: Request,
 ):
-    manager = getattr(request.app.state, "operator_memory", None)
-    if manager is None:
-        raise HTTPException(status_code=503, detail="Operator memory not configured")
+    manager = get_operator_memory_manager(request)
     try:
         return manager.update_customer_interaction(req.key, req.model_dump(exclude_none=True))
     except ValueError as exc:
@@ -2438,9 +2414,7 @@ async def operator_memory_add_visual_observation(
     req: OperatorVisualObservationRequest,
     request: Request,
 ):
-    manager = getattr(request.app.state, "operator_memory", None)
-    if manager is None:
-        raise HTTPException(status_code=503, detail="Operator memory not configured")
+    manager = get_operator_memory_manager(request)
     try:
         return manager.add_visual_observation(
             label=req.label,
@@ -2458,9 +2432,7 @@ async def operator_memory_add_visual_insight(
     req: OperatorVisualInsightRequest,
     request: Request,
 ):
-    manager = getattr(request.app.state, "operator_memory", None)
-    if manager is None:
-        raise HTTPException(status_code=503, detail="Operator memory not configured")
+    manager = get_operator_memory_manager(request)
     try:
         return manager.add_visual_insight(
             label=req.label,
@@ -2477,9 +2449,7 @@ async def operator_memory_add_visual_brief(
     req: OperatorVisualBriefRequest,
     request: Request,
 ):
-    manager = getattr(request.app.state, "operator_memory", None)
-    if manager is None:
-        raise HTTPException(status_code=503, detail="Operator memory not configured")
+    manager = get_operator_memory_manager(request)
     try:
         return manager.add_visual_brief(
             label=req.label,
@@ -2496,9 +2466,7 @@ async def operator_memory_add_document_brief(
     req: OperatorDocumentBriefRequest,
     request: Request,
 ):
-    manager = getattr(request.app.state, "operator_memory", None)
-    if manager is None:
-        raise HTTPException(status_code=503, detail="Operator memory not configured")
+    manager = get_operator_memory_manager(request)
     try:
         return manager.add_document_brief(
             label=req.label,
@@ -2516,9 +2484,7 @@ async def operator_memory_add_design_brief(
     req: OperatorDesignBriefRequest,
     request: Request,
 ):
-    manager = getattr(request.app.state, "operator_memory", None)
-    if manager is None:
-        raise HTTPException(status_code=503, detail="Operator memory not configured")
+    manager = get_operator_memory_manager(request)
     try:
         updated = manager.add_design_brief(
             label=req.label,
@@ -2580,9 +2546,7 @@ async def operator_memory_add_fivem_brief(
     req: OperatorFivemBriefRequest,
     request: Request,
 ):
-    manager = getattr(request.app.state, "operator_memory", None)
-    if manager is None:
-        raise HTTPException(status_code=503, detail="Operator memory not configured")
+    manager = get_operator_memory_manager(request)
     try:
         updated = manager.add_fivem_brief(
             label=req.label,
@@ -2633,9 +2597,7 @@ async def operator_memory_add_learning_experience(
     req: OperatorLearningExperienceRequest,
     request: Request,
 ):
-    manager = getattr(request.app.state, "operator_memory", None)
-    if manager is None:
-        raise HTTPException(status_code=503, detail="Operator memory not configured")
+    manager = get_operator_memory_manager(request)
     try:
         return manager.add_learning_experience(
             label=req.label,
@@ -2660,9 +2622,7 @@ async def operator_memory_top_learning_experiences(
     context_key: str = "",
     limit: int = 5,
 ):
-    manager = getattr(request.app.state, "operator_memory", None)
-    if manager is None:
-        raise HTTPException(status_code=503, detail="Operator memory not configured")
+    manager = get_operator_memory_manager(request)
     return {
         "items": manager.top_learning_experiences(
             domain=domain,
@@ -2677,9 +2637,7 @@ async def operator_memory_mark_learning_reused(
     req: OperatorLearningReuseRequest,
     request: Request,
 ):
-    manager = getattr(request.app.state, "operator_memory", None)
-    if manager is None:
-        raise HTTPException(status_code=503, detail="Operator memory not configured")
+    manager = get_operator_memory_manager(request)
     updated = None
     try:
         for item_id in req.ids:
@@ -2699,9 +2657,7 @@ async def operator_memory_update_mission(
     req: OperatorMissionUpdateRequest,
     request: Request,
 ):
-    manager = getattr(request.app.state, "operator_memory", None)
-    if manager is None:
-        raise HTTPException(status_code=503, detail="Operator memory not configured")
+    manager = get_operator_memory_manager(request)
     try:
         updated = manager.update_mission(req.id, req.model_dump(exclude_none=True))
         updated_mission = next(
@@ -2731,9 +2687,7 @@ async def operator_memory_act_on_mission(
     req: OperatorMissionActionRequest,
     request: Request,
 ):
-    manager = getattr(request.app.state, "operator_memory", None)
-    if manager is None:
-        raise HTTPException(status_code=503, detail="Operator memory not configured")
+    manager = get_operator_memory_manager(request)
     snapshot = manager.snapshot()
     missions = snapshot.get("missions", []) if isinstance(snapshot, dict) else []
     current = next((item for item in missions if str(item.get("id", "")).strip() == req.id.strip()), None)
@@ -2801,9 +2755,7 @@ async def operator_memory_visual_asset(
     observation_id: str,
     request: Request,
 ):
-    manager = getattr(request.app.state, "operator_memory", None)
-    if manager is None:
-        raise HTTPException(status_code=503, detail="Operator memory not configured")
+    manager = get_operator_memory_manager(request)
     observation = manager.get_visual_observation(observation_id)
     if observation is None:
         raise HTTPException(status_code=404, detail="Visual observation not found")
@@ -3776,7 +3728,7 @@ async def automation_schedule_routine(req: RoutineScheduleRequest, request: Requ
 
     defaults = _routine_defaults(
         req.routine_id,
-        getattr(request.app.state, "operator_memory", None),
+        get_operator_memory_manager(request),
     )
     task_id = f"routine:{req.routine_id}"
     existing = {task.id: task for task in scheduler.list_tasks()}
@@ -3813,7 +3765,7 @@ async def automation_schedule_routine(req: RoutineScheduleRequest, request: Requ
 
 @workspace_router.get("/summary")
 async def workspace_summary(request: Request, root: Optional[str] = None):
-    registry = getattr(request.app.state, "workspace_registry", None)
+    registry = get_workspace_registry(request)
     if registry is not None:
         try:
             return registry.summary(root)
@@ -3855,19 +3807,14 @@ async def workspace_summary(request: Request, root: Optional[str] = None):
 
 @workspace_router.get("/repos")
 async def workspace_repos(request: Request):
-    registry = getattr(request.app.state, "workspace_registry", None)
-    if registry is None:
-        root = str(Path(__file__).resolve().parents[3])
-        return {"active_root": root, "repos": []}
+    registry = get_workspace_registry(request)
     return registry.list()
 
 
 @workspace_router.post("/repos/register")
 async def workspace_register_repo(req: WorkspaceRepoRegisterRequest, request: Request):
-    registry = getattr(request.app.state, "workspace_registry", None)
-    if registry is None:
-        raise HTTPException(status_code=503, detail="Workspace registry not configured")
-    workbench = getattr(request.app.state, "workbench", None)
+    registry = get_workspace_registry(request)
+    workbench = get_workbench_manager(request)
     try:
         entry = registry.register(req.path)
     except ValueError as exc:
@@ -3879,10 +3826,8 @@ async def workspace_register_repo(req: WorkspaceRepoRegisterRequest, request: Re
 
 @workspace_router.post("/repos/select")
 async def workspace_select_repo(req: WorkspaceRepoSelectRequest, request: Request):
-    registry = getattr(request.app.state, "workspace_registry", None)
-    if registry is None:
-        raise HTTPException(status_code=503, detail="Workspace registry not configured")
-    workbench = getattr(request.app.state, "workbench", None)
+    registry = get_workspace_registry(request)
+    workbench = get_workbench_manager(request)
     try:
         entry = registry.select(req.root)
     except ValueError as exc:
@@ -3894,7 +3839,7 @@ async def workspace_select_repo(req: WorkspaceRepoSelectRequest, request: Reques
 
 @workspace_router.get("/checks")
 async def workspace_checks(request: Request, root: Optional[str] = None):
-    registry = getattr(request.app.state, "workspace_registry", None)
+    registry = get_workspace_registry(request)
     try:
         summary = registry.summary(root) if registry is not None else await workspace_summary(request, root)
     except ValueError as exc:
@@ -4016,7 +3961,7 @@ def _generate_workspace_commit_message(summary: dict[str, Any]) -> str:
 
 @workspace_router.post("/git/prepare-stage")
 async def workspace_prepare_stage(request: Request, root: Optional[str] = None):
-    registry = getattr(request.app.state, "workspace_registry", None)
+    registry = get_workspace_registry(request)
     try:
         summary = registry.summary(root) if registry is not None else await workspace_summary(request, root)
     except ValueError as exc:
@@ -4030,7 +3975,7 @@ async def workspace_prepare_stage(request: Request, root: Optional[str] = None):
 
 @workspace_router.post("/git/prepare-commit")
 async def workspace_prepare_commit(req: WorkspaceGitActionRequest, request: Request, root: Optional[str] = None):
-    registry = getattr(request.app.state, "workspace_registry", None)
+    registry = get_workspace_registry(request)
     try:
         summary = registry.summary(root) if registry is not None else await workspace_summary(request, root)
     except ValueError as exc:
@@ -4047,7 +3992,7 @@ async def workspace_prepare_commit(req: WorkspaceGitActionRequest, request: Requ
 
 @workspace_router.get("/git/prepare-push")
 async def workspace_prepare_push(request: Request, root: Optional[str] = None):
-    registry = getattr(request.app.state, "workspace_registry", None)
+    registry = get_workspace_registry(request)
     try:
         summary = registry.summary(root) if registry is not None else await workspace_summary(request, root)
     except ValueError as exc:
@@ -4062,9 +4007,7 @@ async def workspace_prepare_push(request: Request, root: Optional[str] = None):
 
 @coding_router.get("/status")
 async def coding_status(request: Request):
-    manager = getattr(request.app.state, "coding_workspace", None)
-    if manager is None:
-        raise HTTPException(status_code=503, detail="Coding workspace not configured")
+    manager = get_coding_workspace_manager(request)
     return manager.status()
 
 
@@ -4083,9 +4026,7 @@ async def shopify_summary():
 
 @coding_router.post("/read-file")
 async def coding_read_file(req: CodingReadFileRequest, request: Request):
-    manager = getattr(request.app.state, "coding_workspace", None)
-    if manager is None:
-        raise HTTPException(status_code=503, detail="Coding workspace not configured")
+    manager = get_coding_workspace_manager(request)
     try:
         return manager.read_file(repo_root=req.repo_root, file_path=req.file_path)
     except ValueError as exc:
@@ -4094,9 +4035,7 @@ async def coding_read_file(req: CodingReadFileRequest, request: Request):
 
 @coding_router.post("/stage-edit")
 async def coding_stage_edit(req: CodingStageEditRequest, request: Request):
-    manager = getattr(request.app.state, "coding_workspace", None)
-    if manager is None:
-        raise HTTPException(status_code=503, detail="Coding workspace not configured")
+    manager = get_coding_workspace_manager(request)
     try:
         return manager.stage_edit(
             repo_root=req.repo_root,
@@ -4109,14 +4048,12 @@ async def coding_stage_edit(req: CodingStageEditRequest, request: Request):
 
 @coding_router.post("/approve")
 async def coding_approve(request: Request):
-    manager = getattr(request.app.state, "coding_workspace", None)
-    if manager is None:
-        raise HTTPException(status_code=503, detail="Coding workspace not configured")
+    manager = get_coding_workspace_manager(request)
     try:
         result = manager.approve()
         latest = result.get("result", {}) if isinstance(result, dict) else {}
         file_path = str(latest.get("file_path", "")).strip()
-        operator_memory = getattr(request.app.state, "operator_memory", None)
+        operator_memory = get_operator_memory_manager(request)
         _update_self_improve_mission(
             request.app.state,
             phase="verify",
@@ -4153,9 +4090,7 @@ async def coding_approve(request: Request):
 
 @coding_router.post("/hold")
 async def coding_hold(request: Request):
-    manager = getattr(request.app.state, "coding_workspace", None)
-    if manager is None:
-        raise HTTPException(status_code=503, detail="Coding workspace not configured")
+    manager = get_coding_workspace_manager(request)
     return manager.hold()
 
 
