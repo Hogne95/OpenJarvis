@@ -63,7 +63,12 @@ class WorkbenchManager:
         if not cleaned:
             raise ValueError("Command is required")
 
-        wd = str(Path(working_dir).resolve()) if working_dir else self._default_working_dir
+        resolved_dir = Path(working_dir).resolve() if working_dir else Path(self._default_working_dir).resolve()
+        if not resolved_dir.exists():
+            raise ValueError(f"Working directory does not exist: {resolved_dir}")
+        if not resolved_dir.is_dir():
+            raise ValueError(f"Working directory is not a directory: {resolved_dir}")
+        wd = str(resolved_dir)
         self._pending = PendingCommand(
             id=uuid.uuid4().hex,
             command=cleaned,

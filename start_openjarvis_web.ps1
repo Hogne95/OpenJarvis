@@ -4,12 +4,12 @@ $backendUrl = "http://localhost:8000/v1/health"
 $frontendUrl = "http://localhost:5173"
 
 Write-Host "Starting OpenJarvis web workflow..." -ForegroundColor Cyan
-Write-Host "WSL command 1: try full voice stack, then fall back if speech-wake is unsupported"
+Write-Host "WSL command 1: run shared backend startup with Python-aware voice extras"
 Write-Host "WSL command 2: uv run jarvis serve --port 8000"
 Write-Host "WSL command 3: npm install && npm run dev"
 Write-Host ""
 
-Start-Process cmd.exe -ArgumentList '/k', "wsl.exe bash -lc ""cd '$rootWsl' && if ! uv sync --extra server --extra speech --extra speech-live --extra speech-wake --extra speech-tts-local; then echo 'speech-wake unavailable on this Python build, retrying without it...'; uv sync --extra server --extra speech --extra speech-live --extra speech-tts-local; fi && uv run jarvis serve --port 8000; exec bash"""
+Start-Process cmd.exe -ArgumentList '/k', "wsl.exe bash -lc ""cd '$rootWsl' && bash scripts/start_openjarvis_backend.sh '$rootWsl'; exec bash"""
 
 Write-Host "Waiting for backend health..." -ForegroundColor Yellow
 for ($i = 0; $i -lt 60; $i++) {

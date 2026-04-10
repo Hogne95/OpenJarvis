@@ -10,13 +10,17 @@ from pathlib import Path
 
 
 def _run_git(root: Path, *args: str) -> str:
-    result = subprocess.run(
-        ["git", *args],
-        cwd=root,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
+    try:
+        result = subprocess.run(
+            ["git", *args],
+            cwd=root,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=10,
+        )
+    except (subprocess.TimeoutExpired, OSError):
+        return ""
     if result.returncode != 0:
         return ""
     return result.stdout.strip()
@@ -25,13 +29,17 @@ def _run_git(root: Path, *args: str) -> str:
 def _resolve_repo_root(path: str) -> Path:
     target = Path(path).expanduser().resolve()
     cwd = target if target.is_dir() else target.parent
-    result = subprocess.run(
-        ["git", "rev-parse", "--show-toplevel"],
-        cwd=cwd,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "--show-toplevel"],
+            cwd=cwd,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=10,
+        )
+    except (subprocess.TimeoutExpired, OSError) as exc:
+        raise ValueError(f"Unable to inspect Git repository: {path}") from exc
     if result.returncode != 0 or not result.stdout.strip():
         raise ValueError(f"Not a Git repository: {path}")
     return Path(result.stdout.strip()).resolve()
@@ -162,6 +170,8 @@ class RepoRegistry:
 
     def summary(self, root: str | None = None) -> dict:
         selected_root = Path(root or self.active_root()).expanduser().resolve()
+        if not selected_root.exists() or not selected_root.is_dir():
+            raise ValueError(f"Repository path does not exist: {selected_root}")
         branch = _run_git(selected_root, "rev-parse", "--abbrev-ref", "HEAD") or "unknown"
         changed_files = [
             line.strip()

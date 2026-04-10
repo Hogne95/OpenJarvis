@@ -6,6 +6,7 @@ import re
 import shutil
 import subprocess
 import sys
+import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -93,6 +94,13 @@ _APP_FOCUS_TARGETS = {
     "notepad": "Notepad",
     "explorer": "File Explorer",
 }
+
+_DESKTOP_STATE_CACHE_TTL_SECONDS = 3.0
+_DESKTOP_STATE_FAILURE_COOLDOWN_SECONDS = 45.0
+_DESKTOP_STATE_LAST_SUCCESS: dict[str, Any] | None = None
+_DESKTOP_STATE_LAST_SUCCESS_AT = 0.0
+_DESKTOP_STATE_LAST_ERROR = ""
+_DESKTOP_STATE_COOLDOWN_UNTIL = 0.0
 
 
 def _downloads_dir() -> Path:
@@ -424,6 +432,32 @@ def _parse_shortcut_keys(value: str) -> str | None:
 
 
 def _desktop_state_snapshot(operator_memory=None) -> dict[str, Any]:
+    global _DESKTOP_STATE_LAST_SUCCESS
+    global _DESKTOP_STATE_LAST_SUCCESS_AT
+    global _DESKTOP_STATE_LAST_ERROR
+    global _DESKTOP_STATE_COOLDOWN_UNTIL
+
+    now = time.monotonic()
+
+    def _apply_targets(snapshot: dict[str, Any]) -> dict[str, Any]:
+        return {
+            **snapshot,
+            "active_desktop_target": (
+                operator_memory.active_desktop_target() if operator_memory is not None else ""
+            ),
+            "active_browser_target": (
+                operator_memory.active_browser_target() if operator_memory is not None else ""
+            ),
+        }
+
+    if _DESKTOP_STATE_LAST_SUCCESS is not None and (now - _DESKTOP_STATE_LAST_SUCCESS_AT) < _DESKTOP_STATE_CACHE_TTL_SECONDS:
+        return _apply_targets(_DESKTOP_STATE_LAST_SUCCESS)
+
+    if _DESKTOP_STATE_COOLDOWN_UNTIL > now:
+        if _DESKTOP_STATE_LAST_SUCCESS is not None:
+            return _apply_targets(_DESKTOP_STATE_LAST_SUCCESS)
+        raise RuntimeError(_DESKTOP_STATE_LAST_ERROR or "Desktop state unavailable.")
+
     command = r"""
 $ErrorActionPreference = 'Stop'
 Add-Type @"
@@ -456,17 +490,25 @@ $openWindows = Get-Process | Where-Object { $_.MainWindowTitle -and $_.MainWindo
 """
     result = _run_powershell(command, timeout=12)
     if result.returncode != 0:
-        raise RuntimeError((result.stderr or result.stdout or "Desktop state unavailable.").strip())
+        _DESKTOP_STATE_LAST_ERROR = (result.stderr or result.stdout or "Desktop state unavailable.").strip()
+        _DESKTOP_STATE_COOLDOWN_UNTIL = now + _DESKTOP_STATE_FAILURE_COOLDOWN_SECONDS
+        if _DESKTOP_STATE_LAST_SUCCESS is not None:
+            return _apply_targets(_DESKTOP_STATE_LAST_SUCCESS)
+        raise RuntimeError(_DESKTOP_STATE_LAST_ERROR)
     raw = result.stdout.strip()
     if not raw:
-        raise RuntimeError("Desktop state unavailable.")
+        _DESKTOP_STATE_LAST_ERROR = "Desktop state unavailable."
+        _DESKTOP_STATE_COOLDOWN_UNTIL = now + _DESKTOP_STATE_FAILURE_COOLDOWN_SECONDS
+        if _DESKTOP_STATE_LAST_SUCCESS is not None:
+            return _apply_targets(_DESKTOP_STATE_LAST_SUCCESS)
+        raise RuntimeError(_DESKTOP_STATE_LAST_ERROR)
     import json
 
     data = json.loads(raw)
     open_windows = data.get("open_windows") or []
     if isinstance(open_windows, dict):
         open_windows = [open_windows]
-    return {
+    snapshot = {
         "active_window_title": str(data.get("active_window_title", "")).strip(),
         "active_process_name": str(data.get("active_process_name", "")).strip(),
         "open_windows": [
@@ -477,9 +519,12 @@ $openWindows = Get-Process | Where-Object { $_.MainWindowTitle -and $_.MainWindo
             for item in open_windows
             if str(item.get("title", "")).strip()
         ],
-        "active_desktop_target": operator_memory.active_desktop_target() if operator_memory is not None else "",
-        "active_browser_target": operator_memory.active_browser_target() if operator_memory is not None else "",
     }
+    _DESKTOP_STATE_LAST_SUCCESS = snapshot
+    _DESKTOP_STATE_LAST_SUCCESS_AT = now
+    _DESKTOP_STATE_LAST_ERROR = ""
+    _DESKTOP_STATE_COOLDOWN_UNTIL = 0.0
+    return _apply_targets(snapshot)
 
 
 def _target_readiness(target: str, desktop_state: dict[str, Any] | None) -> dict[str, Any]:

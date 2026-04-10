@@ -10,9 +10,13 @@ from fastapi.testclient import TestClient
 from openjarvis.agents.executor import AgentExecutor
 from openjarvis.agents.manager import AgentManager
 from openjarvis.core.config import load_config
+from openjarvis.server.action_center import ActionCenterManager
 from openjarvis.server.agent_manager_routes import _make_lightweight_system
 from openjarvis.server.app import create_app
+from openjarvis.server import jarvis_intent
 from openjarvis.server.voice_loop import VoiceLoopManager
+from openjarvis.server.repo_registry import RepoRegistry
+from openjarvis.server.workbench import WorkbenchManager
 from openjarvis.system import SystemBuilder
 
 
@@ -206,3 +210,92 @@ def test_system_memory_resolution_falls_back_to_sqlite_when_registry_create_fail
 
     assert memory_backend is not None
     assert memory_backend.__class__.__name__ == "SQLiteMemory"
+
+
+def test_action_center_capabilities_cache_reuses_recent_probe():
+    manager = ActionCenterManager()
+
+    with mock.patch(
+        "openjarvis.server.action_center.resolve_google_credentials",
+        side_effect=lambda path: path,
+    ), mock.patch(
+        "openjarvis.server.action_center.load_tokens",
+        side_effect=[
+            {"token": "gmail"},
+            {"token": "calendar"},
+            {"token": "tasks"},
+            {"email": "user@example.com", "password": "secret"},
+        ],
+    ) as load_tokens_mock:
+        first = manager.capabilities()
+        second = manager.capabilities()
+
+    assert first == second
+    assert load_tokens_mock.call_count == 4
+
+
+def test_desktop_state_snapshot_returns_cached_success_during_failure_cooldown():
+    original_success = jarvis_intent._DESKTOP_STATE_LAST_SUCCESS
+    original_success_at = jarvis_intent._DESKTOP_STATE_LAST_SUCCESS_AT
+    original_error = jarvis_intent._DESKTOP_STATE_LAST_ERROR
+    original_cooldown = jarvis_intent._DESKTOP_STATE_COOLDOWN_UNTIL
+    try:
+        jarvis_intent._DESKTOP_STATE_LAST_SUCCESS = None
+        jarvis_intent._DESKTOP_STATE_LAST_SUCCESS_AT = 0.0
+        jarvis_intent._DESKTOP_STATE_LAST_ERROR = ""
+        jarvis_intent._DESKTOP_STATE_COOLDOWN_UNTIL = 0.0
+
+        ok = SimpleNamespace(
+            returncode=0,
+            stdout='{"active_window_title":"Code","active_process_name":"code","open_windows":[]}',
+            stderr="",
+        )
+        failed = SimpleNamespace(returncode=1, stdout="", stderr="native probe failed")
+        monotonic_values = iter([10.0, 20.0, 21.0])
+
+        with mock.patch(
+            "openjarvis.server.jarvis_intent.time.monotonic",
+            side_effect=lambda: next(monotonic_values),
+        ), mock.patch(
+            "openjarvis.server.jarvis_intent._run_powershell",
+            side_effect=[ok, failed],
+        ):
+            first = jarvis_intent._desktop_state_snapshot()
+            second = jarvis_intent._desktop_state_snapshot()
+            third = jarvis_intent._desktop_state_snapshot()
+
+        assert first["active_process_name"] == "code"
+        assert second["active_process_name"] == "code"
+        assert third["active_process_name"] == "code"
+    finally:
+        jarvis_intent._DESKTOP_STATE_LAST_SUCCESS = original_success
+        jarvis_intent._DESKTOP_STATE_LAST_SUCCESS_AT = original_success_at
+        jarvis_intent._DESKTOP_STATE_LAST_ERROR = original_error
+        jarvis_intent._DESKTOP_STATE_COOLDOWN_UNTIL = original_cooldown
+
+
+def test_workbench_stage_rejects_missing_working_dir(tmp_path: Path):
+    manager = WorkbenchManager(default_working_dir=str(tmp_path))
+
+    missing = tmp_path / "does-not-exist"
+
+    try:
+        manager.stage(command="git status", working_dir=str(missing))
+    except ValueError as exc:
+        assert "does not exist" in str(exc)
+    else:
+        raise AssertionError("Expected stage() to reject a missing working directory")
+
+
+def test_repo_registry_summary_rejects_missing_root(tmp_path: Path):
+    storage_path = tmp_path / "repos.json"
+    registry = RepoRegistry(storage_path=storage_path, default_root=str(tmp_path))
+
+    missing = tmp_path / "missing-repo"
+
+    try:
+        registry.summary(str(missing))
+    except ValueError as exc:
+        assert "does not exist" in str(exc)
+    else:
+        raise AssertionError("Expected summary() to reject a missing repository path")

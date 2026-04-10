@@ -60,6 +60,8 @@ class ActionCenterManager:
     def __init__(self) -> None:
         self._pending: PendingAction | None = None
         self._history: list[ActionEntry] = []
+        self._capabilities_cache: dict[str, Any] | None = None
+        self._capabilities_cache_at: float = 0.0
 
     def status(self) -> dict[str, Any]:
         return {
@@ -69,10 +71,14 @@ class ActionCenterManager:
         }
 
     def capabilities(self) -> dict[str, Any]:
-        gmail_tokens = load_tokens(resolve_google_credentials(_GMAIL_CREDENTIALS_PATH)) or {}
-        calendar_tokens = load_tokens(resolve_google_credentials(_GCALENDAR_CREDENTIALS_PATH)) or {}
-        tasks_tokens = load_tokens(resolve_google_credentials(_GTASKS_CREDENTIALS_PATH)) or {}
-        outlook_tokens = load_tokens(_OUTLOOK_CREDENTIALS_PATH) or {}
+        now = time.time()
+        if self._capabilities_cache is not None and (now - self._capabilities_cache_at) < 10.0:
+            return self._capabilities_cache
+
+        gmail_tokens = self._safe_tokens(resolve_google_credentials(_GMAIL_CREDENTIALS_PATH))
+        calendar_tokens = self._safe_tokens(resolve_google_credentials(_GCALENDAR_CREDENTIALS_PATH))
+        tasks_tokens = self._safe_tokens(resolve_google_credentials(_GTASKS_CREDENTIALS_PATH))
+        outlook_tokens = self._safe_tokens(_OUTLOOK_CREDENTIALS_PATH)
         gmail_rest_ready = bool(gmail_tokens.get("access_token") or gmail_tokens.get("token"))
         outlook_ready = bool(outlook_tokens.get("email") and outlook_tokens.get("password"))
         calendar_ready = bool(calendar_tokens.get("access_token") or calendar_tokens.get("token"))
@@ -80,7 +86,7 @@ class ActionCenterManager:
         preferred_email = "gmail" if gmail_rest_ready else "outlook" if outlook_ready else ""
         preferred_calendar = "gcalendar" if calendar_ready else "outlook" if outlook_ready else ""
         preferred_tasks = "google_tasks" if tasks_ready else ""
-        return {
+        capabilities = {
             "email": {
                 "ready": gmail_rest_ready or outlook_ready,
                 "preferred_provider": preferred_email,
@@ -155,6 +161,16 @@ class ActionCenterManager:
                 ],
             },
         }
+        self._capabilities_cache = capabilities
+        self._capabilities_cache_at = now
+        return capabilities
+
+    @staticmethod
+    def _safe_tokens(path: str) -> dict[str, Any]:
+        try:
+            return load_tokens(path) or {}
+        except Exception:
+            return {}
 
     def stage_email_draft(
         self,
