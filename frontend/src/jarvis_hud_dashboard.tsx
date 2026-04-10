@@ -147,10 +147,16 @@ import {
   type WorkbenchStatus,
 } from './lib/api';
 import { listConnectors } from './lib/connectors-api';
+import { buildCommercialBrief } from './lib/commercialBriefPresentation';
 import { buildCommanderHandoffBrief, buildCommanderQueueItems } from './lib/commanderPresentation';
+import { buildCustomerBrief } from './lib/customerBriefPresentation';
 import { DESIGN_ARCHETYPES, getDesignArchetype, type DesignArchetypeId } from './lib/designCanon';
 import { buildDesignBrief, buildDesignScorecard } from './lib/designBriefPresentation';
 import { buildDocumentIntelBrief, buildVisualIntelBrief } from './lib/intelBriefPresentation';
+import { buildFivemCodingBrief } from './lib/fivemBriefPresentation';
+import { buildDurableMissionLookup } from './lib/missionPresentation';
+import { buildSalesBrief } from './lib/salesBriefPresentation';
+import { buildShopifyBrief } from './lib/shopifyBriefPresentation';
 import { buildSelfImproveBrief, buildSelfImprovePatchPlan } from './lib/selfImprovePresentation';
 import {
   buildActiveAutomationAlerts,
@@ -1487,7 +1493,7 @@ export default function JarvisHudDashboard({
       }),
     [documentAnalysis, documentAnalysisTitle],
   );
-  const salesBrief = useMemo(() => {
+  const legacySalesBrief = useMemo(() => {
     if (!needsExtendedIntelBriefs) return null;
     const accounts = Object.values(durableOperatorMemory?.sales_accounts || {});
     const leads = Object.values(durableOperatorMemory?.sales_leads || {});
@@ -1680,8 +1686,25 @@ export default function JarvisHudDashboard({
         : 'No primary deal selected yet.',
     };
   }, [durableOperatorMemory?.sales_accounts, durableOperatorMemory?.sales_deals, durableOperatorMemory?.sales_leads, inboxSummary, needsExtendedIntelBriefs]);
+  const salesBrief = useMemo(
+    () =>
+      buildSalesBrief({
+        enabled: needsExtendedIntelBriefs,
+        accounts: Object.values(durableOperatorMemory?.sales_accounts || {}),
+        leads: Object.values(durableOperatorMemory?.sales_leads || {}),
+        deals: Object.values(durableOperatorMemory?.sales_deals || {}),
+        inboxSummary,
+      }),
+    [
+      durableOperatorMemory?.sales_accounts,
+      durableOperatorMemory?.sales_deals,
+      durableOperatorMemory?.sales_leads,
+      inboxSummary,
+      needsExtendedIntelBriefs,
+    ],
+  );
 
-  const customerBrief = useMemo(() => {
+  const legacyCustomerBrief = useMemo(() => {
     if (!needsExtendedIntelBriefs) return null;
     const accounts = Object.values(durableOperatorMemory?.customer_accounts || {});
     const interactions = Object.values(durableOperatorMemory?.customer_interactions || {});
@@ -1788,8 +1811,23 @@ export default function JarvisHudDashboard({
         `Best,\nJARVIS`,
     };
   }, [durableOperatorMemory?.customer_accounts, durableOperatorMemory?.customer_interactions, inboxSummary, needsExtendedIntelBriefs]);
+  const customerBrief = useMemo(
+    () =>
+      buildCustomerBrief({
+        enabled: needsExtendedIntelBriefs,
+        accounts: Object.values(durableOperatorMemory?.customer_accounts || {}),
+        interactions: Object.values(durableOperatorMemory?.customer_interactions || {}),
+        inboxSummary,
+      }),
+    [
+      durableOperatorMemory?.customer_accounts,
+      durableOperatorMemory?.customer_interactions,
+      inboxSummary,
+      needsExtendedIntelBriefs,
+    ],
+  );
 
-  const shopifyBrief = useMemo(() => {
+  const legacyShopifyBrief = useMemo(() => {
     if (!needsExtendedIntelBriefs) return null;
     if (!shopifySummary) return null;
     const topCustomer = shopifySummary.top_customers[0] || null;
@@ -1865,8 +1903,16 @@ export default function JarvisHudDashboard({
       focusItems,
     } satisfies ShopifyIntelBrief;
   }, [needsExtendedIntelBriefs, shopifySummary]);
+  const shopifyBrief = useMemo(
+    () =>
+      buildShopifyBrief({
+        enabled: needsExtendedIntelBriefs,
+        shopifySummary,
+      }),
+    [needsExtendedIntelBriefs, shopifySummary],
+  );
 
-  const commercialBrief = useMemo(() => {
+  const legacyCommercialBrief = useMemo(() => {
     if (!needsExtendedIntelBriefs) return null;
     if (!salesBrief && !customerBrief && !shopifyBrief) return null;
     const salesAccounts = Object.values(durableOperatorMemory?.sales_accounts || {});
@@ -2000,8 +2046,33 @@ export default function JarvisHudDashboard({
       timeline: commercialTimeline,
     } satisfies CommercialOpsBrief;
   }, [customerBrief, durableOperatorMemory?.customer_accounts, durableOperatorMemory?.customer_interactions, durableOperatorMemory?.sales_accounts, durableOperatorMemory?.sales_deals, needsExtendedIntelBriefs, salesBrief, shopifyBrief, shopifySummary]);
+  const commercialBrief = useMemo(
+    () =>
+      buildCommercialBrief({
+        enabled: needsExtendedIntelBriefs,
+        salesBrief,
+        customerBrief,
+        shopifyBrief,
+        salesAccounts: Object.values(durableOperatorMemory?.sales_accounts || {}),
+        salesDeals: Object.values(durableOperatorMemory?.sales_deals || {}),
+        customerAccounts: Object.values(durableOperatorMemory?.customer_accounts || {}),
+        customerInteractions: Object.values(durableOperatorMemory?.customer_interactions || {}),
+        shopifySummary,
+      }),
+    [
+      customerBrief,
+      durableOperatorMemory?.customer_accounts,
+      durableOperatorMemory?.customer_interactions,
+      durableOperatorMemory?.sales_accounts,
+      durableOperatorMemory?.sales_deals,
+      needsExtendedIntelBriefs,
+      salesBrief,
+      shopifyBrief,
+      shopifySummary,
+    ],
+  );
 
-  const fivemCodingBrief = useMemo(() => {
+  const legacyFivemCodingBrief = useMemo(() => {
     if (!needsExtendedIntelBriefs) return null;
     const changedFiles = workspaceSummary?.changed_files || [];
     const projectMemories = Object.values(durableOperatorMemory?.projects || {});
@@ -2168,6 +2239,16 @@ export default function JarvisHudDashboard({
       focusItems,
     } satisfies FivemCodingBrief;
   }, [durableOperatorMemory?.projects, editorFilePath, needsExtendedIntelBriefs, workspaceSummary?.changed_files, workspaceSummary?.root]);
+  const fivemCodingBrief = useMemo(
+    () =>
+      buildFivemCodingBrief({
+        enabled: needsExtendedIntelBriefs,
+        workspaceSummary,
+        durableProjects: durableOperatorMemory?.projects,
+        editorFilePath,
+      }),
+    [durableOperatorMemory?.projects, editorFilePath, needsExtendedIntelBriefs, workspaceSummary],
+  );
   const recentLearningExperiences = useMemo(() => durableOperatorMemory?.learning_experiences || [], [durableOperatorMemory?.learning_experiences]);
   const codingLearningContext = useMemo(() => {
     const baseItems = rankedLearningItems.length ? rankedLearningItems : recentLearningExperiences;
@@ -2447,32 +2528,10 @@ export default function JarvisHudDashboard({
       workspaceChecks,
     ],
   );
-  const durableMissionLookup = useMemo(() => {
-    const entries = durableOperatorMemory?.missions || [];
-      return {
-        selfImprove:
-          entries.find((item) => item.id === 'mission-self-improve' || item.domain === 'self-improve') || null,
-        planner:
-          entries.find((item) => item.id === 'planner-executor' || item.id === 'mission-planner-executor' || item.domain === 'planner') ||
-          null,
-        visual:
-          entries.find((item) => item.id === 'visual-mission' || item.id === 'mission-visual' || item.domain === 'visual') || null,
-        document:
-          entries.find((item) => item.id === 'document-mission' || item.id === 'mission-document' || item.domain === 'document') || null,
-        design:
-          entries.find((item) => item.id === 'design-mission' || item.id === 'mission-design' || item.domain === 'design') || null,
-        sales:
-          entries.find((item) => item.id === 'sales-mission' || item.id === 'mission-sales' || item.domain === 'sales') || null,
-        customer:
-          entries.find((item) => item.id === 'customer-mission' || item.id === 'mission-customer' || item.domain === 'customer') || null,
-        shopify:
-          entries.find((item) => item.id === 'shopify-mission' || item.id === 'mission-shopify' || item.domain === 'shopify') || null,
-        commercial:
-          entries.find((item) => item.id === 'commercial-mission' || item.id === 'mission-commercial' || item.domain === 'commercial') || null,
-        fivem:
-          entries.find((item) => item.id === 'fivem-mission' || item.id === 'mission-fivem' || item.domain === 'fivem') || null,
-      };
-    }, [durableOperatorMemory?.missions]);
+  const durableMissionLookup = useMemo(
+    () => buildDurableMissionLookup(durableOperatorMemory?.missions),
+    [durableOperatorMemory?.missions],
+  );
   const autonomyMissions = useMemo(() => {
     if (!needsExtendedIntelBriefs) return [];
       const missions: Array<MissionMatrixItem & { action: () => void }> = [];
