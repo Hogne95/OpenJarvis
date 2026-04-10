@@ -105,6 +105,7 @@ import {
   updateOperatorDesignBrief,
   updateOperatorFivemBrief,
   fetchOperatorLearningExperiences,
+  fetchOperatorCommanderBrief,
   markOperatorLearningExperiencesReused,
   updateOperatorLearningExperience,
   updateOperatorVisualBrief,
@@ -123,6 +124,7 @@ import {
   type DesktopState,
   type DigestSchedule,
   type DurableOperatorMemory,
+  type OperatorCommanderBriefResponse,
   type InboxSummaryItem,
   type JarvisIntent,
   type JarvisIntentExecution,
@@ -628,6 +630,7 @@ export default function JarvisHudDashboard({
   const [dailyDigest, setDailyDigest] = useState<DailyDigest | null>(null);
   const [digestSchedule, setDigestSchedule] = useState<DigestSchedule | null>(null);
   const [durableOperatorMemory, setDurableOperatorMemory] = useState<DurableOperatorMemory | null>(null);
+  const [commanderBrief, setCommanderBrief] = useState<OperatorCommanderBriefResponse | null>(null);
   const [desktopState, setDesktopState] = useState<DesktopState | null>(null);
   const [reminders, setReminders] = useState<ReminderItem[]>([]);
   const [digestNotice, setDigestNotice] = useState('');
@@ -825,6 +828,7 @@ export default function JarvisHudDashboard({
           agents,
           connectors,
           profile,
+          commander,
           workspace,
           repos,
           checks,
@@ -841,6 +845,7 @@ export default function JarvisHudDashboard({
           fetchManagedAgents({ compact: true }),
           listConnectors(),
           fetchSpeechProfile(),
+          needsExtendedIntelBriefs ? fetchOperatorCommanderBrief() : Promise.resolve<OperatorCommanderBriefResponse | null>(null),
           needsWorkspaceStatusPolling ? fetchWorkspaceSummary() : Promise.resolve<WorkspaceSummary | null>(null),
           needsWorkspaceStatusPolling ? fetchWorkspaceRepos() : Promise.resolve<WorkspaceRepoCatalog | null>(null),
           needsWorkspaceStatusPolling ? fetchWorkspaceChecks() : Promise.resolve<WorkspaceChecks | null>(null),
@@ -854,6 +859,7 @@ export default function JarvisHudDashboard({
         if (digest.status === 'fulfilled') setDailyDigest(digest.value);
         if (digestSched.status === 'fulfilled') setDigestSchedule(digestSched.value);
         if (operatorMemory.status === 'fulfilled') setDurableOperatorMemory(operatorMemory.value);
+        if (commander.status === 'fulfilled' && commander.value) setCommanderBrief(commander.value);
         if (inbox.status === 'fulfilled') setInboxSummary(inbox.value);
         if (tasks.status === 'fulfilled') setTaskSummary(tasks.value);
         if (reminderItems.status === 'fulfilled') setReminders(reminderItems.value);
@@ -3198,6 +3204,27 @@ export default function JarvisHudDashboard({
       actionLabel: string;
       action: () => void;
     }> = [];
+
+    commanderBrief?.queue?.forEach((item) => {
+      items.push({
+        id: `commander-${item.id}`,
+        priority: Math.max(40, Math.min(110, item.priority)),
+        label: item.label,
+        title: item.title,
+        detail: item.detail,
+        actionLabel: item.action_label,
+        action: () => {
+          if (item.action_hint === 'planner_handoff') {
+            void handoffWithBrief(
+              `${item.title}\n\nWhy now: ${commanderBrief.why}\n\nBest next step: ${commanderBrief.best_next_step}`,
+              'commander-brief',
+            );
+            return;
+          }
+          navigate('/system');
+        },
+      });
+    });
 
     if (pendingAction) {
       items.push({

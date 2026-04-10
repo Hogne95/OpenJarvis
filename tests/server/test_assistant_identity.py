@@ -6,6 +6,7 @@ from openjarvis.assistant import (
     AssistantMemoryLayers,
     analyze_decision_request,
     build_assistant_system_context,
+    infer_user_interaction_profile,
 )
 from openjarvis.server.app import create_app
 from openjarvis.server.operator_memory import OperatorMemory
@@ -74,9 +75,33 @@ def test_assistant_system_context_formats_layered_memory() -> None:
     assert "Ship smaller batches" in prompt
 
 
+def test_infer_user_interaction_profile_detects_fast_autonomous_technical_style() -> None:
+    profile = infer_user_interaction_profile(
+        query="Continue until done and double check the backend tests.",
+        recent_user_messages=[
+            "go ahead",
+            "dont stop in between",
+            "make the architecture cleaner and test everything",
+        ],
+        stored_profile={"reply_tone": "clear and concise"},
+    )
+
+    assert profile.autonomy == "high initiative"
+    assert profile.pace == "fast-moving"
+    assert profile.technical_depth == "high"
+    assert "lead" in profile.decisiveness.lower() or "recommend" in profile.decisiveness.lower()
+
+
 def test_operator_memory_relevant_context_is_selective(tmp_path) -> None:
     memory = OperatorMemory(path=str(tmp_path / "operator_memory.json"))
-    memory.update_profile({"reply_tone": "crisp and strategic", "priority_contacts": ["alice@example.com"]})
+    memory.update_profile(
+        {
+            "reply_tone": "crisp and strategic",
+            "verbosity_preference": "concise-first",
+            "autonomy_preference": "high initiative",
+            "priority_contacts": ["alice@example.com"],
+        }
+    )
     memory.add_learning_experience(
         label="Release discipline",
         domain="coding",
@@ -109,7 +134,14 @@ def test_operator_memory_relevant_context_is_selective(tmp_path) -> None:
 
 def test_operator_memory_layered_relevant_context_separates_layers(tmp_path) -> None:
     memory = OperatorMemory(path=str(tmp_path / "operator_memory.json"))
-    memory.update_profile({"reply_tone": "crisp and strategic", "priority_contacts": ["alice@example.com"]})
+    memory.update_profile(
+        {
+            "reply_tone": "crisp and strategic",
+            "technical_depth": "high",
+            "decisiveness_preference": "recommend clearly",
+            "priority_contacts": ["alice@example.com"],
+        }
+    )
     memory.add_learning_experience(
         label="Release discipline",
         domain="coding",
@@ -130,6 +162,7 @@ def test_operator_memory_layered_relevant_context_separates_layers(tmp_path) -> 
     layers = memory.layered_relevant_context("What release plan should I use?", limit=5)
 
     assert any("Known preferences" in item["label"] for item in layers.identity)
+    assert any("technical depth" in item["detail"].lower() for item in layers.identity)
     assert any("Open mission" in item["label"] for item in layers.session_focus)
     assert any("Past lesson" in item["label"] for item in layers.long_term)
 
@@ -138,7 +171,15 @@ def test_chat_route_injects_identity_and_relevant_memory(tmp_path) -> None:
     engine = _EngineStub()
     app = create_app(engine, "test-model")
     memory = OperatorMemory(path=str(tmp_path / "operator_memory.json"))
-    memory.update_profile({"reply_tone": "clear and strategic", "priority_contacts": ["alice@example.com"]})
+    memory.update_profile(
+        {
+            "reply_tone": "clear and strategic",
+            "verbosity_preference": "concise-first",
+            "technical_depth": "high",
+            "autonomy_preference": "high initiative",
+            "priority_contacts": ["alice@example.com"],
+        }
+    )
     memory.add_learning_experience(
         label="Infra tradeoffs",
         domain="ops",
@@ -174,6 +215,8 @@ def test_chat_route_injects_identity_and_relevant_memory(tmp_path) -> None:
     assert first.role.value == "system"
     assert "You are JARVIS" in first.content
     assert "Recommendation" in first.content
+    assert "User interaction profile:" in first.content
+    assert "Autonomy preference: high initiative" in first.content
     assert "Identity/Profile:" in first.content
     assert "Session Focus:" in first.content
     assert "local-first" in first.content.lower()

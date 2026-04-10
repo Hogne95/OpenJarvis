@@ -17,6 +17,7 @@ from fastapi.concurrency import run_in_threadpool
 from fastapi import APIRouter, HTTPException, Request, Response, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
+from openjarvis.assistant import build_commander_brief
 from openjarvis.connectors.shopify import ShopifyConnector
 from openjarvis.server.agent_architecture import (
     build_architecture_status,
@@ -474,6 +475,11 @@ class ActionTaskCreateRequest(BaseModel):
 class OperatorProfileUpdateRequest(BaseModel):
     honorific: Optional[str] = None
     reply_tone: Optional[str] = None
+    verbosity_preference: Optional[str] = None
+    technical_depth: Optional[str] = None
+    decisiveness_preference: Optional[str] = None
+    autonomy_preference: Optional[str] = None
+    personality_notes: Optional[str] = None
     priority_contacts: Optional[List[str] | str] = None
     workday_start: Optional[str] = None
     workday_end: Optional[str] = None
@@ -647,6 +653,45 @@ class OperatorLearningReuseRequest(BaseModel):
 class OperatorMemoryContextRequest(BaseModel):
     query: str
     limit: Optional[int] = 6
+
+
+class OperatorMemoryAnalyticsResponse(BaseModel):
+    signals: dict[str, Any]
+    active_missions: list[dict[str, Any]]
+    blocked_missions: list[dict[str, Any]]
+    top_lessons: list[dict[str, Any]]
+    focus_recommendations: list[str]
+    review_items: list[dict[str, Any]]
+
+
+class OperatorCommanderQueueItem(BaseModel):
+    id: str
+    label: str
+    title: str
+    detail: str
+    action_label: str
+    action_hint: str
+    priority: int
+
+
+class OperatorCommanderBriefResponse(BaseModel):
+    headline: str
+    recommendation: str
+    why: str
+    risks: list[str]
+    best_next_step: str
+    queue: list[OperatorCommanderQueueItem]
+    operating_mode: str
+    interaction_style: str
+
+
+class OperatorReviewItemRequest(BaseModel):
+    category: Optional[str] = "quality"
+    label: Optional[str] = None
+    summary: str
+    detail: Optional[str] = None
+    source: Optional[str] = "manual"
+    status: Optional[str] = "open"
 
 
 class OperatorMissionUpdateRequest(BaseModel):
@@ -2389,6 +2434,41 @@ async def operator_memory_context(req: OperatorMemoryContextRequest, request: Re
         "long_term": layers.long_term,
         "flattened": layers.flattened(limit=limit),
     }
+
+
+@operator_memory_router.get("/analytics", response_model=OperatorMemoryAnalyticsResponse)
+async def operator_memory_analytics(request: Request):
+    manager = get_operator_memory_manager(request)
+    return manager.analytics_summary()
+
+
+@operator_memory_router.get("/commander-brief", response_model=OperatorCommanderBriefResponse)
+async def operator_memory_commander_brief(request: Request):
+    manager = get_operator_memory_manager(request)
+    user = require_current_user_if_bootstrapped(request)
+    awareness = build_architecture_status(
+        request.app.state,
+        owner_user_id=str(user["id"]).strip() if user is not None else None,
+    ).get("awareness", {})
+    analytics = manager.analytics_summary()
+    profile = manager.snapshot().get("profile", {})
+    return build_commander_brief(analytics=analytics, awareness=awareness, profile=profile)
+
+
+@operator_memory_router.post("/review")
+async def operator_memory_add_review_item(req: OperatorReviewItemRequest, request: Request):
+    manager = get_operator_memory_manager(request)
+    try:
+        return manager.add_review_item(
+            category=req.category or "quality",
+            label=req.label or "Review item",
+            summary=req.summary,
+            detail=req.detail or "",
+            source=req.source or "manual",
+            status=req.status or "open",
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
 
 
 @operator_memory_router.post("/profile")

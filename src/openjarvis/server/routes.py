@@ -10,6 +10,7 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
 
 from openjarvis.assistant import build_assistant_system_context
+from openjarvis.assistant import infer_user_interaction_profile
 from openjarvis.core.types import Message, Role
 from openjarvis.server.auth import get_operator_memory_manager
 from openjarvis.server.models import (
@@ -65,21 +66,34 @@ def _inject_jarvis_identity_context(
 
     memory_items: list[dict[str, Any]] = []
     memory_layers = None
+    stored_profile: dict[str, Any] = {}
     try:
         operator_memory = get_operator_memory_manager(request)
         memory_layers = operator_memory.layered_relevant_context(query_text, limit=5)
         memory_items = memory_layers.flattened(limit=5)
+        stored_profile = operator_memory.snapshot().get("profile", {}) or {}
     except Exception:
         logging.getLogger("openjarvis.server").debug(
             "Operator memory relevance lookup failed",
             exc_info=True,
         )
+    recent_user_messages = [
+        message.content
+        for message in request_body.messages
+        if message.role == "user" and (message.content or "").strip()
+    ][-4:]
+    user_interaction = infer_user_interaction_profile(
+        query=query_text,
+        recent_user_messages=recent_user_messages,
+        stored_profile=stored_profile,
+    )
 
     assistant_system = build_assistant_system_context(
         query=query_text,
         surface="chat",
         memory_items=memory_items,
         memory_layers=memory_layers,
+        user_interaction=user_interaction,
     )
     if not assistant_system.strip():
         return

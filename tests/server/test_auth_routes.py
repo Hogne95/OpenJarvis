@@ -331,8 +331,14 @@ def test_operator_memory_routes_are_isolated_per_authenticated_user(tmp_path: Pa
     )
     assert login_guest.status_code == 200
 
-    owner.post("/v1/operator-memory/profile", json={"honorific": "captain"})
-    guest.post("/v1/operator-memory/profile", json={"honorific": "friend"})
+    owner.post(
+        "/v1/operator-memory/profile",
+        json={"honorific": "captain", "autonomy_preference": "high initiative"},
+    )
+    guest.post(
+        "/v1/operator-memory/profile",
+        json={"honorific": "friend", "autonomy_preference": "balanced"},
+    )
 
     owner_snapshot = owner.get("/v1/operator-memory")
     guest_snapshot = guest.get("/v1/operator-memory")
@@ -341,6 +347,8 @@ def test_operator_memory_routes_are_isolated_per_authenticated_user(tmp_path: Pa
     assert guest_snapshot.status_code == 200
     assert owner_snapshot.json()["profile"]["honorific"] == "captain"
     assert guest_snapshot.json()["profile"]["honorific"] == "friend"
+    assert owner_snapshot.json()["profile"]["autonomy_preference"] == "high initiative"
+    assert guest_snapshot.json()["profile"]["autonomy_preference"] == "balanced"
 
 
 def test_managed_agents_are_isolated_per_authenticated_user(tmp_path: Path):
@@ -1062,3 +1070,127 @@ def test_operator_memory_context_route_returns_layered_results(tmp_path: Path):
     assert data["identity"]
     assert data["session_focus"]
     assert data["long_term"]
+
+
+def test_operator_memory_analytics_route_returns_focus_and_lessons(tmp_path: Path):
+    client = _make_client(tmp_path)
+    bootstrap = client.post(
+        "/v1/auth/bootstrap",
+        json={
+            "username": "owner",
+            "password": "supersecret123",
+            "display_name": "Owner",
+        },
+    )
+    assert bootstrap.status_code == 200
+
+    client.post(
+        "/v1/operator-memory/mission",
+        json={
+            "id": "ship-release",
+            "title": "Ship release",
+            "domain": "coding",
+            "status": "blocked",
+            "phase": "verify",
+            "next_step": "Fix the failing release checklist items.",
+        },
+    )
+    client.post("/v1/operator-memory/signal", json={"kind": "urgent"})
+    client.post(
+        "/v1/operator-memory/learning",
+        json={
+            "label": "Release discipline",
+            "domain": "coding",
+            "summary": "Large releases created cleanup work.",
+            "lesson": "Ship smaller batches with a verification gate.",
+            "reuse_hint": "Use before tagging a release.",
+            "tags": ["release", "verification"],
+        },
+    )
+
+    response = client.get("/v1/operator-memory/analytics")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["blocked_missions"]
+    assert payload["top_lessons"]
+    assert payload["focus_recommendations"]
+
+
+def test_operator_memory_review_item_is_recorded_and_returned_in_analytics(tmp_path: Path):
+    client = _make_client(tmp_path)
+    bootstrap = client.post(
+        "/v1/auth/bootstrap",
+        json={
+            "username": "owner",
+            "password": "supersecret123",
+            "display_name": "Owner",
+        },
+    )
+    assert bootstrap.status_code == 200
+
+    review = client.post(
+        "/v1/operator-memory/review",
+        json={
+            "category": "quality",
+            "label": "Operator review",
+            "summary": "The answer was too vague and should be tightened.",
+            "detail": "Improve recommendation confidence and next-step specificity.",
+            "source": "test",
+        },
+    )
+    assert review.status_code == 200
+
+    analytics = client.get("/v1/operator-memory/analytics")
+    assert analytics.status_code == 200
+    payload = analytics.json()
+    assert payload["review_items"]
+    assert payload["review_items"][0]["summary"] == "The answer was too vague and should be tightened."
+
+
+def test_operator_memory_commander_brief_is_user_scoped_and_structured(tmp_path: Path):
+    owner = _make_client(tmp_path, with_agent_manager=True)
+    app = owner.app
+    bootstrap = owner.post(
+        "/v1/auth/bootstrap",
+        json={
+            "username": "owner",
+            "password": "supersecret123",
+            "display_name": "Owner",
+        },
+    )
+    assert bootstrap.status_code == 200
+    app.state.user_store.create_user(
+        username="guest",
+        password="guestsecret123",
+        display_name="Guest",
+        role="user",
+    )
+
+    owner.post(
+        "/v1/operator-memory/mission",
+        json={
+            "id": "voice-repair",
+            "title": "Repair voice loop",
+            "domain": "voice",
+            "status": "blocked",
+            "phase": "retry",
+            "next_step": "Inspect the latest interruption failure.",
+        },
+    )
+
+    guest = TestClient(app)
+    guest_login = guest.post("/v1/auth/login", json={"username": "guest", "password": "guestsecret123"})
+    assert guest_login.status_code == 200
+
+    owner_brief = owner.get("/v1/operator-memory/commander-brief")
+    assert owner_brief.status_code == 200
+    owner_data = owner_brief.json()
+    assert owner_data["recommendation"] == "Unblock Repair voice loop first."
+    assert owner_data["queue"][0]["action_hint"] == "planner_handoff"
+
+    guest_brief = guest.get("/v1/operator-memory/commander-brief")
+    assert guest_brief.status_code == 200
+    guest_data = guest_brief.json()
+    assert guest_data["recommendation"] != owner_data["recommendation"]
+    assert isinstance(guest_data["queue"], list)

@@ -1946,6 +1946,68 @@ export interface OperatorMemoryContextResponse {
   flattened: OperatorMemoryContextItem[];
 }
 
+export interface OperatorMemoryAnalyticsResponse {
+  signals: {
+    reply_drafts: number;
+    meetings_created: number;
+    tasks_created: number;
+    urgent_reviews: number;
+    top_contacts: string[];
+  };
+  active_missions: Array<{
+    id: string;
+    title: string;
+    status: string;
+    phase: string;
+    next_step: string;
+  }>;
+  blocked_missions: Array<{
+    id: string;
+    title: string;
+    status: string;
+    phase: string;
+    next_step: string;
+  }>;
+  top_lessons: Array<{
+    id: string;
+    label: string;
+    domain?: string;
+    summary?: string;
+    lesson?: string;
+    confidence?: number;
+  }>;
+  focus_recommendations: string[];
+  review_items: Array<{
+    id: string;
+    category: string;
+    label: string;
+    summary: string;
+    detail: string;
+    status: string;
+    source: string;
+    created_at: string;
+  }>;
+}
+
+export interface OperatorCommanderBriefResponse {
+  headline: string;
+  recommendation: string;
+  why: string;
+  risks: string[];
+  best_next_step: string;
+  queue: Array<{
+    id: string;
+    label: string;
+    title: string;
+    detail: string;
+    action_label: string;
+    action_hint: string;
+    priority: number;
+  }>;
+  operating_mode: string;
+  interaction_style: string;
+}
+
 export async function fetchOperatorMemoryContext(body: {
   query: string;
   limit?: number;
@@ -1958,6 +2020,44 @@ export async function fetchOperatorMemoryContext(body: {
   if (!res.ok) {
     const detail = await res.json().catch(() => ({ detail: res.statusText }));
     throw new Error(detail.detail || `Operator memory context failed: ${res.status}`);
+  }
+  return res.json();
+}
+
+export async function fetchOperatorMemoryAnalytics(): Promise<OperatorMemoryAnalyticsResponse> {
+  const res = await authFetch('/v1/operator-memory/analytics');
+  if (!res.ok) {
+    const detail = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(detail.detail || `Operator memory analytics failed: ${res.status}`);
+  }
+  return res.json();
+}
+
+export async function fetchOperatorCommanderBrief(): Promise<OperatorCommanderBriefResponse> {
+  const res = await authFetch('/v1/operator-memory/commander-brief');
+  if (!res.ok) {
+    const detail = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(detail.detail || `Operator commander brief failed: ${res.status}`);
+  }
+  return res.json();
+}
+
+export async function addOperatorReviewItem(body: {
+  category?: string;
+  label?: string;
+  summary: string;
+  detail?: string;
+  source?: string;
+  status?: string;
+}): Promise<DurableOperatorMemory> {
+  const res = await authFetch('/v1/operator-memory/review', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const detail = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(detail.detail || `Operator review item failed: ${res.status}`);
   }
   return res.json();
 }

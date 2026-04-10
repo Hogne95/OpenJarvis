@@ -5,6 +5,9 @@ import {
   ensureCoreAgentArchitecture,
   fetchAgentArchitectureStatus,
   fetchOperatorMemoryContext,
+  fetchOperatorMemoryAnalytics,
+  fetchOperatorCommanderBrief,
+  addOperatorReviewItem,
   fetchRuntimeReadiness,
   fetchSpeechHealth,
   fetchVoiceLoopStatus,
@@ -12,6 +15,8 @@ import {
   stopVoiceLoop,
   type AgentArchitectureStatus,
   type OperatorMemoryContextResponse,
+  type OperatorMemoryAnalyticsResponse,
+  type OperatorCommanderBriefResponse,
   type RuntimeReadiness,
   type SpeechHealth,
   type VoiceLoopStatus,
@@ -28,6 +33,8 @@ export function SystemPage() {
   const [voiceLoop, setVoiceLoop] = useState<VoiceLoopStatus | null>(null);
   const [architecture, setArchitecture] = useState<AgentArchitectureStatus | null>(null);
   const [memoryContext, setMemoryContext] = useState<OperatorMemoryContextResponse | null>(null);
+  const [memoryAnalytics, setMemoryAnalytics] = useState<OperatorMemoryAnalyticsResponse | null>(null);
+  const [commanderBrief, setCommanderBrief] = useState<OperatorCommanderBriefResponse | null>(null);
   const [busy, setBusy] = useState<RefreshState>('idle');
   const [notice, setNotice] = useState('');
   const awarenessHeadline = useMemo(
@@ -59,6 +66,8 @@ export function SystemPage() {
           limit: 5,
         }).catch(() => null),
       );
+      setMemoryAnalytics(await fetchOperatorMemoryAnalytics().catch(() => null));
+      setCommanderBrief(await fetchOperatorCommanderBrief().catch(() => null));
     } finally {
       setBusy('idle');
     }
@@ -105,6 +114,26 @@ export function SystemPage() {
       setNotice('Core agent architecture checked and refreshed.');
     } catch (error) {
       setNotice(error instanceof Error ? error.message : 'Unable to ensure the core agent team.');
+    } finally {
+      setBusy('idle');
+    }
+  }
+
+  async function handleLogReviewItem() {
+    setBusy('refreshing');
+    setNotice('');
+    try {
+      await addOperatorReviewItem({
+        category: 'quality',
+        label: 'Operator review',
+        summary: 'A recent answer or workflow felt weaker than expected and should be reviewed.',
+        detail: 'Use this as a seed item for prompt, routing, or tool-chain refinement.',
+        source: 'system-page',
+      });
+      setMemoryAnalytics(await fetchOperatorMemoryAnalytics().catch(() => null));
+      setNotice('Review item queued for future tuning.');
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : 'Unable to queue review item.');
     } finally {
       setBusy('idle');
     }
@@ -264,6 +293,49 @@ export function SystemPage() {
 
           <div className="space-y-4">
             <div className="rounded-[1.5rem] border border-cyan-400/12 bg-slate-950/55 p-5">
+              <div className="text-[10px] uppercase tracking-[0.3em] text-cyan-300/55">Commander Brief</div>
+              <div className="mt-3 text-sm leading-7 text-slate-200/76">
+                Root cause of earlier “smart but passive” behavior was that JARVIS could track pressure signals without
+                turning them into one clear command recommendation. Commander mode now compresses memory, blockers, and
+                system state into a bounded next move.
+              </div>
+              <div className="mt-4 rounded-[1rem] border border-cyan-400/10 bg-black/20 px-4 py-3">
+                <div className="flex items-center justify-between gap-3">
+                  <div className="text-xs uppercase tracking-[0.22em] text-cyan-300/55">Recommendation</div>
+                  <div className="text-[10px] uppercase tracking-[0.22em] text-cyan-300/55">
+                    {commanderBrief?.operating_mode || 'monitoring'}
+                  </div>
+                </div>
+                <div className="mt-2 text-sm text-cyan-50/92">
+                  {commanderBrief?.recommendation || 'Waiting for commander guidance.'}
+                </div>
+                <div className="mt-2 text-xs leading-6 text-slate-200/72">
+                  {commanderBrief?.why || 'Commander logic will explain why this recommendation matters once enough state is available.'}
+                </div>
+                <div className="mt-3 text-[10px] uppercase tracking-[0.22em] text-cyan-300/55">Best Next Step</div>
+                <div className="mt-1 text-sm text-slate-200/78">
+                  {commanderBrief?.best_next_step || 'No bounded next step selected yet.'}
+                </div>
+                <div className="mt-3 text-[10px] uppercase tracking-[0.22em] text-cyan-300/55">Interaction Style</div>
+                <div className="mt-1 text-xs leading-6 text-slate-200/72">
+                  {commanderBrief?.interaction_style || 'adaptive'}
+                </div>
+                {commanderBrief?.risks?.length ? (
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    {commanderBrief.risks.map((risk) => (
+                      <div
+                        key={risk}
+                        className="rounded-full border border-amber-300/18 bg-amber-400/[0.05] px-3 py-1 text-[10px] uppercase tracking-[0.22em] text-amber-200/74"
+                      >
+                        {risk}
+                      </div>
+                    ))}
+                  </div>
+                ) : null}
+              </div>
+            </div>
+
+            <div className="rounded-[1.5rem] border border-cyan-400/12 bg-slate-950/55 p-5">
               <div className="text-[10px] uppercase tracking-[0.3em] text-cyan-300/55">Lifecycle Controls</div>
               <div className="mt-4 grid gap-3">
                 <button
@@ -286,6 +358,13 @@ export function SystemPage() {
                   className="rounded-[1rem] border border-cyan-400/15 bg-slate-950/70 px-4 py-3 text-left text-xs uppercase tracking-[0.24em] text-cyan-100 transition hover:bg-cyan-400/[0.08] disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   Ensure Core Team
+                </button>
+                <button
+                  onClick={() => void handleLogReviewItem()}
+                  disabled={busy !== 'idle'}
+                  className="rounded-[1rem] border border-cyan-400/15 bg-slate-950/70 px-4 py-3 text-left text-xs uppercase tracking-[0.24em] text-cyan-100 transition hover:bg-cyan-400/[0.08] disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  Queue Review Item
                 </button>
               </div>
             </div>
@@ -360,6 +439,75 @@ export function SystemPage() {
                   </div>
                 ))}
               </div>
+            </div>
+
+            <div className="rounded-[1.5rem] border border-cyan-400/12 bg-slate-950/55 p-5">
+              <div className="text-[10px] uppercase tracking-[0.3em] text-cyan-300/55">Personal Analytics</div>
+              <div className="mt-3 text-sm leading-7 text-slate-200/76">
+                Root cause of earlier “learning but not helping” behavior was that missions, lessons, and operator signals were stored silently.
+                JARVIS now turns them into a visible bottleneck summary so repeated friction can shape the next recommendation.
+              </div>
+              <div className="mt-4 grid gap-3 lg:grid-cols-2">
+                <div className="rounded-[1rem] border border-cyan-400/10 bg-black/20 px-4 py-3">
+                  <div className="text-xs uppercase tracking-[0.22em] text-cyan-300/55">Focus Recommendations</div>
+                  <div className="mt-2 space-y-2 text-sm text-cyan-50/92">
+                    {(memoryAnalytics?.focus_recommendations || ['Waiting for enough memory signals to generate focus guidance.']).map((item) => (
+                      <div key={item} className="rounded-[0.9rem] border border-cyan-400/10 bg-slate-950/55 px-3 py-2">
+                        {item}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+                <div className="rounded-[1rem] border border-cyan-400/10 bg-black/20 px-4 py-3">
+                  <div className="text-xs uppercase tracking-[0.22em] text-cyan-300/55">Active Friction</div>
+                  <div className="mt-2 space-y-2 text-sm text-cyan-50/92">
+                    {(memoryAnalytics?.blocked_missions?.length
+                      ? memoryAnalytics.blocked_missions
+                      : memoryAnalytics?.active_missions?.slice(0, 2) || []
+                    ).map((item) => (
+                      <div key={item.id} className="rounded-[0.9rem] border border-cyan-400/10 bg-slate-950/55 px-3 py-2">
+                        <div className="text-[10px] uppercase tracking-[0.22em] text-cyan-300/55">{item.status} · {item.phase}</div>
+                        <div className="mt-1">{item.title}</div>
+                        {item.next_step ? <div className="mt-1 text-xs leading-6 text-slate-200/72">{item.next_step}</div> : null}
+                      </div>
+                    ))}
+                    {!memoryAnalytics?.blocked_missions?.length && !memoryAnalytics?.active_missions?.length ? (
+                      <div className="rounded-[0.9rem] border border-cyan-400/10 bg-slate-950/55 px-3 py-2 text-slate-200/72">
+                        No active mission bottlenecks recorded yet.
+                      </div>
+                    ) : null}
+                  </div>
+                </div>
+              </div>
+              {memoryAnalytics?.top_lessons?.length ? (
+                <div className="mt-4 rounded-[1rem] border border-cyan-400/10 bg-black/20 px-4 py-3">
+                  <div className="text-xs uppercase tracking-[0.22em] text-cyan-300/55">Top Lessons</div>
+                  <div className="mt-3 space-y-2">
+                    {memoryAnalytics.top_lessons.slice(0, 3).map((item) => (
+                      <div key={item.id} className="rounded-[0.9rem] border border-cyan-400/10 bg-slate-950/55 px-3 py-2">
+                        <div className="text-sm text-cyan-50/92">{item.label}</div>
+                        <div className="mt-1 text-xs leading-6 text-slate-200/72">{item.lesson || item.summary || 'Lesson available.'}</div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ) : null}
+              {memoryAnalytics?.review_items?.length ? (
+                <div className="mt-4 rounded-[1rem] border border-cyan-400/10 bg-black/20 px-4 py-3">
+                  <div className="text-xs uppercase tracking-[0.22em] text-cyan-300/55">Review Queue</div>
+                  <div className="mt-3 space-y-2">
+                    {memoryAnalytics.review_items.slice(0, 3).map((item) => (
+                      <div key={item.id} className="rounded-[0.9rem] border border-cyan-400/10 bg-slate-950/55 px-3 py-2">
+                        <div className="flex items-center justify-between gap-3">
+                          <div className="text-sm text-cyan-50/92">{item.label}</div>
+                          <div className="text-[10px] uppercase tracking-[0.22em] text-cyan-300/55">{item.status}</div>
+                        </div>
+                        <div className="mt-1 text-xs leading-6 text-slate-200/72">{item.summary}</div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ) : null}
             </div>
 
             <div className="rounded-[1.5rem] border border-cyan-400/12 bg-slate-950/55 p-5">

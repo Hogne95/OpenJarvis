@@ -17,6 +17,11 @@ from openjarvis.assistant.memory_layers import AssistantMemoryLayers
 class OperatorProfile:
     honorific: str = "sir"
     reply_tone: str = "clear and concise"
+    verbosity_preference: str = "adaptive"
+    technical_depth: str = "adaptive"
+    decisiveness_preference: str = "recommend clearly"
+    autonomy_preference: str = "balanced"
+    personality_notes: str = ""
     priority_contacts: list[str] = field(default_factory=list)
     workday_start: str = "08:00"
     workday_end: str = "17:00"
@@ -236,6 +241,18 @@ class MissionMemory:
     updated_at: str = ""
 
 
+@dataclass(slots=True)
+class ReviewItem:
+    id: str
+    category: str = "quality"
+    label: str = ""
+    summary: str = ""
+    detail: str = ""
+    status: str = "open"
+    source: str = "manual"
+    created_at: str = ""
+
+
 class OperatorMemory:
     """Simple JSON-backed operator memory for cross-session HUD personalization."""
 
@@ -261,6 +278,7 @@ class OperatorMemory:
         self._fivem_briefs: list[FivemBrief] = []
         self._learning_experiences: list[LearningExperience] = []
         self._missions: list[MissionMemory] = []
+        self._review_items: list[ReviewItem] = []
         self._load()
 
     def _load(self) -> None:
@@ -275,6 +293,11 @@ class OperatorMemory:
         self._profile = OperatorProfile(
             honorific=str(profile.get("honorific", self._profile.honorific)),
             reply_tone=str(profile.get("reply_tone", self._profile.reply_tone)),
+            verbosity_preference=str(profile.get("verbosity_preference", self._profile.verbosity_preference)),
+            technical_depth=str(profile.get("technical_depth", self._profile.technical_depth)),
+            decisiveness_preference=str(profile.get("decisiveness_preference", self._profile.decisiveness_preference)),
+            autonomy_preference=str(profile.get("autonomy_preference", self._profile.autonomy_preference)),
+            personality_notes=str(profile.get("personality_notes", self._profile.personality_notes)),
             priority_contacts=list(profile.get("priority_contacts", [])),
             workday_start=str(profile.get("workday_start", self._profile.workday_start)),
             workday_end=str(profile.get("workday_end", self._profile.workday_end)),
@@ -534,6 +557,21 @@ class OperatorMemory:
             for value in missions
             if str(value.get("id", "")).strip() and str(value.get("title", "")).strip()
         ]
+        review_items = data.get("review_items", [])
+        self._review_items = [
+            ReviewItem(
+                id=str(value.get("id", "")),
+                category=str(value.get("category", "quality")),
+                label=str(value.get("label", "")),
+                summary=str(value.get("summary", "")),
+                detail=str(value.get("detail", "")),
+                status=str(value.get("status", "open")),
+                source=str(value.get("source", "manual")),
+                created_at=str(value.get("created_at", "")),
+            )
+            for value in review_items
+            if str(value.get("summary", "")).strip()
+        ]
 
     def _save(self) -> None:
         payload = {
@@ -556,6 +594,7 @@ class OperatorMemory:
             "fivem_briefs": [asdict(value) for value in self._fivem_briefs],
             "learning_experiences": [asdict(value) for value in self._learning_experiences],
             "missions": [asdict(value) for value in self._missions],
+            "review_items": [asdict(value) for value in self._review_items],
         }
         self._path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
 
@@ -580,6 +619,7 @@ class OperatorMemory:
             "fivem_briefs": [asdict(value) for value in self._fivem_briefs],
             "learning_experiences": [asdict(value) for value in self._learning_experiences],
             "missions": [asdict(value) for value in self._missions],
+            "review_items": [asdict(value) for value in self._review_items],
         }
 
     def update_profile(self, partial: dict[str, Any]) -> dict[str, Any]:
@@ -587,6 +627,22 @@ class OperatorMemory:
             self._profile.honorific = str(partial["honorific"]).strip() or self._profile.honorific
         if "reply_tone" in partial:
             self._profile.reply_tone = str(partial["reply_tone"]).strip() or self._profile.reply_tone
+        if "verbosity_preference" in partial:
+            self._profile.verbosity_preference = (
+                str(partial["verbosity_preference"]).strip() or self._profile.verbosity_preference
+            )
+        if "technical_depth" in partial:
+            self._profile.technical_depth = str(partial["technical_depth"]).strip() or self._profile.technical_depth
+        if "decisiveness_preference" in partial:
+            self._profile.decisiveness_preference = (
+                str(partial["decisiveness_preference"]).strip() or self._profile.decisiveness_preference
+            )
+        if "autonomy_preference" in partial:
+            self._profile.autonomy_preference = (
+                str(partial["autonomy_preference"]).strip() or self._profile.autonomy_preference
+            )
+        if "personality_notes" in partial:
+            self._profile.personality_notes = str(partial["personality_notes"]).strip()
         if "priority_contacts" in partial:
             raw = partial["priority_contacts"]
             if isinstance(raw, str):
@@ -909,6 +965,11 @@ class OperatorMemory:
             profile_score += 0.7
         profile_score += _score_text(
             self._profile.reply_tone,
+            self._profile.verbosity_preference,
+            self._profile.technical_depth,
+            self._profile.decisiveness_preference,
+            self._profile.autonomy_preference,
+            self._profile.personality_notes,
             " ".join(self._profile.priority_contacts),
             self._profile.workday_start,
             self._profile.workday_end,
@@ -923,6 +984,10 @@ class OperatorMemory:
                         "label": "Known preferences",
                         "detail": (
                             f"Reply tone: {self._profile.reply_tone}; "
+                            f"verbosity: {self._profile.verbosity_preference}; "
+                            f"technical depth: {self._profile.technical_depth}; "
+                            f"decision style: {self._profile.decisiveness_preference}; "
+                            f"autonomy: {self._profile.autonomy_preference}; "
                             f"priority contacts: {', '.join(self._profile.priority_contacts) or 'none'}; "
                             f"workday: {self._profile.workday_start}-{self._profile.workday_end}"
                         ),
@@ -1414,6 +1479,99 @@ class OperatorMemory:
             ranked.append((score, item))
         ranked.sort(key=lambda pair: pair[0], reverse=True)
         return [asdict(item) for _, item in ranked[: max(1, limit)]]
+
+    def analytics_summary(self) -> dict[str, Any]:
+        blocked_missions = [
+            item
+            for item in self._missions
+            if item.status.strip().lower() in {"blocked", "needs_attention", "stalled", "error"}
+        ]
+        active_missions = [
+            item
+            for item in self._missions
+            if item.status.strip().lower() in {"active", "running", "in_progress", "pending"}
+        ]
+        bottlenecks = self.top_learning_experiences(limit=4)
+        focus: list[str] = []
+        if blocked_missions:
+            focus.append(f"Clear {len(blocked_missions)} blocked mission{'s' if len(blocked_missions) != 1 else ''}.")
+        if self._signals.urgent_reviews:
+            focus.append(f"Handle {self._signals.urgent_reviews} urgent review signal{'s' if self._signals.urgent_reviews != 1 else ''}.")
+        if active_missions and not focus:
+            focus.append(f"Advance {active_missions[0].title} next.")
+        if not focus and bottlenecks:
+            focus.append(f"Use the lesson from {bottlenecks[0].get('label', 'recent work')} to avoid repeat friction.")
+        if not focus:
+            focus.append("No major bottleneck is dominating right now.")
+
+        return {
+            "signals": asdict(self._signals),
+            "active_missions": [
+                {
+                    "id": item.id,
+                    "title": item.title,
+                    "status": item.status,
+                    "phase": item.phase,
+                    "next_step": item.next_step,
+                }
+                for item in active_missions[:5]
+            ],
+            "blocked_missions": [
+                {
+                    "id": item.id,
+                    "title": item.title,
+                    "status": item.status,
+                    "phase": item.phase,
+                    "next_step": item.next_step,
+                }
+                for item in blocked_missions[:5]
+            ],
+            "top_lessons": bottlenecks,
+            "focus_recommendations": focus,
+            "review_items": [asdict(item) for item in self._review_items[:8]],
+        }
+
+    def add_review_item(
+        self,
+        *,
+        category: str,
+        label: str,
+        summary: str,
+        detail: str = "",
+        source: str = "manual",
+        status: str = "open",
+    ) -> dict[str, Any]:
+        cleaned_summary = summary.strip()
+        if not cleaned_summary:
+            raise ValueError("Review summary is required")
+        cleaned_category = category.strip().lower() or "quality"
+        cleaned_status = status.strip().lower() or "open"
+        review_id = f"review-{int(datetime.now(timezone.utc).timestamp() * 1000)}"
+        self._review_items = [
+            item
+            for item in self._review_items
+            if not (
+                item.category == cleaned_category
+                and item.summary.strip().lower() == cleaned_summary.lower()
+                and item.status == cleaned_status
+            )
+        ]
+        self._review_items.insert(
+            0,
+            ReviewItem(
+                id=review_id,
+                category=cleaned_category,
+                label=label.strip() or "Review item",
+                summary=cleaned_summary,
+                detail=detail.strip(),
+                source=source.strip() or "manual",
+                status=cleaned_status,
+                created_at=datetime.now(timezone.utc).isoformat(),
+            ),
+        )
+        self._review_items = self._review_items[:40]
+        self._save()
+        return self.snapshot()
 
     def update_mission(self, mission_id: str, partial: dict[str, Any]) -> dict[str, Any]:
         cleaned_id = mission_id.strip()

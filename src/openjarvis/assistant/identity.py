@@ -45,6 +45,16 @@ class DecisionAnalysis:
     matched_signals: list[str] = field(default_factory=list)
 
 
+@dataclass(slots=True)
+class UserInteractionProfile:
+    response_depth: str = "adaptive"
+    pace: str = "steady"
+    decisiveness: str = "recommend clearly"
+    autonomy: str = "balanced"
+    technical_depth: str = "adaptive"
+    collaboration_style: str = "collaborative"
+
+
 _DECISION_KEYWORDS = {
     "recommend": 0.85,
     "recommendation": 0.9,
@@ -99,6 +109,79 @@ def analyze_decision_request(text: str) -> DecisionAnalysis:
     )
 
 
+def infer_user_interaction_profile(
+    *,
+    query: str,
+    recent_user_messages: list[str] | None = None,
+    stored_profile: dict[str, Any] | None = None,
+) -> UserInteractionProfile:
+    profile = UserInteractionProfile()
+    stored = stored_profile or {}
+    if str(stored.get("verbosity_preference", "")).strip():
+        profile.response_depth = str(stored.get("verbosity_preference")).strip()
+    if str(stored.get("technical_depth", "")).strip():
+        profile.technical_depth = str(stored.get("technical_depth")).strip()
+    if str(stored.get("decisiveness_preference", "")).strip():
+        profile.decisiveness = str(stored.get("decisiveness_preference")).strip()
+    if str(stored.get("autonomy_preference", "")).strip():
+        profile.autonomy = str(stored.get("autonomy_preference")).strip()
+    reply_tone = str(stored.get("reply_tone", "")).strip().lower()
+    if any(token in reply_tone for token in ("concise", "direct", "crisp")):
+        profile.collaboration_style = "direct and efficient"
+    if any(token in reply_tone for token in ("warm", "supportive", "friendly")):
+        profile.collaboration_style = "supportive and collaborative"
+
+    recent = [msg.strip() for msg in (recent_user_messages or []) if str(msg).strip()]
+    sample = " ".join(recent[-4:] + ([query] if query.strip() else [])).lower()
+    avg_words = sum(len(msg.split()) for msg in recent[-4:] or [query]) / max(len(recent[-4:] or [query]), 1)
+
+    autonomy_signals = (
+        "go ahead",
+        "just do it",
+        "continue",
+        "until done",
+        "no need to stop",
+        "approved",
+        "do everything",
+        "non stop",
+    )
+    detailed_signals = ("explain", "deep", "details", "double check", "triple check", "why", "tradeoff")
+    technical_signals = (
+        "api",
+        "backend",
+        "frontend",
+        "repo",
+        "latency",
+        "architecture",
+        "memory",
+        "agent",
+        "test",
+        "voice",
+        "hud",
+    )
+    collaborative_signals = ("let's", "we should", "can we", "work on")
+
+    if any(signal in sample for signal in autonomy_signals):
+        profile.autonomy = "high initiative"
+        profile.pace = "fast-moving"
+        profile.decisiveness = "take the lead and recommend strongly"
+    elif avg_words <= 8:
+        profile.pace = "fast-moving"
+
+    if any(signal in sample for signal in detailed_signals):
+        profile.response_depth = "detailed when useful"
+    elif avg_words <= 10 and profile.response_depth == "adaptive":
+        profile.response_depth = "concise-first"
+
+    if any(signal in sample for signal in technical_signals):
+        profile.technical_depth = "high"
+
+    if any(signal in sample for signal in collaborative_signals):
+        profile.collaboration_style = "collaborative and execution-oriented"
+
+    return profile
+
+
 def format_memory_context(items: list[dict[str, Any]]) -> str:
     """Render relevant memory snippets as a compact prompt section."""
 
@@ -125,6 +208,7 @@ def build_assistant_system_context(
     memory_items: list[dict[str, Any]] | None = None,
     memory_layers: AssistantMemoryLayers | None = None,
     identity: JarvisIdentityProfile | None = None,
+    user_interaction: UserInteractionProfile | None = None,
 ) -> str:
     """Build a reusable JARVIS system context block."""
 
@@ -141,6 +225,19 @@ def build_assistant_system_context(
     ]
     parts.extend(f"- {priority}" for priority in profile.priorities)
     parts.append(f"Current surface: {surface}.")
+    if user_interaction is not None:
+        parts.extend(
+            [
+                "",
+                "User interaction profile:",
+                f"- Response depth: {user_interaction.response_depth}",
+                f"- Pace: {user_interaction.pace}",
+                f"- Decision handling: {user_interaction.decisiveness}",
+                f"- Autonomy preference: {user_interaction.autonomy}",
+                f"- Technical level: {user_interaction.technical_depth}",
+                f"- Collaboration style: {user_interaction.collaboration_style}",
+            ]
+        )
 
     if decision.is_decision:
         parts.extend(
