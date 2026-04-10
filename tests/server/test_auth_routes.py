@@ -1599,5 +1599,185 @@ def test_agent_architecture_handoff_preserves_coding_metadata(tmp_path: Path):
     assert payload["handoff"]["metadata"]["repo_name"] == "OpenJarvis"
     assert payload["handoff"]["metadata"]["preferred_checks"] == ["npm run build"]
     mission = payload.get("mission") or {}
+    assert mission["domain"] == "coding"
+    assert mission["title"] == "Coding Workflow Mission: OpenJarvis"
+    assert "release mode" in mission["summary"].lower()
     result_data = mission.get("result_data") or {}
     assert result_data["metadata"]["objective"] == "release"
+
+
+def test_coding_handoff_status_uses_live_task_progress(tmp_path: Path):
+    client = _make_client(tmp_path, with_agent_manager=True)
+    bootstrap = client.post(
+        "/v1/auth/bootstrap",
+        json={
+            "username": "owner",
+            "password": "supersecret123",
+            "display_name": "Owner",
+        },
+    )
+    assert bootstrap.status_code == 200
+
+    response = client.post(
+        "/v1/agent-architecture/handoff",
+        json={
+            "brief": "Coding commander directive.\nRepo: OpenJarvis\nRecommendation: Recover failing tests.",
+            "source": "system-coding",
+            "metadata": {
+                "objective": "failing-tests",
+                "workflow_mode": "failing-tests",
+                "repo_name": "OpenJarvis",
+                "preferred_checks": ["pytest tests/server/test_auth_routes.py -q"],
+            },
+        },
+    )
+    assert response.status_code == 200
+    payload = response.json()
+    planner_task_id = payload["handoff"]["planner"]["task_id"]
+
+    client.app.state.agent_manager.update_task(
+        planner_task_id,
+        status="active",
+        progress={
+            "current_step": "verify",
+            "step_status": "running",
+            "current_detail": "Re-running the failing pytest target.",
+            "result_summary": "Awaiting verification result.",
+        },
+    )
+
+    refreshed = client.get("/v1/agent-architecture/status")
+    assert refreshed.status_code == 200
+    mission = refreshed.json()["mission"]
+    assert mission["domain"] == "coding"
+    assert mission["phase"] == "verify"
+    assert mission["result_data"]["current_step"] == "verify"
+    assert mission["result_data"]["step_status"] == "running"
+    assert mission["result_data"]["steps"][-1]["detail"] == "Re-running the failing pytest target."
+    assert "pytest" in mission["next_step"].lower()
+    workflow = mission["result_data"]["workflow"]
+    assert workflow["workflow_mode"] == "failing-tests"
+    assert workflow["closure"]["verification_anchor"] == "pytest tests/server/test_auth_routes.py -q"
+    assert "re-running the failing pytest target" in mission["summary"].lower()
+
+
+def test_coding_handoff_status_formats_blocked_outcome_for_workflow_mode(tmp_path: Path):
+    client = _make_client(tmp_path, with_agent_manager=True)
+    bootstrap = client.post(
+        "/v1/auth/bootstrap",
+        json={
+            "username": "owner",
+            "password": "supersecret123",
+            "display_name": "Owner",
+        },
+    )
+    assert bootstrap.status_code == 200
+
+    response = client.post(
+        "/v1/agent-architecture/handoff",
+        json={
+            "brief": "Coding commander directive.\nRepo: OpenJarvis\nRecommendation: Stabilize the release lane.",
+            "source": "system-coding",
+            "metadata": {
+                "objective": "release",
+                "workflow_mode": "release",
+                "repo_name": "OpenJarvis",
+                "preferred_checks": ["npm run build"],
+                "exit_criteria": ["The release check path has been run or explicitly marked blocked."],
+            },
+        },
+    )
+    assert response.status_code == 200
+    payload = response.json()
+    planner_task_id = payload["handoff"]["planner"]["task_id"]
+
+    client.app.state.agent_manager.update_task(
+        planner_task_id,
+        status="failed",
+        description="Release verification stopped on the packaging step.",
+        progress={
+            "current_step": "verify",
+            "step_status": "blocked",
+            "current_detail": "Release build is still failing on the packaging step.",
+            "result_summary": "Release verification is blocked until packaging succeeds.",
+        },
+        findings=[
+            "Packaging build log captured for the release path.",
+            {"label": "Blocked file", "detail": "frontend/package.json version mismatch"},
+        ],
+    )
+
+    refreshed = client.get("/v1/agent-architecture/status")
+    assert refreshed.status_code == 200
+    mission = refreshed.json()["mission"]
+    assert mission["domain"] == "coding"
+    assert mission["status"] == "blocked"
+    assert "release workflow is blocked" in mission["summary"].lower()
+    assert "npm run build" in mission["next_step"]
+    assert mission["result"] == "Release verification is blocked until packaging succeeds."
+    assert mission["result_data"]["current_detail"] == "Release build is still failing on the packaging step."
+    assert mission["result_data"]["workflow"]["closure"]["primary_exit_criterion"] == "The release check path has been run or explicitly marked blocked."
+    assert mission["result_data"]["artifacts"][0] == "Packaging build log captured for the release path."
+    assert "Blocked file: frontend/package.json version mismatch" in mission["result_data"]["artifacts"]
+    assert mission["next_action"]["label"] == "Coding Workflow Retry"
+
+
+def test_coding_handoff_status_formats_completed_outcome_for_workflow_mode(tmp_path: Path):
+    client = _make_client(tmp_path, with_agent_manager=True)
+    bootstrap = client.post(
+        "/v1/auth/bootstrap",
+        json={
+            "username": "owner",
+            "password": "supersecret123",
+            "display_name": "Owner",
+        },
+    )
+    assert bootstrap.status_code == 200
+
+    response = client.post(
+        "/v1/agent-architecture/handoff",
+        json={
+            "brief": "Coding commander directive.\nRepo: OpenJarvis\nRecommendation: Recover the failing tests.",
+            "source": "system-coding",
+            "metadata": {
+                "objective": "failing-tests",
+                "workflow_mode": "failing-tests",
+                "repo_name": "OpenJarvis",
+                "preferred_checks": ["pytest tests/server/test_auth_routes.py -q"],
+                "deliverables": ["A failing-test recovery summary for the target repo."],
+            },
+        },
+    )
+    assert response.status_code == 200
+    payload = response.json()
+    planner_task_id = payload["handoff"]["planner"]["task_id"]
+
+    client.app.state.agent_manager.update_task(
+        planner_task_id,
+        status="completed",
+        description="Failing tests were recovered.",
+        progress={
+            "current_step": "report",
+            "step_status": "complete",
+            "current_detail": "The focused auth route target is green again.",
+            "result_summary": "The failing pytest target is green again.",
+        },
+        findings=[
+            "Auth route regression target passed cleanly.",
+            {"label": "Verified command", "detail": "pytest tests/server/test_auth_routes.py -q"},
+        ],
+    )
+
+    refreshed = client.get("/v1/agent-architecture/status")
+    assert refreshed.status_code == 200
+    mission = refreshed.json()["mission"]
+    assert mission["domain"] == "coding"
+    assert mission["status"] == "complete"
+    assert "failing tests workflow completed" in mission["summary"].lower()
+    assert "pytest tests/server/test_auth_routes.py -q" in mission["next_step"]
+    assert mission["result"] == "The failing pytest target is green again."
+    assert mission["result_data"]["result_summary"] == "The failing pytest target is green again."
+    assert mission["result_data"]["workflow"]["closure"]["primary_deliverable"] == "A failing-test recovery summary for the target repo."
+    assert mission["result_data"]["artifacts"][0] == "Auth route regression target passed cleanly."
+    assert "Verified command: pytest tests/server/test_auth_routes.py -q" in mission["result_data"]["artifacts"]
+    assert mission["next_action"]["label"] == "Coding Workflow Outcome"

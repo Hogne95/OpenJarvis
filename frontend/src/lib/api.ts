@@ -1402,6 +1402,20 @@ export interface AgentArchitectureStatus {
       name?: string;
     };
   };
+  mission?: {
+    id: string;
+    title: string;
+    domain: string;
+    status: string;
+    phase: string;
+    summary: string;
+    next_step: string;
+    result: string;
+    retry_hint: string;
+    result_data?: Record<string, unknown>;
+    next_action?: Record<string, unknown>;
+    updated_at?: string;
+  };
   awareness?: AgentArchitectureAwareness;
 }
 

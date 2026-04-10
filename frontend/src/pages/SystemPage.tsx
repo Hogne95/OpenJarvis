@@ -606,6 +606,86 @@ export function SystemPage() {
                     </div>
                   </>
                 ) : null}
+                {architecture?.mission?.domain === 'coding' ? (
+                  <>
+                    <div className="mt-4 text-[10px] uppercase tracking-[0.22em] text-cyan-300/55">Coding Mission State</div>
+                    <div className="mt-2 rounded-[0.9rem] border border-cyan-400/10 bg-slate-950/55 px-3 py-2 text-xs leading-6 text-slate-200/72">
+                      <div>Status: {architecture.mission.status} / {architecture.mission.phase}</div>
+                      {typeof architecture.mission.result_data?.current_step === 'string' && architecture.mission.result_data.current_step ? (
+                        <div>Live step: {architecture.mission.result_data.current_step}</div>
+                      ) : null}
+                      {typeof architecture.mission.result_data?.step_status === 'string' && architecture.mission.result_data.step_status ? (
+                        <div>Step status: {architecture.mission.result_data.step_status}</div>
+                      ) : null}
+                      {typeof architecture.mission.result_data?.current_detail === 'string' && architecture.mission.result_data.current_detail ? (
+                        <div>Detail: {architecture.mission.result_data.current_detail}</div>
+                      ) : null}
+                      {architecture.handoff?.metadata?.workflow_mode ? (
+                        <div>Workflow mode: {architecture.handoff.metadata.workflow_mode}</div>
+                      ) : null}
+                      <div className="mt-1 text-sm text-cyan-50/92">{architecture.mission.title}</div>
+                      <div className="mt-1">{architecture.mission.summary}</div>
+                      {architecture.mission.next_step ? <div className="mt-1">Next: {architecture.mission.next_step}</div> : null}
+                      {architecture.mission.result ? <div className="mt-1">Outcome: {architecture.mission.result}</div> : null}
+                      {typeof architecture.mission.result_data?.workflow === 'object' && architecture.mission.result_data.workflow ? (
+                        <div className="mt-2 rounded-[0.8rem] border border-cyan-400/10 bg-black/20 px-3 py-2">
+                          <div className="text-[10px] uppercase tracking-[0.22em] text-cyan-300/55">Workflow Closure</div>
+                          {(() => {
+                            const workflow = architecture.mission.result_data?.workflow as Record<string, unknown>;
+                            const closure =
+                              typeof workflow.closure === 'object' && workflow.closure ? (workflow.closure as Record<string, unknown>) : {};
+                            const verificationAnchor =
+                              typeof closure.verification_anchor === 'string' ? closure.verification_anchor : '';
+                            const primaryDeliverable =
+                              typeof closure.primary_deliverable === 'string' ? closure.primary_deliverable : '';
+                            const primaryExit =
+                              typeof closure.primary_exit_criterion === 'string' ? closure.primary_exit_criterion : '';
+                            const reportTemplate =
+                              typeof workflow.report_template === 'string' ? workflow.report_template : '';
+                            return (
+                              <div className="mt-1 space-y-1 text-[11px] text-slate-300/72">
+                                {verificationAnchor ? <div>Verification: {verificationAnchor}</div> : null}
+                                {primaryDeliverable ? <div>Deliverable: {primaryDeliverable}</div> : null}
+                                {primaryExit ? <div>Exit: {primaryExit}</div> : null}
+                                {reportTemplate ? <div>Report: {reportTemplate}</div> : null}
+                              </div>
+                            );
+                          })()}
+                        </div>
+                      ) : null}
+                      {Array.isArray(architecture.mission.result_data?.steps) && architecture.mission.result_data.steps.length ? (
+                        <div className="mt-2">
+                          <div className="text-[10px] uppercase tracking-[0.22em] text-cyan-300/55">Recent Steps</div>
+                          <div className="mt-1 space-y-1">
+                            {architecture.mission.result_data.steps.slice(-3).map((step, index) => {
+                              const entry = typeof step === 'object' && step ? (step as Record<string, unknown>) : {};
+                              const phase = typeof entry.phase === 'string' ? entry.phase : 'step';
+                              const status = typeof entry.status === 'string' ? entry.status : 'info';
+                              const detail = typeof entry.detail === 'string' ? entry.detail : '';
+                              return (
+                                <div key={`${phase}-${index}`} className="text-[11px] text-slate-300/72">
+                                  {phase} / {status}{detail ? `: ${detail}` : ''}
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      ) : null}
+                      {Array.isArray(architecture.mission.result_data?.artifacts) && architecture.mission.result_data.artifacts.length ? (
+                        <div className="mt-2">
+                          <div className="text-[10px] uppercase tracking-[0.22em] text-cyan-300/55">Artifacts</div>
+                          <div className="mt-1 space-y-1">
+                            {architecture.mission.result_data.artifacts.slice(0, 4).map((artifact, index) => (
+                              <div key={`${index}-${String(artifact)}`} className="text-[11px] text-slate-300/72">
+                                {String(artifact)}
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      ) : null}
+                    </div>
+                  </>
+                ) : null}
                 <div className="mt-4 flex flex-wrap gap-3">
                   <button
                     onClick={() => void handleRouteCodingPlan()}

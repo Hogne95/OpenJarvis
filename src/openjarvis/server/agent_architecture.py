@@ -340,6 +340,250 @@ def _upsert_architecture_mission(
     )
 
 
+def _handoff_mission_profile(source: str, metadata: dict[str, Any] | None = None) -> dict[str, str]:
+    workflow_mode = str((metadata or {}).get("workflow_mode") or "").strip()
+    repo_name = str((metadata or {}).get("repo_name") or "active repo").strip() or "active repo"
+    if source == "system-coding":
+        title = f"Coding Workflow Mission: {repo_name}"
+        summary = (
+            f"Coding workflow is running in {workflow_mode} mode."
+            if workflow_mode
+            else "Coding workflow is running."
+        )
+        next_step = (
+            f"Review coding workflow progress for {workflow_mode} mode."
+            if workflow_mode
+            else "Review coding workflow progress."
+        )
+        return {"title": title, "domain": "coding", "summary": summary, "next_step": next_step}
+    return {
+        "title": "Planner to Executor Mission",
+        "domain": "planner",
+        "summary": f"Planner and executor are working a handoff from {source}.",
+        "next_step": "Review planner and executor task updates.",
+    }
+
+
+def _task_progress_snapshot(task: dict[str, Any] | None) -> dict[str, Any]:
+    progress = task.get("progress") if isinstance(task, dict) and isinstance(task.get("progress"), dict) else {}
+    current_step = str(progress.get("current_step") or "").strip()
+    step_status = str(progress.get("step_status") or "").strip()
+    current_detail = str(progress.get("current_detail") or "").strip()
+    result_summary = str(progress.get("result_summary") or "").strip()
+    steps = list(progress.get("steps") or [])
+    if not steps and (current_step or step_status or current_detail or result_summary):
+        synthesized_step = {
+            "phase": current_step or "step",
+            "status": step_status or "info",
+            "detail": current_detail or result_summary,
+        }
+        steps = [synthesized_step]
+    return {
+        "current_step": current_step,
+        "step_status": step_status,
+        "current_detail": current_detail,
+        "result_summary": result_summary,
+        "steps": steps,
+    }
+
+
+def _coding_live_profile(
+    mission_profile: dict[str, str],
+    metadata: dict[str, Any],
+    *,
+    task: dict[str, Any] | None,
+) -> dict[str, Any]:
+    if mission_profile.get("domain") != "coding":
+        return {
+            "summary": "Planner/executor mission is active.",
+            "next_step": "Review planner and executor task progress.",
+            "result": str((task or {}).get("description") or "").strip(),
+            "label": "Planner Progress",
+        }
+
+    progress = _task_progress_snapshot(task)
+    workflow_mode = str(metadata.get("workflow_mode") or "").strip()
+    preferred_checks = [
+        str(item).strip()
+        for item in (metadata.get("preferred_checks") if isinstance(metadata.get("preferred_checks"), list) else [])
+        if str(item).strip()
+    ]
+    deliverables = [
+        str(item).strip()
+        for item in (metadata.get("deliverables") if isinstance(metadata.get("deliverables"), list) else [])
+        if str(item).strip()
+    ]
+    current_step = progress["current_step"] or "plan"
+    current_detail = progress["current_detail"]
+    result_summary = progress["result_summary"] or str((task or {}).get("description") or "").strip()
+    mode_label = workflow_mode.replace("-", " ").strip()
+    mode_prefix = f"{mode_label.title()} workflow" if mode_label else "Coding workflow"
+    summary = f"{mode_prefix} is active."
+    if current_step or current_detail:
+        parts = [f"Current step: {current_step}."]
+        if current_detail:
+            parts.append(current_detail)
+        summary = f"{mode_prefix} is active. {' '.join(parts)}"
+    next_step_parts = [mission_profile["next_step"]]
+    if preferred_checks:
+        next_step_parts.append(f"Primary verification anchor: `{preferred_checks[0]}`.")
+    if deliverables:
+        next_step_parts.append(f"Target deliverable: {deliverables[0]}")
+    return {
+        "summary": summary,
+        "next_step": " ".join(part for part in next_step_parts if part).strip(),
+        "result": result_summary,
+        "label": "Coding Workflow Progress",
+    }
+
+
+def _coding_workflow_payload(metadata: dict[str, Any], progress: dict[str, Any], *, outcome: str) -> dict[str, Any]:
+    workflow_mode = str(metadata.get("workflow_mode") or "").strip()
+    repo_name = str(metadata.get("repo_name") or "").strip()
+    repo_root = str(metadata.get("repo_root") or "").strip()
+    branch = str(metadata.get("branch") or "").strip()
+    preferred_checks = [
+        str(item).strip()
+        for item in (metadata.get("preferred_checks") if isinstance(metadata.get("preferred_checks"), list) else [])
+        if str(item).strip()
+    ]
+    deliverables = [
+        str(item).strip()
+        for item in (metadata.get("deliverables") if isinstance(metadata.get("deliverables"), list) else [])
+        if str(item).strip()
+    ]
+    exit_criteria = [
+        str(item).strip()
+        for item in (metadata.get("exit_criteria") if isinstance(metadata.get("exit_criteria"), list) else [])
+        if str(item).strip()
+    ]
+    report_template = str(metadata.get("report_template") or "").strip()
+    return {
+        "workflow_mode": workflow_mode,
+        "repo_name": repo_name,
+        "repo_root": repo_root,
+        "branch": branch,
+        "preferred_checks": preferred_checks,
+        "deliverables": deliverables,
+        "exit_criteria": exit_criteria,
+        "report_template": report_template,
+        "closure": {
+            "outcome": outcome,
+            "verification_anchor": preferred_checks[0] if preferred_checks else "",
+            "primary_deliverable": deliverables[0] if deliverables else "",
+            "primary_exit_criterion": exit_criteria[0] if exit_criteria else "",
+            "latest_step": progress.get("current_step") or "",
+            "latest_detail": progress.get("current_detail") or "",
+            "latest_result": progress.get("result_summary") or "",
+        },
+    }
+
+
+def _task_artifacts(task: dict[str, Any] | None) -> list[str]:
+    findings = (task or {}).get("findings")
+    if not isinstance(findings, list):
+        return []
+    artifacts: list[str] = []
+    for item in findings:
+        if isinstance(item, str):
+            cleaned = item.strip()
+            if cleaned:
+                artifacts.append(cleaned)
+        elif isinstance(item, dict):
+            label = str(item.get("label") or item.get("title") or item.get("name") or "").strip()
+            detail = str(item.get("detail") or item.get("summary") or item.get("value") or "").strip()
+            if label and detail:
+                artifacts.append(f"{label}: {detail}")
+            elif label:
+                artifacts.append(label)
+            elif detail:
+                artifacts.append(detail)
+        if len(artifacts) >= 5:
+            break
+    return artifacts
+
+
+def _coding_outcome_profile(
+    mission_profile: dict[str, str],
+    metadata: dict[str, Any],
+    *,
+    outcome: str,
+    task: dict[str, Any] | None,
+) -> dict[str, Any]:
+    if mission_profile.get("domain") != "coding":
+        description = str((task or {}).get("description") or "").strip()
+        if outcome == "blocked":
+            return {
+                "summary": "Planner/executor mission is blocked.",
+                "next_step": "Review the latest blocker and retry or narrow the brief.",
+                "result": description,
+                "label": "Planner Retry",
+                "retry_hint": "Retry the handoff after clarifying scope or reducing risk.",
+            }
+        return {
+            "summary": "Planner/executor mission completed.",
+            "next_step": "Review the latest outcome and decide whether to continue.",
+            "result": description,
+            "label": "Planner Outcome",
+            "retry_hint": "Start a new handoff if more work remains.",
+        }
+
+    workflow_mode = str(metadata.get("workflow_mode") or "").strip()
+    preferred_checks = [
+        str(item).strip()
+        for item in (metadata.get("preferred_checks") if isinstance(metadata.get("preferred_checks"), list) else [])
+        if str(item).strip()
+    ]
+    deliverables = [
+        str(item).strip()
+        for item in (metadata.get("deliverables") if isinstance(metadata.get("deliverables"), list) else [])
+        if str(item).strip()
+    ]
+    exit_criteria = [
+        str(item).strip()
+        for item in (metadata.get("exit_criteria") if isinstance(metadata.get("exit_criteria"), list) else [])
+        if str(item).strip()
+    ]
+    progress = _task_progress_snapshot(task)
+    description = str((task or {}).get("description") or "").strip()
+    detail = progress["current_detail"]
+    result_summary = progress["result_summary"]
+    mode_label = workflow_mode.replace("-", " ").strip()
+    mode_prefix = f"{mode_label.title()} workflow" if mode_label else "Coding workflow"
+    primary_check = preferred_checks[0] if preferred_checks else ""
+    primary_deliverable = deliverables[0] if deliverables else ""
+    primary_exit = exit_criteria[0] if exit_criteria else ""
+
+    if outcome == "blocked":
+        blocker = detail or description or result_summary or "The latest coding task blocked before the workflow could finish."
+        next_step_parts = ["Review the blocker, narrow scope if needed, and re-route the coding workflow."]
+        if primary_check:
+            next_step_parts.append(f"Re-run or confirm `{primary_check}` before continuing.")
+        if primary_exit:
+            next_step_parts.append(primary_exit)
+        return {
+            "summary": f"{mode_prefix} is blocked. {blocker}",
+            "next_step": " ".join(next_step_parts).strip(),
+            "result": result_summary or description or blocker,
+            "label": "Coding Workflow Retry",
+            "retry_hint": "Retry the handoff after clarifying scope or reducing risk.",
+        }
+
+    completion = result_summary or detail or description or "The latest coding workflow finished."
+    next_step_parts = ["Review the outcome and either continue with follow-up work or close the workflow."]
+    if primary_deliverable:
+        next_step_parts.append(primary_deliverable)
+    if primary_check:
+        next_step_parts.append(f"Verification anchor: `{primary_check}`.")
+    return {
+        "summary": f"{mode_prefix} completed. {completion}",
+        "next_step": " ".join(next_step_parts).strip(),
+        "result": result_summary or description or completion,
+        "label": "Coding Workflow Outcome",
+        "retry_hint": "Start a new coding handoff if more work remains.",
+    }
+
+
 def build_architecture_status(app_state: Any, *, owner_user_id: str | None = None) -> dict[str, Any]:
     agent_manager = getattr(app_state, "agent_manager", None)
     voice_loop = getattr(app_state, "voice_loop", None)
@@ -417,12 +661,16 @@ def build_architecture_status(app_state: Any, *, owner_user_id: str | None = Non
         (
             item
             for item in missions
-            if str(item.get("domain", "")).strip().lower() == "planner"
+            if str(item.get("domain", "")).strip().lower() in {"planner", "coding"}
             or str(item.get("id", "")).strip().lower() == "planner-executor"
         ),
         None,
     )
     if planner_mission and agent_manager is not None:
+        mission_result_data = planner_mission.get("result_data") if isinstance(planner_mission.get("result_data"), dict) else {}
+        mission_metadata = mission_result_data.get("metadata") if isinstance(mission_result_data.get("metadata"), dict) else {}
+        mission_source = str(mission_result_data.get("source") or "hud").strip() or "hud"
+        mission_profile = _handoff_mission_profile(mission_source, mission_metadata)
         planner_tasks = _list_role_tasks(agent_manager, role_agents.get("planner"), owner_user_id=owner_user_id)
         executor_tasks = _list_role_tasks(agent_manager, role_agents.get("executor"), owner_user_id=owner_user_id)
         recent_tasks = sorted(
@@ -443,27 +691,67 @@ def build_architecture_status(app_state: Any, *, owner_user_id: str | None = Non
             ),
             None,
         )
+        active_progress_task = next(
+            (
+                item
+                for item in recent_tasks
+                if str(item.get("status", "")).lower() in {"active", "pending", "running"}
+                and (
+                    _task_progress_snapshot(item).get("current_step")
+                    or _task_progress_snapshot(item).get("current_detail")
+                    or _task_progress_snapshot(item).get("step_status")
+                )
+            ),
+            None,
+        )
+        if active_progress_task is not None:
+            active_task = active_progress_task
+        active_progress = _task_progress_snapshot(active_task)
+        phase_override = active_progress["current_step"] or ("act" if str(active_task.get("agent_id", "")).strip() else "plan") if active_task else ""
+        detail_override = active_progress["current_detail"]
+        result_override = active_progress["result_summary"]
         if failed_task is not None:
+            failed_outcome = _coding_outcome_profile(
+                mission_profile,
+                mission_metadata,
+                outcome="blocked",
+                task=failed_task,
+            )
+            failed_progress = _task_progress_snapshot(failed_task)
+            failed_workflow = _coding_workflow_payload(mission_metadata, failed_progress, outcome="blocked")
+            failed_artifacts = _task_artifacts(failed_task)
             mission_snapshot = _upsert_architecture_mission(
                 app_state,
                 mission_id="planner-executor",
-                title=str(planner_mission.get("title", "")).strip() or "Planner to Executor Mission",
-                domain="planner",
+                title=str(planner_mission.get("title", "")).strip() or mission_profile["title"],
+                domain=str(planner_mission.get("domain", "")).strip() or mission_profile["domain"],
                 status="blocked",
                 phase="retry",
-                summary="Planner/executor mission is blocked.",
-                next_step="Review the latest blocker and retry or narrow the brief.",
-                result=str(failed_task.get("description", "")).strip(),
-                retry_hint="Retry the handoff after clarifying scope or reducing risk.",
+                summary=failed_outcome["summary"],
+                next_step=failed_outcome["next_step"],
+                result=failed_outcome["result"],
+                retry_hint=failed_outcome["retry_hint"],
                 result_data={
                     "task_id": failed_task.get("id"),
                     "status": failed_task.get("status"),
                     "agent_id": failed_task.get("agent_id"),
+                    "current_step": failed_progress["current_step"],
+                    "step_status": failed_progress["step_status"],
+                    "current_detail": failed_progress["current_detail"],
+                    "result_summary": failed_progress["result_summary"],
+                    "steps": failed_progress["steps"],
+                    "artifacts": failed_artifacts,
+                    "source": mission_source,
+                    "metadata": mission_metadata,
+                    "workflow": failed_workflow,
                 },
                 next_action={
                     "kind": "brief",
-                    "content": str(failed_task.get("description", "")).strip(),
-                    "label": "Planner Retry",
+                    "content": failed_outcome["result"],
+                    "label": failed_outcome["label"],
+                    "metadata": mission_metadata,
+                    "workflow": failed_workflow,
+                    "artifacts": failed_artifacts,
                 },
             )
             if mission_snapshot is not None:
@@ -476,26 +764,47 @@ def build_architecture_status(app_state: Any, *, owner_user_id: str | None = Non
                     planner_mission,
                 )
         elif completed_task is not None:
+            completed_outcome = _coding_outcome_profile(
+                mission_profile,
+                mission_metadata,
+                outcome="complete",
+                task=completed_task,
+            )
+            completed_progress = _task_progress_snapshot(completed_task)
+            completed_workflow = _coding_workflow_payload(mission_metadata, completed_progress, outcome="complete")
+            completed_artifacts = _task_artifacts(completed_task)
             mission_snapshot = _upsert_architecture_mission(
                 app_state,
                 mission_id="planner-executor",
-                title=str(planner_mission.get("title", "")).strip() or "Planner to Executor Mission",
-                domain="planner",
+                title=str(planner_mission.get("title", "")).strip() or mission_profile["title"],
+                domain=str(planner_mission.get("domain", "")).strip() or mission_profile["domain"],
                 status="complete",
                 phase="done",
-                summary="Planner/executor mission completed.",
-                next_step="Review the latest outcome and decide whether to continue.",
-                result=str(completed_task.get("description", "")).strip(),
-                retry_hint="Start a new handoff if more work remains.",
+                summary=completed_outcome["summary"],
+                next_step=completed_outcome["next_step"],
+                result=completed_outcome["result"],
+                retry_hint=completed_outcome["retry_hint"],
                 result_data={
                     "task_id": completed_task.get("id"),
                     "status": completed_task.get("status"),
                     "agent_id": completed_task.get("agent_id"),
+                    "current_step": completed_progress["current_step"],
+                    "step_status": completed_progress["step_status"],
+                    "current_detail": completed_progress["current_detail"],
+                    "result_summary": completed_progress["result_summary"],
+                    "steps": completed_progress["steps"],
+                    "artifacts": completed_artifacts,
+                    "source": mission_source,
+                    "metadata": mission_metadata,
+                    "workflow": completed_workflow,
                 },
                 next_action={
                     "kind": "brief",
-                    "content": str(completed_task.get("description", "")).strip(),
-                    "label": "Planner Outcome",
+                    "content": completed_outcome["result"],
+                    "label": completed_outcome["label"],
+                    "metadata": mission_metadata,
+                    "workflow": completed_workflow,
+                    "artifacts": completed_artifacts,
                 },
             )
             if mission_snapshot is not None:
@@ -508,26 +817,45 @@ def build_architecture_status(app_state: Any, *, owner_user_id: str | None = Non
                     planner_mission,
                 )
         elif active_task is not None:
+            active_outcome = _coding_live_profile(
+                mission_profile,
+                mission_metadata,
+                task=active_task,
+            )
+            active_workflow = _coding_workflow_payload(mission_metadata, active_progress, outcome="active")
+            active_artifacts = _task_artifacts(active_task)
             mission_snapshot = _upsert_architecture_mission(
                 app_state,
                 mission_id="planner-executor",
-                title=str(planner_mission.get("title", "")).strip() or "Planner to Executor Mission",
-                domain="planner",
+                title=str(planner_mission.get("title", "")).strip() or mission_profile["title"],
+                domain=str(planner_mission.get("domain", "")).strip() or mission_profile["domain"],
                 status="active",
-                phase="act" if str(active_task.get("agent_id", "")).strip() else "plan",
-                summary="Planner/executor mission is active.",
-                next_step="Review planner and executor task progress.",
-                result=str(active_task.get("description", "")).strip() or str(planner_mission.get("result", "")),
+                phase=phase_override or "plan",
+                summary=active_outcome["summary"],
+                next_step=active_outcome["next_step"],
+                result=result_override or active_outcome["result"] or str(planner_mission.get("result", "")),
                 retry_hint=str(planner_mission.get("retry_hint", "")).strip(),
                 result_data={
                     "task_id": active_task.get("id"),
                     "status": active_task.get("status"),
                     "agent_id": active_task.get("agent_id"),
+                    "current_step": active_progress["current_step"],
+                    "step_status": active_progress["step_status"],
+                    "current_detail": active_progress["current_detail"],
+                    "result_summary": active_progress["result_summary"],
+                    "steps": active_progress["steps"],
+                    "artifacts": active_artifacts,
+                    "source": mission_source,
+                    "metadata": mission_metadata,
+                    "workflow": active_workflow,
                 },
                 next_action={
                     "kind": "brief",
-                    "content": str(active_task.get("description", "")).strip() or str(planner_mission.get("summary", "")).strip(),
-                    "label": "Planner Progress",
+                    "content": active_outcome["result"] or str(planner_mission.get("summary", "")).strip(),
+                    "label": active_outcome["label"],
+                    "metadata": mission_metadata,
+                    "workflow": active_workflow,
+                    "artifacts": active_artifacts,
                 },
             )
             if mission_snapshot is not None:
@@ -595,6 +923,7 @@ def create_role_handoff(
     if not cleaned_brief:
         raise ValueError("A planner brief is required")
     handoff_metadata = dict(metadata or {})
+    mission_profile = _handoff_mission_profile(source, handoff_metadata)
     status = ensure_core_team(app_state, owner_user_id=owner_user_id)
     agent_manager = getattr(app_state, "agent_manager", None)
     if agent_manager is None:
@@ -644,12 +973,12 @@ def create_role_handoff(
     mission_snapshot = _upsert_architecture_mission(
         app_state,
         mission_id="planner-executor",
-        title="Planner to Executor Mission",
-        domain="planner",
+        title=mission_profile["title"],
+        domain=mission_profile["domain"],
         status="active",
         phase="act",
-        summary=f"Planner and executor are working a handoff from {source}.",
-        next_step="Review planner and executor task updates.",
+        summary=mission_profile["summary"],
+        next_step=mission_profile["next_step"],
         result=cleaned_brief[:280],
         retry_hint="Retry the handoff if the delegated tasks stall or block.",
         result_data={
