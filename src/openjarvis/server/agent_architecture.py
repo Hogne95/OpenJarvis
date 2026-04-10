@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from dataclasses import asdict, dataclass
 from typing import Any
 
@@ -587,11 +588,13 @@ def create_role_handoff(
     *,
     brief: str,
     source: str = "hud",
+    metadata: dict[str, Any] | None = None,
     owner_user_id: str | None = None,
 ) -> dict[str, Any]:
     cleaned_brief = brief.strip()
     if not cleaned_brief:
         raise ValueError("A planner brief is required")
+    handoff_metadata = dict(metadata or {})
     status = ensure_core_team(app_state, owner_user_id=owner_user_id)
     agent_manager = getattr(app_state, "agent_manager", None)
     if agent_manager is None:
@@ -606,14 +609,26 @@ def create_role_handoff(
         f"Source: {source}\n"
         "Role: planner\n"
         "Take this incoming JARVIS brief, clarify the objective, risks, and the best execution plan.\n\n"
-        f"Brief:\n{cleaned_brief}"
+        + (
+            "Structured handoff metadata:\n"
+            f"{json.dumps(handoff_metadata, ensure_ascii=True, indent=2)}\n\n"
+            if handoff_metadata
+            else ""
+        )
+        + f"Brief:\n{cleaned_brief}"
     )
     executor_note = (
         f"Source: {source}\n"
         "Role: executor\n"
         "This task was delegated by the JARVIS planner. Execute the work safely, keep approvals in the loop, "
         "and report outcomes clearly.\n\n"
-        f"Planner brief:\n{cleaned_brief}"
+        + (
+            "Structured handoff metadata:\n"
+            f"{json.dumps(handoff_metadata, ensure_ascii=True, indent=2)}\n\n"
+            if handoff_metadata
+            else ""
+        )
+        + f"Planner brief:\n{cleaned_brief}"
     )
 
     planner_task = agent_manager.create_task(planner["id"], description=planner_note)
@@ -641,11 +656,13 @@ def create_role_handoff(
             "planner_task_id": planner_task.get("id"),
             "executor_task_id": executor_task.get("id"),
             "source": source,
+            "metadata": handoff_metadata,
         },
         next_action={
             "kind": "brief",
             "content": cleaned_brief,
             "label": "Planner Handoff",
+            "metadata": handoff_metadata,
         },
     )
 
@@ -653,6 +670,7 @@ def create_role_handoff(
     refreshed["handoff"] = {
         "source": source,
         "brief": cleaned_brief,
+        "metadata": handoff_metadata,
         "planner": {
             "agent_id": planner["id"],
             "task_id": planner_task.get("id"),

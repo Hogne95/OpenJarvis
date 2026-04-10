@@ -1380,6 +1380,17 @@ export interface AgentArchitectureStatus {
   handoff?: {
     source: string;
     brief: string;
+    metadata?: {
+      objective?: string;
+      workflow_mode?: string;
+      repo_name?: string;
+      repo_root?: string;
+      branch?: string;
+      preferred_checks?: string[];
+      deliverables?: string[];
+      exit_criteria?: string[];
+      report_template?: string;
+    };
     planner?: {
       agent_id?: string;
       task_id?: string;
@@ -1392,6 +1403,18 @@ export interface AgentArchitectureStatus {
     };
   };
   awareness?: AgentArchitectureAwareness;
+}
+
+export interface AgentArchitectureHandoffMetadata {
+  objective?: string;
+  workflow_mode?: string;
+  repo_name?: string;
+  repo_root?: string;
+  branch?: string;
+  preferred_checks?: string[];
+  deliverables?: string[];
+  exit_criteria?: string[];
+  report_template?: string;
 }
 
 export interface ReminderItem {
@@ -3036,11 +3059,15 @@ export async function ensureCoreAgentArchitecture(): Promise<AgentArchitectureSt
   return res.json();
 }
 
-export async function handoffAgentArchitecture(brief: string, source = 'hud'): Promise<AgentArchitectureStatus> {
+export async function handoffAgentArchitecture(
+  brief: string,
+  source = 'hud',
+  metadata?: AgentArchitectureHandoffMetadata,
+): Promise<AgentArchitectureStatus> {
   const res = await authFetch('/v1/agent-architecture/handoff', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ brief, source }),
+    body: JSON.stringify({ brief, source, metadata }),
   });
   if (!res.ok) {
     const detail = await res.json().catch(() => ({ detail: res.statusText }));

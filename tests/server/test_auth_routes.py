@@ -1560,3 +1560,44 @@ def test_operator_memory_commander_brief_is_user_scoped_and_structured(tmp_path:
     guest_data = guest_brief.json()
     assert guest_data["recommendation"] != owner_data["recommendation"]
     assert isinstance(guest_data["queue"], list)
+
+
+def test_agent_architecture_handoff_preserves_coding_metadata(tmp_path: Path):
+    client = _make_client(tmp_path, with_agent_manager=True)
+    bootstrap = client.post(
+        "/v1/auth/bootstrap",
+        json={
+            "username": "owner",
+            "password": "supersecret123",
+            "display_name": "Owner",
+        },
+    )
+    assert bootstrap.status_code == 200
+
+    response = client.post(
+        "/v1/agent-architecture/handoff",
+        json={
+            "brief": "Coding commander directive.\nRepo: OpenJarvis\nRecommendation: Stabilize the repo.",
+            "source": "system-coding",
+            "metadata": {
+                "objective": "release",
+                "workflow_mode": "release",
+                "repo_name": "OpenJarvis",
+                "branch": "release/1.0",
+                "preferred_checks": ["npm run build"],
+                "deliverables": ["A release verification result for the target branch."],
+                "exit_criteria": ["The release check path has been run or explicitly marked blocked."],
+                "report_template": "Mode: release. Outcome: <what changed>.",
+            },
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["handoff"]["source"] == "system-coding"
+    assert payload["handoff"]["metadata"]["workflow_mode"] == "release"
+    assert payload["handoff"]["metadata"]["repo_name"] == "OpenJarvis"
+    assert payload["handoff"]["metadata"]["preferred_checks"] == ["npm run build"]
+    mission = payload.get("mission") or {}
+    result_data = mission.get("result_data") or {}
+    assert result_data["metadata"]["objective"] == "release"

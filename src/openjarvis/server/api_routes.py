@@ -761,6 +761,18 @@ class OperatorCodingCommanderBriefResponse(BaseModel):
     user_temperament: str
 
 
+class AgentArchitectureHandoffMetadata(BaseModel):
+    objective: Optional[str] = None
+    workflow_mode: Optional[str] = None
+    repo_name: Optional[str] = None
+    repo_root: Optional[str] = None
+    branch: Optional[str] = None
+    preferred_checks: list[str] = []
+    deliverables: list[str] = []
+    exit_criteria: list[str] = []
+    report_template: Optional[str] = None
+
+
 class OperatorReviewItemRequest(BaseModel):
     category: Optional[str] = "quality"
     label: Optional[str] = None
@@ -1178,6 +1190,7 @@ def _promote_antipattern_learning(
 class AgentArchitectureHandoffRequest(BaseModel):
     brief: str
     source: Optional[str] = "hud"
+    metadata: Optional[Dict[str, Any]] = None
 
 
 class RoutineScheduleRequest(BaseModel):
@@ -2170,6 +2183,7 @@ async def agent_architecture_handoff(req: AgentArchitectureHandoffRequest, reque
             request.app.state,
             brief=req.brief,
             source=req.source or "hud",
+            metadata=req.metadata or {},
             owner_user_id=owner_user_id,
         )
     except ValueError as exc:

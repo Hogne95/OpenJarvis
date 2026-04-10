@@ -153,7 +153,17 @@ export function SystemPage() {
     setBusy('routing-coding');
     setNotice('');
     try {
-      const next = await handoffAgentArchitecture(codingBrief.planner_prompt, 'system-coding');
+      const next = await handoffAgentArchitecture(codingBrief.planner_prompt, 'system-coding', {
+        objective: codingBrief.objective,
+        workflow_mode: codingBrief.workflow_mode,
+        repo_name: codingBrief.repo_name,
+        repo_root: codingBrief.repo_root,
+        branch: codingBrief.branch,
+        preferred_checks: codingBrief.preferred_checks,
+        deliverables: codingBrief.deliverables,
+        exit_criteria: codingBrief.exit_criteria,
+        report_template: codingBrief.report_template,
+      });
       setArchitecture(next);
       setNotice(codingBrief.execution_summary || 'Coding plan routed to the planner.');
     } catch (error) {
@@ -578,6 +588,22 @@ export function SystemPage() {
                   <>
                     <div className="mt-4 text-[10px] uppercase tracking-[0.22em] text-cyan-300/55">Execution Summary</div>
                     <div className="mt-1 text-xs leading-6 text-slate-200/72">{codingBrief.execution_summary}</div>
+                  </>
+                ) : null}
+                {architecture?.handoff?.source === 'system-coding' && architecture.handoff.metadata?.workflow_mode ? (
+                  <>
+                    <div className="mt-4 text-[10px] uppercase tracking-[0.22em] text-cyan-300/55">Last Routed Coding Package</div>
+                    <div className="mt-2 rounded-[0.9rem] border border-cyan-400/10 bg-slate-950/55 px-3 py-2 text-xs leading-6 text-slate-200/72">
+                      <div>Mode: {architecture.handoff.metadata.workflow_mode}</div>
+                      {architecture.handoff.metadata.repo_name ? <div>Repo: {architecture.handoff.metadata.repo_name}</div> : null}
+                      {architecture.handoff.metadata.branch ? <div>Branch: {architecture.handoff.metadata.branch}</div> : null}
+                      {architecture.handoff.metadata.deliverables?.length ? (
+                        <div>Deliverables: {architecture.handoff.metadata.deliverables.length}</div>
+                      ) : null}
+                      {architecture.handoff.metadata.exit_criteria?.length ? (
+                        <div>Exit criteria: {architecture.handoff.metadata.exit_criteria.length}</div>
+                      ) : null}
+                    </div>
                   </>
                 ) : null}
                 <div className="mt-4 flex flex-wrap gap-3">
