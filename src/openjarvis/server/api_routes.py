@@ -744,11 +744,17 @@ class OperatorCodingCommanderBriefResponse(BaseModel):
     repo_name: str
     repo_root: str
     branch: str
+    objective: str
+    workflow_mode: str
     recommendation: str
     why: str
     best_next_step: str
     risks: list[str]
     phases: list[OperatorCodingCommanderPhase]
+    checklist: list[str]
+    deliverables: list[str]
+    exit_criteria: list[str]
+    report_template: str
     preferred_checks: list[str]
     execution_summary: str
     planner_prompt: str
@@ -2603,7 +2609,7 @@ async def operator_memory_commander_brief(request: Request):
 
 
 @operator_memory_router.get("/coding-brief", response_model=OperatorCodingCommanderBriefResponse)
-async def operator_memory_coding_brief(request: Request):
+async def operator_memory_coding_brief(request: Request, objective: str = ""):
     manager = get_operator_memory_manager(request)
     profile = manager.snapshot().get("profile", {})
     registry = get_workspace_registry(request)
@@ -2618,6 +2624,7 @@ async def operator_memory_coding_brief(request: Request):
         repo_summary=repo_summary,
         repo_memory=repo_memory,
         profile=profile,
+        objective=objective,
     )
 
 

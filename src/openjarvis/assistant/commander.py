@@ -35,6 +35,14 @@ class CommanderCodingPhase:
     verification: str
 
 
+@dataclass(frozen=True)
+class CommanderCodingExecutionPackage:
+    focus: str
+    deliverables: list[str]
+    exit_criteria: list[str]
+    report_template: str
+
+
 def _clean_text(value: Any) -> str:
     return str(value or "").strip()
 
@@ -401,6 +409,7 @@ def build_coding_commander_brief(
     repo_summary: dict[str, Any],
     repo_memory: dict[str, Any] | None = None,
     profile: dict[str, Any] | None = None,
+    objective: str = "",
 ) -> dict[str, Any]:
     """Build a bounded coding workflow brief for the active repository."""
 
@@ -429,28 +438,68 @@ def build_coding_commander_brief(
     recommendation = f"Stabilize {repo_name} on {branch} before shipping more code."
     why = "The active repo needs a clean verify -> commit -> push path so new coding work compounds safely."
     best_next_step = "Inspect the current repo state and prepare the narrowest relevant verification."
+    workflow_mode = "stabilize"
+    checklist: list[str] = []
+    deliverables: list[str] = []
+    exit_criteria: list[str] = []
+    objective_mode = _clean_text(objective).lower()
 
-    if repeated_failures:
+    if objective_mode in {"release", "prepare-release", "release-prep"}:
+        recommendation = f"Prepare {repo_name} for release handoff."
+        why = "Release prep needs a clean verification story, honest repo state, and a bounded handoff summary."
+        workflow_mode = "release"
+    elif objective_mode in {"failing-tests", "test-recovery", "recover-tests"}:
+        recommendation = f"Recover failing verification in {repo_name} before new coding work."
+        why = repeated_failures[0] if repeated_failures else "The next move is to isolate the failing test path and prove the smallest repair."
+        workflow_mode = "failing-tests"
+    elif objective_mode in {"diff-review", "review-diff"}:
+        recommendation = f"Review the active diff in {repo_name} before expanding scope."
+        why = "A clean diff review should confirm patch scope, verification coverage, and the next git move."
+        workflow_mode = "diff-review"
+
+    if repeated_failures and workflow_mode == "stabilize":
         why = repeated_failures[0]
-    elif dirty and staged:
+        workflow_mode = "stabilize"
+    elif dirty and staged and workflow_mode == "stabilize":
         why = f"{staged} staged and {unstaged} unstaged changes are in flight."
-    elif dirty:
+        workflow_mode = "verify"
+    elif dirty and workflow_mode == "stabilize":
         why = "There are local changes that should be narrowed and verified before broader work continues."
-    elif behind > 0:
+        workflow_mode = "verify"
+    elif behind > 0 and workflow_mode == "stabilize":
         why = f"The local branch is behind upstream by {behind} commit(s), so coding decisions may be landing on stale context."
-    elif not has_upstream:
+        workflow_mode = "sync"
+    elif not has_upstream and workflow_mode == "stabilize":
         why = "The branch has no upstream tracking branch, which makes push and review handoff brittle."
-    elif ahead > 0 and not push_ready:
+        workflow_mode = "sync"
+    elif ahead > 0 and not push_ready and workflow_mode == "stabilize":
         why = f"There are {ahead} local commit(s) ahead of upstream, but the repo is not yet in a clean push-ready state."
-    elif commit_ready:
+        workflow_mode = "push"
+    elif commit_ready and workflow_mode == "stabilize":
         recommendation = f"Verify and finalize the pending patch in {repo_name}."
         why = "The repo already has a bounded patch staged in the working tree, so the best move is to prove it and commit cleanly."
-    elif push_ready:
+        workflow_mode = "commit"
+    elif push_ready and workflow_mode == "stabilize":
         recommendation = f"Prepare {repo_name} for push and review handoff."
         why = "The repo is already in a push-ready state, so the next move is a clean review/release handoff."
+        workflow_mode = "push"
 
     primary_check = preferred_checks[0] if preferred_checks else ""
-    if primary_check:
+    if workflow_mode == "release":
+        best_next_step = (
+            f"Run {primary_check}, confirm the repo is commit/push ready, and prepare a release summary."
+            if primary_check
+            else "Confirm verification coverage, git readiness, and release notes before handoff."
+        )
+    elif workflow_mode == "failing-tests":
+        best_next_step = (
+            f"Re-run {primary_check}, capture the failure precisely, and patch only the smallest proven cause."
+            if primary_check
+            else "Reproduce the failing test path, isolate the cause, and patch the smallest proven surface."
+        )
+    elif workflow_mode == "diff-review":
+        best_next_step = "Review changed files, confirm verification coverage, and decide whether the diff is ready to commit."
+    elif primary_check:
         best_next_step = f"Run {primary_check}, then decide whether the repo is ready to commit or needs one more patch pass."
     elif changed_files:
         best_next_step = f"Review {changed_files[0]} first, then run the narrowest repo check available."
@@ -458,6 +507,127 @@ def build_coding_commander_brief(
         best_next_step = "Reconcile upstream changes first, then resume coding on a clean base."
     elif push_ready:
         best_next_step = "Prepare the push and review handoff while the repo is already clean."
+
+    if workflow_mode == "release":
+        checklist = [
+            "Confirm the release target and branch are correct.",
+            "Run the narrowest meaningful verification for the release surface.",
+            "Check commit/push readiness and prepare the handoff summary.",
+        ]
+    elif workflow_mode == "failing-tests":
+        checklist = [
+            "Reproduce the failing verification path exactly.",
+            "Patch only the smallest confirmed root cause.",
+            "Re-run the failing path before broader checks.",
+        ]
+    elif workflow_mode == "diff-review":
+        checklist = [
+            "Inspect the diff for scope drift.",
+            "Match the diff to the intended rationale and checks.",
+            "Decide hold, patch, commit, or push explicitly.",
+        ]
+    elif workflow_mode == "sync":
+        checklist = [
+            "Compare local branch state with upstream.",
+            "Reconcile remote drift before new coding work.",
+            "Re-run the narrowest relevant verification after syncing.",
+        ]
+    elif workflow_mode == "push":
+        checklist = [
+            "Confirm the branch is review-ready.",
+            "Check ahead/behind and upstream status.",
+            "Prepare a clean push and handoff summary.",
+        ]
+    elif workflow_mode == "commit":
+        checklist = [
+            "Run the narrowest relevant verification.",
+            "Confirm no unrelated unstaged changes remain.",
+            "Prepare the commit message and review summary.",
+        ]
+    else:
+        checklist = [
+            "Assess the changed surface before widening scope.",
+            "Keep the follow-up patch bounded to one clear goal.",
+            "Verify before commit or push.",
+        ]
+
+    if workflow_mode == "release":
+        deliverables = [
+            "A release verification result for the target branch.",
+            "A commit/push readiness note with any blockers called out directly.",
+            "A concise release handoff summary for the next operator.",
+        ]
+        exit_criteria = [
+            "The release check path has been run or explicitly marked blocked.",
+            "The repo is honestly classified as hold, commit, or push ready.",
+            "The release handoff summary explains what is safe to do next.",
+        ]
+    elif workflow_mode == "failing-tests":
+        deliverables = [
+            "A precise failing-test reproduction note.",
+            "One bounded patch or one explicit reason the patch is still blocked.",
+            "A re-run result for the failing verification path.",
+        ]
+        exit_criteria = [
+            "The failing verification path is reproduced exactly once.",
+            "The smallest proven cause is patched or named explicitly.",
+            "The follow-up result says pass, still failing, or blocked with one clear reason.",
+        ]
+    elif workflow_mode == "diff-review":
+        deliverables = [
+            "A diff scope verdict for the active changes.",
+            "A verification coverage note for what the diff has or has not proven.",
+            "An explicit next git action: hold, patch, commit, or push.",
+        ]
+        exit_criteria = [
+            "The diff has been checked for scope drift and unrelated edits.",
+            "Verification coverage is stated honestly.",
+            "The next git move is explicit and bounded.",
+        ]
+    elif workflow_mode == "sync":
+        deliverables = [
+            "An upstream drift summary for the current branch.",
+            "A bounded sync or rebase recommendation.",
+            "A post-sync verification target.",
+        ]
+        exit_criteria = [
+            "Upstream drift is understood before new coding starts.",
+            "The sync path is stated clearly.",
+            "The next verification step after syncing is named.",
+        ]
+    elif workflow_mode == "push":
+        deliverables = [
+            "A push-readiness verdict for the active branch.",
+            "A short review handoff summary.",
+            "Any remaining blocker that still prevents a safe push.",
+        ]
+        exit_criteria = [
+            "Ahead/behind and upstream status are explicit.",
+            "The repo is classified as ready or blocked for push.",
+            "The review handoff is concise and actionable.",
+        ]
+    elif workflow_mode == "commit":
+        deliverables = [
+            "A verification result for the pending patch.",
+            "A commit-readiness verdict.",
+            "A concise commit summary tied to the patch rationale.",
+        ]
+        exit_criteria = [
+            "The narrowest relevant verification has been run or marked blocked.",
+            "Unrelated local change risk is called out clearly.",
+            "The repo is honestly classified as ready or not ready to commit.",
+        ]
+    else:
+        deliverables = [
+            "A bounded repo-state assessment.",
+            "One follow-up patch or one explicit reason to hold.",
+            "A verification result plus the next git recommendation.",
+        ]
+        exit_criteria = [
+            "The changed surface is understood before scope grows.",
+            "Any patch stays tied to one clear repo risk.",
+            "The next git action is explicit after verification.",
+        ]
 
     phases = [
         CommanderCodingPhase(
@@ -505,6 +675,16 @@ def build_coding_commander_brief(
         risks.append(f"Repo is still dirty with {staged + unstaged} local change bucket(s).")
     risks = risks[:5] or ["No major repo risk is dominating right now."]
 
+    execution_package = CommanderCodingExecutionPackage(
+        focus=workflow_mode,
+        deliverables=deliverables,
+        exit_criteria=exit_criteria,
+        report_template=(
+            f"Mode: {workflow_mode}. Outcome: <what changed>. Verification: <what was run and what happened>. "
+            "Git state: <hold|commit|push>. Remaining risk: <one clear blocker or none>."
+        ),
+    )
+
     execution_summary = (
         f"Assess {repo_name} on {branch}. "
         f"Patch only if the repo still has unresolved local risk. "
@@ -515,10 +695,19 @@ def build_coding_commander_brief(
         "Coding commander directive.\n"
         f"Repo: {repo_name}\n"
         f"Root: {repo_root}\n"
+        f"Objective: {objective_mode or 'default'}\n"
+        f"Workflow mode: {workflow_mode}\n"
         f"Recommendation: {recommendation}\n"
         f"Why: {why}\n"
         f"User temperament: {temperament.summary}\n"
         f"Best next step: {best_next_step}\n"
+        "Deliverables:\n"
+        + "\n".join(f"- {item}" for item in deliverables)
+        + "\nExit criteria:\n"
+        + "\n".join(f"- {item}" for item in exit_criteria)
+        + "\nReport template:\n"
+        + execution_package.report_template
+        + "\nPhases:\n"
         + "\n".join(
             f"- {phase.phase.title()}: {phase.goal} (verify: {phase.verification})" for phase in phases
         )
@@ -529,11 +718,17 @@ def build_coding_commander_brief(
         "repo_name": repo_name,
         "repo_root": repo_root,
         "branch": branch,
+        "objective": objective_mode or "default",
+        "workflow_mode": workflow_mode,
         "recommendation": recommendation,
         "why": why,
         "best_next_step": best_next_step,
         "risks": risks,
         "phases": [asdict(item) for item in phases],
+        "checklist": checklist,
+        "deliverables": execution_package.deliverables,
+        "exit_criteria": execution_package.exit_criteria,
+        "report_template": execution_package.report_template,
         "preferred_checks": preferred_checks[:4],
         "execution_summary": execution_summary,
         "planner_prompt": planner_prompt,

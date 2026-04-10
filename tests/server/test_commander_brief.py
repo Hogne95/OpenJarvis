@@ -175,9 +175,103 @@ def test_build_coding_commander_brief_uses_repo_state_and_repo_memory():
     )
 
     assert brief["headline"] == "Coding command brief for OpenJarvis."
+    assert brief["workflow_mode"] == "stabilize"
     assert brief["recommendation"] == "Stabilize OpenJarvis on codex/test before shipping more code."
     assert brief["best_next_step"] == "Run python -m pytest tests/test_smoke.py -q, then decide whether the repo is ready to commit or needs one more patch pass."
     assert brief["preferred_checks"] == ["python -m pytest tests/test_smoke.py -q"]
+    assert brief["checklist"][0] == "Assess the changed surface before widening scope."
+    assert brief["deliverables"][0] == "A bounded repo-state assessment."
+    assert brief["exit_criteria"][0] == "The changed surface is understood before scope grows."
+    assert "Mode: stabilize." in brief["report_template"]
     assert [item["phase"] for item in brief["phases"]] == ["assess", "patch", "verify", "report"]
     assert any(risk.startswith("Coding memory:") for risk in brief["risks"])
+    assert "Deliverables:" in brief["planner_prompt"]
+    assert "Exit criteria:" in brief["planner_prompt"]
     assert "Coding commander directive." in brief["planner_prompt"]
+
+
+def test_build_coding_commander_brief_switches_to_sync_mode_when_branch_is_behind():
+    brief = build_coding_commander_brief(
+        repo_summary={
+            "root": "C:/repo",
+            "branch": "main",
+            "dirty": False,
+            "staged_count": 0,
+            "unstaged_count": 0,
+            "ahead_count": 0,
+            "behind_count": 3,
+            "has_upstream": True,
+            "commit_ready": False,
+            "push_ready": False,
+            "changed_files": [],
+        },
+        repo_memory={},
+        profile={},
+    )
+
+    assert brief["workflow_mode"] == "sync"
+    assert brief["best_next_step"] == "Reconcile upstream changes first, then resume coding on a clean base."
+    assert brief["checklist"][0] == "Compare local branch state with upstream."
+
+
+def test_build_coding_commander_brief_supports_release_objective():
+    brief = build_coding_commander_brief(
+        repo_summary={
+            "root": "C:/repo",
+            "branch": "release/1.0",
+            "dirty": False,
+            "staged_count": 0,
+            "unstaged_count": 0,
+            "ahead_count": 1,
+            "behind_count": 0,
+            "has_upstream": True,
+            "commit_ready": False,
+            "push_ready": True,
+            "changed_files": [],
+        },
+        repo_memory={
+            "title": "OpenJarvis",
+            "preferred_verification_commands": ["npm run build"],
+        },
+        objective="release",
+    )
+
+    assert brief["objective"] == "release"
+    assert brief["workflow_mode"] == "release"
+    assert brief["recommendation"] == "Prepare OpenJarvis for release handoff."
+    assert brief["best_next_step"] == "Run npm run build, confirm the repo is commit/push ready, and prepare a release summary."
+    assert brief["checklist"][0] == "Confirm the release target and branch are correct."
+    assert brief["deliverables"][0] == "A release verification result for the target branch."
+    assert brief["exit_criteria"][0] == "The release check path has been run or explicitly marked blocked."
+
+
+def test_build_coding_commander_brief_supports_failing_test_objective():
+    brief = build_coding_commander_brief(
+        repo_summary={
+            "root": "C:/repo",
+            "branch": "main",
+            "dirty": True,
+            "staged_count": 1,
+            "unstaged_count": 0,
+            "ahead_count": 0,
+            "behind_count": 0,
+            "has_upstream": True,
+            "commit_ready": True,
+            "push_ready": False,
+            "changed_files": ["tests/test_app.py"],
+        },
+        repo_memory={
+            "title": "OpenJarvis",
+            "preferred_verification_commands": ["python -m pytest tests/test_app.py -q"],
+            "repeated_failures": ["python -m pytest tests/test_app.py -q: assertion failed in test_release"],
+        },
+        objective="failing-tests",
+    )
+
+    assert brief["objective"] == "failing-tests"
+    assert brief["workflow_mode"] == "failing-tests"
+    assert brief["recommendation"] == "Recover failing verification in OpenJarvis before new coding work."
+    assert brief["best_next_step"] == "Re-run python -m pytest tests/test_app.py -q, capture the failure precisely, and patch only the smallest proven cause."
+    assert brief["checklist"][0] == "Reproduce the failing verification path exactly."
+    assert brief["deliverables"][0] == "A precise failing-test reproduction note."
+    assert brief["exit_criteria"][0] == "The failing verification path is reproduced exactly once."

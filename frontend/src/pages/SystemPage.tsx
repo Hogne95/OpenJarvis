@@ -26,11 +26,12 @@ import {
 } from '../lib/api';
 import { buildSystemAwarenessCards, buildSystemAwarenessHeadline } from '../lib/systemAwareness';
 
-type RefreshState = 'idle' | 'refreshing' | 'starting-voice' | 'stopping-voice' | 'ensuring-agents' | 'routing-commander';
+type RefreshState = 'idle' | 'refreshing' | 'starting-voice' | 'stopping-voice' | 'ensuring-agents' | 'routing-commander' | 'routing-coding';
 type MemoryLayerCard = [string, OperatorMemoryContextResponse['identity']];
 
 export function SystemPage() {
   const navigate = useNavigate();
+  const [codingObjective, setCodingObjective] = useState<'default' | 'release' | 'failing-tests' | 'diff-review'>('default');
   const [readiness, setReadiness] = useState<RuntimeReadiness | null>(null);
   const [speech, setSpeech] = useState<SpeechHealth | null>(null);
   const [voiceLoop, setVoiceLoop] = useState<VoiceLoopStatus | null>(null);
@@ -72,11 +73,13 @@ export function SystemPage() {
       );
       setMemoryAnalytics(await fetchOperatorMemoryAnalytics().catch(() => null));
       setCommanderBrief(await fetchOperatorCommanderBrief().catch(() => null));
-      setCodingBrief(await fetchOperatorCodingBrief().catch(() => null));
+      setCodingBrief(
+        await fetchOperatorCodingBrief(codingObjective === 'default' ? '' : codingObjective).catch(() => null),
+      );
     } finally {
       setBusy('idle');
     }
-  }, []);
+  }, [codingObjective]);
 
   useEffect(() => {
     void refresh();
@@ -138,6 +141,24 @@ export function SystemPage() {
       } catch (error) {
         setNotice(error instanceof Error ? error.message : 'Unable to route the commander plan.');
       } finally {
+      setBusy('idle');
+    }
+  }
+
+  async function handleRouteCodingPlan() {
+    if (!codingBrief?.planner_prompt?.trim()) {
+      setNotice('Coding brief is not ready to route yet.');
+      return;
+    }
+    setBusy('routing-coding');
+    setNotice('');
+    try {
+      const next = await handoffAgentArchitecture(codingBrief.planner_prompt, 'system-coding');
+      setArchitecture(next);
+      setNotice(codingBrief.execution_summary || 'Coding plan routed to the planner.');
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : 'Unable to route the coding plan.');
+    } finally {
       setBusy('idle');
     }
   }
@@ -428,6 +449,29 @@ export function SystemPage() {
                     {codingBrief?.branch || 'unknown'}
                   </div>
                 </div>
+                <div className="mt-3 flex flex-wrap gap-2">
+                  {(['default', 'release', 'failing-tests', 'diff-review'] as const).map((objective) => (
+                    <button
+                      key={objective}
+                      type="button"
+                      onClick={() => setCodingObjective(objective)}
+                      disabled={busy !== 'idle' && busy !== 'routing-coding'}
+                      className={`rounded-full border px-3 py-1 text-[10px] uppercase tracking-[0.2em] transition ${
+                        codingObjective === objective
+                          ? 'border-cyan-300/30 bg-cyan-400/[0.12] text-cyan-100'
+                          : 'border-cyan-400/12 bg-slate-950/60 text-cyan-200/70 hover:bg-cyan-400/[0.08]'
+                      }`}
+                    >
+                      {objective}
+                    </button>
+                  ))}
+                </div>
+                {codingBrief?.workflow_mode ? (
+                  <>
+                    <div className="mt-3 text-[10px] uppercase tracking-[0.22em] text-cyan-300/55">Workflow Mode</div>
+                    <div className="mt-1 text-sm text-cyan-50/92">{codingBrief.workflow_mode}</div>
+                  </>
+                ) : null}
                 <div className="mt-2 text-sm text-cyan-50/92">
                   {codingBrief?.recommendation || 'Waiting for coding command guidance.'}
                 </div>
@@ -479,12 +523,72 @@ export function SystemPage() {
                     ))}
                   </div>
                 ) : null}
+                {codingBrief?.checklist?.length ? (
+                  <>
+                    <div className="mt-4 text-[10px] uppercase tracking-[0.22em] text-cyan-300/55">Checklist</div>
+                    <div className="mt-2 grid gap-2">
+                      {codingBrief.checklist.map((item) => (
+                        <div
+                          key={item}
+                          className="rounded-[0.9rem] border border-cyan-400/10 bg-slate-950/55 px-3 py-2 text-xs leading-6 text-slate-200/72"
+                        >
+                          {item}
+                        </div>
+                      ))}
+                    </div>
+                  </>
+                ) : null}
+                {codingBrief?.deliverables?.length ? (
+                  <>
+                    <div className="mt-4 text-[10px] uppercase tracking-[0.22em] text-cyan-300/55">Deliverables</div>
+                    <div className="mt-2 grid gap-2">
+                      {codingBrief.deliverables.map((item) => (
+                        <div
+                          key={item}
+                          className="rounded-[0.9rem] border border-cyan-400/10 bg-slate-950/55 px-3 py-2 text-xs leading-6 text-slate-200/72"
+                        >
+                          {item}
+                        </div>
+                      ))}
+                    </div>
+                  </>
+                ) : null}
+                {codingBrief?.exit_criteria?.length ? (
+                  <>
+                    <div className="mt-4 text-[10px] uppercase tracking-[0.22em] text-cyan-300/55">Exit Criteria</div>
+                    <div className="mt-2 grid gap-2">
+                      {codingBrief.exit_criteria.map((item) => (
+                        <div
+                          key={item}
+                          className="rounded-[0.9rem] border border-emerald-300/12 bg-emerald-400/[0.05] px-3 py-2 text-xs leading-6 text-emerald-100/78"
+                        >
+                          {item}
+                        </div>
+                      ))}
+                    </div>
+                  </>
+                ) : null}
+                {codingBrief?.report_template ? (
+                  <>
+                    <div className="mt-4 text-[10px] uppercase tracking-[0.22em] text-cyan-300/55">Report Template</div>
+                    <div className="mt-1 text-xs leading-6 text-slate-200/72">{codingBrief.report_template}</div>
+                  </>
+                ) : null}
                 {codingBrief?.execution_summary ? (
                   <>
                     <div className="mt-4 text-[10px] uppercase tracking-[0.22em] text-cyan-300/55">Execution Summary</div>
                     <div className="mt-1 text-xs leading-6 text-slate-200/72">{codingBrief.execution_summary}</div>
                   </>
                 ) : null}
+                <div className="mt-4 flex flex-wrap gap-3">
+                  <button
+                    onClick={() => void handleRouteCodingPlan()}
+                    disabled={busy !== 'idle' || !codingBrief?.planner_prompt}
+                    className="rounded-[1rem] border border-cyan-400/15 bg-cyan-400/[0.08] px-4 py-3 text-xs uppercase tracking-[0.24em] text-cyan-100 transition hover:bg-cyan-400/[0.14] disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    {busy === 'routing-coding' ? 'Routing' : 'Route Coding Plan'}
+                  </button>
+                </div>
               </div>
             </div>
 
