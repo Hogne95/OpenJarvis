@@ -6078,9 +6078,16 @@ export default function JarvisHudDashboard({
         if (latest) setManagedAgents(latest);
       };
       if (kind === 'inbox') {
-        await runManagedAgent(agent.id);
+        const result = await runManagedAgent(agent.id);
         await refreshAgents();
-        setAgentNotice('Inbox Triager is running in Agents.');
+        const taskLabel = result.task?.description ? ` Task: ${result.task.description}` : '';
+        if (result.already_running) {
+          setAgentNotice(`Inbox Triager was already running.${taskLabel}`);
+        } else if (result.current_activity) {
+          setAgentNotice(`Inbox Triager launched. ${result.current_activity}${taskLabel ? ` ${taskLabel}` : ''}`);
+        } else {
+          setAgentNotice(`Inbox Triager is running in Agents.${taskLabel}`);
+        }
       } else {
         await refreshAgents();
         setAgentNotice('Meeting Prep agent is ready in Agents.');

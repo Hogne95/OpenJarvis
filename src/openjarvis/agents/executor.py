@@ -75,6 +75,55 @@ class AgentExecutor:
             if hasattr(tool, "_channel"):
                 tool._channel = getattr(self._system, "channel_backend", None)
 
+    @staticmethod
+    def _normalize_managed_agent_config(agent: dict, config: dict[str, Any]) -> dict[str, Any]:
+        """Apply compatibility fixes for known managed-agent products.
+
+        Root cause: some older managed-agent templates, especially the inbox
+        triager, were built around the legacy channel backend tools. The HUD
+        now relies more on connector-backed inbox data, so older agent configs
+        need a runtime nudge toward connector-aware tools.
+        """
+        normalized = dict(config)
+        agent_name = str(agent.get("name") or "")
+        system_prompt = str(normalized.get("system_prompt") or "")
+        is_inbox_triager = agent_name == "JARVIS Inbox Triager" or "Inbox Triager agent" in system_prompt
+        if not is_inbox_triager:
+            return normalized
+
+        tools = normalized.get("tools", [])
+        if isinstance(tools, str):
+            tool_names = [item.strip() for item in tools.split(",") if item.strip()]
+        elif isinstance(tools, list):
+            tool_names = [str(item).strip() for item in tools if str(item).strip()]
+        else:
+            tool_names = []
+
+        for tool_name in ("digest_collect", "memory_store", "memory_retrieve", "think", "web_search", "file_write"):
+            if tool_name not in tool_names:
+                tool_names.append(tool_name)
+        normalized["tools"] = tool_names
+
+        instruction = str(normalized.get("instruction") or "").strip()
+        runtime_instruction = (
+            "Primary inbox source is connector-backed data. Start with "
+            "digest_collect using likely message connectors such as gmail, "
+            "gmail_imap, outlook, slack, imessage, whatsapp, and notion over "
+            "the last 24-48 hours. Use channel_list or channel_send only when "
+            "a legacy channel backend is actually available. If memory tools "
+            "are unavailable, continue triage in degraded mode instead of "
+            "claiming setup is incomplete."
+        )
+        if runtime_instruction not in instruction:
+            normalized["instruction"] = f"{instruction}\n\n{runtime_instruction}".strip()
+
+        if runtime_instruction not in system_prompt:
+            normalized["system_prompt"] = (
+                f"{system_prompt}\n\n## Runtime Override\n"
+                f"{runtime_instruction}"
+            ).strip()
+        return normalized
+
     def run_ephemeral(
         self,
         agent_type: str,
@@ -240,7 +289,7 @@ class AgentExecutor:
         if agent_cls is None:
             raise FatalError(f"Unknown agent type: {agent_type}")
 
-        config = agent.get("config", {})
+        config = self._normalize_managed_agent_config(agent, agent.get("config", {}))
 
         # Resolve engine + model from JarvisSystem
         engine = self._system.engine if self._system else None

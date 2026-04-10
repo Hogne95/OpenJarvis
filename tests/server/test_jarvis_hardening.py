@@ -3,12 +3,17 @@ from __future__ import annotations
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock
+import unittest.mock as mock
 
 from fastapi.testclient import TestClient
 
+from openjarvis.agents.executor import AgentExecutor
 from openjarvis.agents.manager import AgentManager
+from openjarvis.core.config import load_config
+from openjarvis.server.agent_manager_routes import _make_lightweight_system
 from openjarvis.server.app import create_app
 from openjarvis.server.voice_loop import VoiceLoopManager
+from openjarvis.system import SystemBuilder
 
 
 def _make_engine():
@@ -138,3 +143,66 @@ def test_run_agent_returns_running_when_agent_is_already_running(tmp_path: Path)
     data = response.json()
     assert data["status"] == "running"
     assert data["already_running"] is True
+
+
+def test_run_agent_seeds_manual_task_for_visible_launch_state(tmp_path: Path):
+    manager = AgentManager(str(tmp_path / "seed-task-agents.db"))
+    agent = manager.create_agent(
+        name="JARVIS Inbox Triager",
+        agent_type="monitor_operative",
+        config={
+            "model": "test-model",
+            "schedule_type": "manual",
+            "instruction": "Monitor my connected email and messaging sources.",
+        },
+    )
+    app = create_app(_make_engine(), "test-model", agent_manager=manager)
+    client = TestClient(app)
+
+    response = client.post(f"/v1/managed-agents/{agent['id']}/run")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["status"] == "running"
+    assert data["already_running"] is False
+    assert data["task"] is not None
+    assert "urgent items" in data["task"]["description"]
+    tasks = manager.list_tasks(agent["id"])
+    assert len(tasks) == 1
+    assert tasks[0]["status"] == "pending"
+
+
+def test_inbox_triager_runtime_config_prefers_connector_collection():
+    agent = {"name": "JARVIS Inbox Triager"}
+    config = {
+        "tools": ["channel_send", "channel_list"],
+        "instruction": "Monitor my connected email and messaging sources.",
+        "system_prompt": "You are an Inbox Triager agent.",
+    }
+
+    normalized = AgentExecutor._normalize_managed_agent_config(agent, config)
+
+    assert "digest_collect" in normalized["tools"]
+    assert "memory_store" in normalized["tools"]
+    assert "memory_retrieve" in normalized["tools"]
+    assert "digest_collect" in normalized["instruction"]
+    assert "Runtime Override" in normalized["system_prompt"]
+
+
+def test_lightweight_system_uses_sqlite_memory_fallback():
+    system = _make_lightweight_system(_make_engine(), "test-model")
+
+    assert system.memory_backend is not None
+
+
+def test_system_memory_resolution_falls_back_to_sqlite_when_registry_create_fails():
+    builder = SystemBuilder(config=load_config())
+
+    with mock.patch(
+        "openjarvis.core.registry.MemoryRegistry.create",
+        side_effect=ImportError("openjarvis_rust missing"),
+    ):
+        memory_backend = builder._resolve_memory(builder._config)
+
+    assert memory_backend is not None
+    assert memory_backend.__class__.__name__ == "SQLiteMemory"

@@ -1460,7 +1460,9 @@ function InteractTab({ agentId, agentStatus }: { agentId: string; agentStatus: s
       <div className="flex-1 overflow-y-auto space-y-3 pb-4" style={{ maxHeight: 400 }}>
         {displayMessages.length === 0 && !waitingForResponse && (
           <div className="text-sm text-center py-8" style={{ color: 'var(--color-text-tertiary)' }}>
-            No messages yet. Send a message to interact with this agent.
+            {liveStatus === 'running'
+              ? currentActivity || 'Agent is working on its standing instruction...'
+              : currentActivity || 'No messages yet. Send a message to interact with this agent.'}
           </div>
         )}
         {displayMessages.map((msg) => (
@@ -3098,8 +3100,19 @@ export function AgentsPage() {
   };
 
   const handleRun = async (id: string) => {
+    setSelectedAgentId(id);
+    setDetailTab('interact');
     try {
-      await runManagedAgent(id);
+      const result = await runManagedAgent(id);
+      if (result.already_running) {
+        toast.message('Agent is already running', {
+          description: result.current_activity || 'The current run is still in progress.',
+        });
+      } else if (result.task?.description) {
+        toast.success('Agent launched', {
+          description: result.task.description,
+        });
+      }
     } catch (err: any) {
       toast.error('Failed to start agent', {
         description: err.message || 'Unknown error',

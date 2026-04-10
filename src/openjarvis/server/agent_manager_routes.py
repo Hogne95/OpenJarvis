@@ -20,6 +20,39 @@ logger = logging.getLogger("openjarvis.server.agent_manager")
 _STALE_RUNNING_SECONDS = 45
 
 
+def _manual_run_task_description(agent: Dict[str, Any]) -> str:
+    name = str(agent.get("name") or "Agent").strip()
+    config = agent.get("config", {}) or {}
+    instruction = str(config.get("instruction") or "").strip()
+    if name == "JARVIS Inbox Triager":
+        return "Review newly synced inbox sources, rank urgent items first, and summarize the next actions."
+    if name == "JARVIS Meeting Prep":
+        return "Collect calendar, inbox, and memory context for the next important meeting and prepare a concise briefing."
+    if instruction:
+        compact = " ".join(instruction.split())
+        if len(compact) > 180:
+            compact = f"{compact[:177]}..."
+        return compact
+    return f"Run the standing instructions for {name} and report the most important result."
+
+
+def _ensure_manual_run_task(manager: AgentManager, agent: Dict[str, Any]) -> Dict[str, Any] | None:
+    """Seed a visible task for manual launches when the agent has no active queue.
+
+    Root cause: manual HUD launches can be valid backend-side while still looking inert
+    in the Agents UI because there is no visible task yet. Seeding one pending task makes
+    the launch state legible without changing the agent's actual execution semantics.
+    """
+    existing_tasks = manager.list_tasks(agent["id"])
+    if any(task.get("status") in {"pending", "active"} for task in existing_tasks):
+        return None
+    return manager.create_task(
+        agent["id"],
+        _manual_run_task_description(agent),
+        status="pending",
+    )
+
+
 class CreateAgentRequest(BaseModel):
     name: str
     agent_type: str = "monitor_operative"
@@ -75,17 +108,27 @@ class _LightweightSystem:
     """Minimal system facade for the executor — avoids rebuilding the
     full JarvisSystem (which picks a random model from Ollama)."""
 
-    def __init__(self, engine: Any, model: str, config: Any = None):
+    def __init__(
+        self,
+        engine: Any,
+        model: str,
+        config: Any = None,
+        memory_backend: Any = None,
+        channel_backend: Any = None,
+    ):
         self.engine = engine
         self.model = model
         self.config = config
-        self.memory_backend = None
+        self.memory_backend = memory_backend
+        self.channel_backend = channel_backend
 
 
 def _make_lightweight_system(
     engine: Any,
     model: str,
     config: Any = None,
+    memory_backend: Any = None,
+    channel_backend: Any = None,
 ) -> _LightweightSystem:
     """Build a minimal system with a plain OllamaEngine.
 
@@ -95,6 +138,14 @@ def _make_lightweight_system(
     OllamaEngine directly (no health checks or model discovery that
     could interfere with in-flight Ollama requests).
     """
+    resolved_memory_backend = memory_backend
+    if resolved_memory_backend is None:
+        try:
+            from openjarvis.tools.storage.sqlite import SQLiteMemory
+
+            resolved_memory_backend = SQLiteMemory()
+        except Exception:
+            resolved_memory_backend = None
     try:
         from openjarvis.engine.ollama import OllamaEngine
 
@@ -119,10 +170,22 @@ def _make_lightweight_system(
             )
         except Exception:
             pass  # telemetry is optional
-        return _LightweightSystem(plain_engine, model, cfg)
+        return _LightweightSystem(
+            plain_engine,
+            model,
+            cfg,
+            memory_backend=resolved_memory_backend,
+            channel_backend=channel_backend,
+        )
     except Exception:
         pass
-    return _LightweightSystem(engine, model, config)
+    return _LightweightSystem(
+        engine,
+        model,
+        config,
+        memory_backend=resolved_memory_backend,
+        channel_backend=channel_backend,
+    )
 
 
 def _parse_param_count(model_name: str) -> float:
@@ -1157,6 +1220,9 @@ def create_agent_manager_router(
         # Auto-recover from error/needs_attention state
         if agent["status"] in ("error", "needs_attention"):
             manager.update_agent(agent_id, status="idle")
+            agent = manager.get_agent(agent_id) or agent
+
+        seeded_task: Dict[str, Any] | None = _ensure_manual_run_task(manager, agent)
 
         def _is_stale_running(agent_state: Dict[str, Any]) -> bool:
             if agent_state.get("status") != "running":
@@ -1181,13 +1247,26 @@ def create_agent_manager_router(
                 manager.update_agent(agent_id, status="idle")
                 manager.start_tick(agent_id)
             else:
-                return {"status": "running", "agent_id": agent_id, "already_running": True}
+                return {
+                    "status": "running",
+                    "agent_id": agent_id,
+                    "already_running": True,
+                    "task": seeded_task,
+                    "current_activity": refreshed.get("current_activity") or "",
+                }
+
+        manager.update_agent(
+            agent_id,
+            current_activity=str(agent.get("current_activity") or "").strip() or "Queued for execution...",
+        )
 
         # Re-use the server's engine + model so we don't pick a
         # random model from Ollama's list.
         server_engine = getattr(request.app.state, "engine", None)
         server_model = getattr(request.app.state, "model", "")
         server_config = getattr(request.app.state, "config", None)
+        server_memory_backend = getattr(request.app.state, "memory_backend", None)
+        server_channel_backend = getattr(request.app.state, "channel_backend", None)
 
         def _run_tick():
             try:
@@ -1204,6 +1283,8 @@ def create_agent_manager_router(
                     server_engine,
                     server_model,
                     server_config,
+                    memory_backend=server_memory_backend,
+                    channel_backend=server_channel_backend,
                 )
                 executor.set_system(system)
                 executor.execute_tick(agent_id, guard_acquired=True)
@@ -1225,7 +1306,14 @@ def create_agent_manager_router(
                 )
 
         threading.Thread(target=_run_tick, daemon=True).start()
-        return {"status": "running", "agent_id": agent_id}
+        refreshed = manager.get_agent(agent_id) or agent
+        return {
+            "status": "running",
+            "agent_id": agent_id,
+            "already_running": False,
+            "task": seeded_task,
+            "current_activity": refreshed.get("current_activity") or "",
+        }
 
     # ── Recover ──────────────────────────────────────────────
 

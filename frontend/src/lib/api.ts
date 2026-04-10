@@ -2505,6 +2505,14 @@ export interface AgentTask {
   created_at: number;
 }
 
+export interface RunManagedAgentResult {
+  status: 'running';
+  agent_id: string;
+  already_running?: boolean;
+  current_activity?: string;
+  task?: AgentTask | null;
+}
+
 export interface ChannelBinding {
   id: string;
   agent_id: string;
@@ -2721,12 +2729,13 @@ export async function fetchTemplates(): Promise<AgentTemplate[]> {
   return data.templates || [];
 }
 
-export async function runManagedAgent(agentId: string): Promise<void> {
+export async function runManagedAgent(agentId: string): Promise<RunManagedAgentResult> {
   const res = await fetch(`${getBase()}/v1/managed-agents/${agentId}/run`, { method: 'POST' });
   if (!res.ok) {
     const body = await res.json().catch(() => ({ detail: res.statusText }));
     throw new Error(body.detail || `Failed: ${res.status}`);
   }
+  return res.json();
 }
 
 export async function recoverManagedAgent(agentId: string): Promise<{ recovered: boolean; checkpoint: unknown }> {
