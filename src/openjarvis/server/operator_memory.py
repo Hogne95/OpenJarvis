@@ -67,6 +67,19 @@ class ProjectMemory:
 
 
 @dataclass(slots=True)
+class CodingRepoMemory:
+    key: str
+    title: str = ""
+    convention_notes: str = ""
+    workflow_notes: str = ""
+    preferred_verification_commands: list[str] = field(default_factory=list)
+    common_pitfalls: list[str] = field(default_factory=list)
+    repeated_failures: list[str] = field(default_factory=list)
+    last_successful_verification: str = ""
+    updated_at: str = ""
+
+
+@dataclass(slots=True)
 class SalesAccountMemory:
     key: str
     name: str = ""
@@ -281,6 +294,7 @@ class OperatorMemory:
         self._relationships: dict[str, ContactMemory] = {}
         self._meetings: dict[str, MeetingMemory] = {}
         self._projects: dict[str, ProjectMemory] = {}
+        self._coding_repos: dict[str, CodingRepoMemory] = {}
         self._sales_accounts: dict[str, SalesAccountMemory] = {}
         self._sales_leads: dict[str, SalesLeadMemory] = {}
         self._sales_deals: dict[str, SalesDealMemory] = {}
@@ -361,6 +375,34 @@ class OperatorMemory:
                 notes=str(value.get("notes", "")),
             )
             for key, value in projects.items()
+        }
+        coding_repos = data.get("coding_repos", {})
+        self._coding_repos = {
+            key: CodingRepoMemory(
+                key=key,
+                title=str(value.get("title", "")),
+                convention_notes=str(value.get("convention_notes", "")),
+                workflow_notes=str(value.get("workflow_notes", "")),
+                preferred_verification_commands=[
+                    str(item).strip()
+                    for item in value.get("preferred_verification_commands", [])
+                    if str(item).strip()
+                ],
+                common_pitfalls=[
+                    str(item).strip()
+                    for item in value.get("common_pitfalls", [])
+                    if str(item).strip()
+                ],
+                repeated_failures=[
+                    str(item).strip()
+                    for item in value.get("repeated_failures", [])
+                    if str(item).strip()
+                ],
+                last_successful_verification=str(value.get("last_successful_verification", "")),
+                updated_at=str(value.get("updated_at", "")),
+            )
+            for key, value in coding_repos.items()
+            if str(key).strip()
         }
         sales_accounts = data.get("sales_accounts", {})
         self._sales_accounts = {
@@ -597,6 +639,7 @@ class OperatorMemory:
             "relationships": {key: asdict(value) for key, value in self._relationships.items()},
             "meetings": {key: asdict(value) for key, value in self._meetings.items()},
             "projects": {key: asdict(value) for key, value in self._projects.items()},
+            "coding_repos": {key: asdict(value) for key, value in self._coding_repos.items()},
             "sales_accounts": {key: asdict(value) for key, value in self._sales_accounts.items()},
             "sales_leads": {key: asdict(value) for key, value in self._sales_leads.items()},
             "sales_deals": {key: asdict(value) for key, value in self._sales_deals.items()},
@@ -622,6 +665,7 @@ class OperatorMemory:
             "relationships": {key: asdict(value) for key, value in self._relationships.items()},
             "meetings": {key: asdict(value) for key, value in self._meetings.items()},
             "projects": {key: asdict(value) for key, value in self._projects.items()},
+            "coding_repos": {key: asdict(value) for key, value in self._coding_repos.items()},
             "sales_accounts": {key: asdict(value) for key, value in self._sales_accounts.items()},
             "sales_leads": {key: asdict(value) for key, value in self._sales_leads.items()},
             "sales_deals": {key: asdict(value) for key, value in self._sales_deals.items()},
@@ -744,6 +788,68 @@ class OperatorMemory:
         self._projects[cleaned_key] = current
         self._save()
         return self.snapshot()
+
+    def update_coding_repo(self, key: str, partial: dict[str, Any]) -> dict[str, Any]:
+        cleaned_key = key.strip()
+        if not cleaned_key:
+            raise ValueError("Coding repo key is required")
+        current = self._coding_repos.get(cleaned_key, CodingRepoMemory(key=cleaned_key))
+        if "title" in partial:
+            current.title = str(partial["title"]).strip()
+        if "convention_notes" in partial:
+            current.convention_notes = str(partial["convention_notes"]).strip()
+        if "workflow_notes" in partial:
+            current.workflow_notes = str(partial["workflow_notes"]).strip()
+        if "preferred_verification_commands" in partial and isinstance(partial["preferred_verification_commands"], list):
+            current.preferred_verification_commands = [
+                str(item).strip() for item in partial["preferred_verification_commands"] if str(item).strip()
+            ][:8]
+        if "common_pitfalls" in partial and isinstance(partial["common_pitfalls"], list):
+            current.common_pitfalls = [str(item).strip() for item in partial["common_pitfalls"] if str(item).strip()][:8]
+        if "repeated_failures" in partial and isinstance(partial["repeated_failures"], list):
+            current.repeated_failures = [str(item).strip() for item in partial["repeated_failures"] if str(item).strip()][:8]
+        if "last_successful_verification" in partial:
+            current.last_successful_verification = str(partial["last_successful_verification"]).strip()
+        current.updated_at = str(partial.get("updated_at", "")).strip() or datetime.now(timezone.utc).isoformat()
+        self._coding_repos[cleaned_key] = current
+        self._save()
+        return self.snapshot()
+
+    def get_coding_repo(self, key: str) -> dict[str, Any] | None:
+        cleaned_key = key.strip()
+        if not cleaned_key:
+            return None
+        current = self._coding_repos.get(cleaned_key)
+        return asdict(current) if current else None
+
+    def note_coding_verification(
+        self,
+        key: str,
+        *,
+        command: str,
+        success: bool,
+        output: str = "",
+    ) -> dict[str, Any] | None:
+        cleaned_key = key.strip()
+        cleaned_command = command.strip()
+        if not cleaned_key or not cleaned_command:
+            return None
+        current = self._coding_repos.get(cleaned_key, CodingRepoMemory(key=cleaned_key))
+        current.preferred_verification_commands = list(
+            dict.fromkeys([cleaned_command, *current.preferred_verification_commands])
+        )[:8]
+        if success:
+            current.last_successful_verification = cleaned_command
+        else:
+            failure_note = cleaned_command
+            trimmed_output = output.strip()
+            if trimmed_output:
+                failure_note = f"{cleaned_command}: {trimmed_output[:140]}"
+            current.repeated_failures = list(dict.fromkeys([failure_note, *current.repeated_failures]))[:8]
+        current.updated_at = datetime.now(timezone.utc).isoformat()
+        self._coding_repos[cleaned_key] = current
+        self._save()
+        return asdict(current)
 
     def update_sales_account(self, key: str, partial: dict[str, Any]) -> dict[str, Any]:
         cleaned_key = key.strip().lower()
@@ -970,6 +1076,27 @@ class OperatorMemory:
         identity_candidates: list[tuple[float, dict[str, Any]]] = []
         session_candidates: list[tuple[float, dict[str, Any]]] = []
         long_term_candidates: list[tuple[float, dict[str, Any]]] = []
+        coding_query = any(
+            word in cleaned
+            for word in (
+                "repo",
+                "repository",
+                "code",
+                "coding",
+                "test",
+                "lint",
+                "typecheck",
+                "build",
+                "module",
+                "file",
+                "commit",
+                "push",
+                "release",
+                "refactor",
+                "bug",
+                "fix",
+            )
+        )
 
         profile_score = 0.0
         if any(word in cleaned for word in ("reply", "tone", "draft", "email", "message", "write")):
@@ -1025,6 +1152,42 @@ class OperatorMemory:
                     },
                 )
             )
+
+        if coding_query:
+            for repo in self._coding_repos.values():
+                score = _score_text(
+                    repo.key,
+                    repo.title,
+                    repo.convention_notes,
+                    repo.workflow_notes,
+                    " ".join(repo.preferred_verification_commands),
+                    " ".join(repo.common_pitfalls),
+                    " ".join(repo.repeated_failures),
+                    repo.last_successful_verification,
+                )
+                if score <= 0:
+                    continue
+                detail_parts: list[str] = []
+                if repo.convention_notes:
+                    detail_parts.append(repo.convention_notes)
+                if repo.workflow_notes:
+                    detail_parts.append(repo.workflow_notes)
+                if repo.preferred_verification_commands:
+                    detail_parts.append("Preferred checks: " + ", ".join(repo.preferred_verification_commands[:3]))
+                if repo.common_pitfalls:
+                    detail_parts.append("Pitfalls: " + "; ".join(repo.common_pitfalls[:2]))
+                if repo.last_successful_verification:
+                    detail_parts.append(f"Last successful verification: {repo.last_successful_verification}")
+                session_candidates.append(
+                    (
+                        score + 0.8,
+                        {
+                            "label": f"Coding repo memory: {repo.title or repo.key}",
+                            "detail": " | ".join(part for part in detail_parts if part),
+                            "reason": "repo-specific coding conventions",
+                        },
+                    )
+                )
 
         for item in self._learning_experiences:
             score = _score_text(item.label, item.domain, item.context_key, item.summary, item.lesson, item.reuse_hint, " ".join(item.tags))
@@ -1526,6 +1689,11 @@ class OperatorMemory:
             focus.append(f"Advance {active_missions[0].title} next.")
         if not focus and bottlenecks:
             focus.append(f"Use the lesson from {bottlenecks[0].get('label', 'recent work')} to avoid repeat friction.")
+        repo_with_failures = next((item for item in self._coding_repos.values() if item.repeated_failures), None)
+        if repo_with_failures:
+            focus.append(
+                f"Stabilize {repo_with_failures.title or repo_with_failures.key} verification before broader coding changes."
+            )
         if not focus:
             focus.append("No major bottleneck is dominating right now.")
 
@@ -1670,6 +1838,7 @@ class OperatorMemory:
             "review_items": [asdict(item) for item in self._review_items[:8]],
             "recurring_patterns": recurring_patterns,
             "improvement_opportunities": improvement_opportunities,
+            "coding_repos": [asdict(item) for item in list(self._coding_repos.values())[:8]],
             "friction_brief": asdict(friction_brief),
             "operating_profile": asdict(operating_profile),
         }

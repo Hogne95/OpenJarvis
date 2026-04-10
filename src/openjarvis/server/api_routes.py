@@ -531,6 +531,17 @@ class OperatorProjectUpdateRequest(BaseModel):
     notes: Optional[str] = None
 
 
+class OperatorCodingRepoUpdateRequest(BaseModel):
+    key: str
+    title: Optional[str] = None
+    convention_notes: Optional[str] = None
+    workflow_notes: Optional[str] = None
+    preferred_verification_commands: Optional[list[str]] = None
+    common_pitfalls: Optional[list[str]] = None
+    repeated_failures: Optional[list[str]] = None
+    last_successful_verification: Optional[str] = None
+
+
 class OperatorSalesAccountUpdateRequest(BaseModel):
     key: str
     name: Optional[str] = None
@@ -2231,8 +2242,18 @@ async def workbench_approve(request: Request):
                     success=str(latest.get("status", "")).strip().lower() == "success",
                     output=str(latest.get("output", "")).strip(),
                 )
+                pending = coding_status.get("pending")
+                if isinstance(pending, dict):
+                    operator_memory.note_coding_verification(
+                        str(pending.get("repo_root", "")).strip(),
+                        command=str(latest.get("command", "")).strip(),
+                        success=str(latest.get("status", "")).strip().lower() == "success",
+                        output=str(latest.get("output", "")).strip(),
+                    )
                 if isinstance(result, dict):
                     result["coding"] = coding_status
+                    if isinstance(pending, dict):
+                        result["repo_memory"] = operator_memory.get_coding_repo(str(pending.get("repo_root", "")).strip())
             except ValueError:
                 pass
         return result
@@ -2621,6 +2642,27 @@ async def operator_memory_update_project(
     manager = get_operator_memory_manager(request)
     try:
         return manager.update_project(req.key, req.model_dump(exclude_none=True))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@operator_memory_router.get("/coding-repo")
+async def operator_memory_get_coding_repo(repo_key: str, request: Request):
+    manager = get_operator_memory_manager(request)
+    memory = manager.get_coding_repo(repo_key)
+    if memory is None:
+        return {"repo_memory": None}
+    return {"repo_memory": memory}
+
+
+@operator_memory_router.post("/coding-repo")
+async def operator_memory_update_coding_repo(
+    req: OperatorCodingRepoUpdateRequest,
+    request: Request,
+):
+    manager = get_operator_memory_manager(request)
+    try:
+        return manager.update_coding_repo(req.key, req.model_dump(exclude_none=True))
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
 
@@ -4312,7 +4354,14 @@ async def workspace_prepare_push(request: Request, root: Optional[str] = None):
 @coding_router.get("/status")
 async def coding_status(request: Request):
     manager = get_coding_workspace_manager(request)
-    return manager.status()
+    payload = manager.status()
+    pending = payload.get("pending")
+    if isinstance(pending, dict):
+        operator_memory = get_operator_memory_manager(request)
+        payload["repo_memory"] = operator_memory.get_coding_repo(str(pending.get("repo_root", "")).strip())
+    else:
+        payload["repo_memory"] = None
+    return payload
 
 
 @shopify_router.get("/summary")
@@ -4340,15 +4389,20 @@ async def coding_read_file(req: CodingReadFileRequest, request: Request):
 @coding_router.post("/stage-edit")
 async def coding_stage_edit(req: CodingStageEditRequest, request: Request):
     manager = get_coding_workspace_manager(request)
+    operator_memory = get_operator_memory_manager(request)
+    repo_memory = operator_memory.get_coding_repo(req.repo_root) or {}
     try:
-        return manager.stage_edit(
+        payload = manager.stage_edit(
             repo_root=req.repo_root,
             file_path=req.file_path,
             updated_content=req.updated_content,
             summary=req.summary,
             rationale=req.rationale,
             verification_commands=req.verification_commands,
+            preferred_checks=repo_memory.get("preferred_verification_commands", []),
         )
+        payload["repo_memory"] = repo_memory or None
+        return payload
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
 
@@ -4398,12 +4452,23 @@ async def coding_approve(request: Request):
 @coding_router.post("/record-verification")
 async def coding_record_verification(req: CodingRecordVerificationRequest, request: Request):
     manager = get_coding_workspace_manager(request)
+    operator_memory = get_operator_memory_manager(request)
     try:
-        return manager.record_verification(
+        payload = manager.record_verification(
             command=req.command,
             success=req.success,
             output=req.output or "",
         )
+        pending = payload.get("pending")
+        if isinstance(pending, dict):
+            operator_memory.note_coding_verification(
+                str(pending.get("repo_root", "")).strip(),
+                command=req.command,
+                success=req.success,
+                output=req.output or "",
+            )
+            payload["repo_memory"] = operator_memory.get_coding_repo(str(pending.get("repo_root", "")).strip())
+        return payload
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
 

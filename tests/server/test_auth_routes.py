@@ -736,6 +736,70 @@ def test_coding_verification_can_stage_into_workbench_and_sync_results(tmp_path:
     assert approved_verification.json()["coding"]["pending"]["verification"]["latest_run"]["command"] == "python -m pytest tests -q"
 
 
+def test_coding_repo_memory_shapes_repo_specific_checks_and_verification_history(tmp_path: Path):
+    client = _make_client(tmp_path)
+    bootstrap = client.post(
+        "/v1/auth/bootstrap",
+        json={
+            "username": "owner",
+            "password": "supersecret123",
+            "display_name": "Owner",
+        },
+    )
+    assert bootstrap.status_code == 200
+
+    repo = _init_git_repo(tmp_path / "repo-memory")
+    target = repo / "note.py"
+    target.write_text("print('before')\n", encoding="utf-8")
+    (repo / "pyproject.toml").write_text("[project]\nname='repo-memory'\nversion='0.1.0'\n", encoding="utf-8")
+    tests_dir = repo / "tests"
+    tests_dir.mkdir()
+    (tests_dir / "test_smoke.py").write_text("def test_ok():\n    assert True\n", encoding="utf-8")
+
+    repo_memory = client.post(
+        "/v1/operator-memory/coding-repo",
+        json={
+            "key": str(repo.resolve()),
+            "title": "Repo Memory",
+            "convention_notes": "Run a tight pytest smoke check before broader validation.",
+            "workflow_notes": "Verify the smallest path first, then widen scope.",
+            "preferred_verification_commands": ["python -m pytest tests/test_smoke.py -q"],
+            "common_pitfalls": ["Skipping the smoke test hides simple regressions."],
+        },
+    )
+    assert repo_memory.status_code == 200
+
+    stage = client.post(
+        "/v1/coding/stage-edit",
+        json={
+            "repo_root": str(repo.resolve()),
+            "file_path": "note.py",
+            "updated_content": "print('after')\n",
+        },
+    )
+    assert stage.status_code == 200
+    payload = stage.json()
+    assert payload["pending"]["verification"]["suggested_checks"][0] == "python -m pytest tests/test_smoke.py -q"
+    assert payload["repo_memory"]["workflow_notes"] == "Verify the smallest path first, then widen scope."
+
+    verification = client.post(
+        "/v1/coding/record-verification",
+        json={
+            "command": "python -m pytest tests/test_smoke.py -q",
+            "success": True,
+            "output": "1 passed",
+        },
+    )
+    assert verification.status_code == 200
+    assert verification.json()["repo_memory"]["last_successful_verification"] == "python -m pytest tests/test_smoke.py -q"
+
+    memory_snapshot = client.get("/v1/operator-memory")
+    assert memory_snapshot.status_code == 200
+    coding_repos = memory_snapshot.json()["coding_repos"]
+    assert str(repo.resolve()) in coding_repos
+    assert coding_repos[str(repo.resolve())]["preferred_verification_commands"][0] == "python -m pytest tests/test_smoke.py -q"
+
+
 def test_action_center_state_is_isolated_per_authenticated_user(tmp_path: Path):
     owner = _make_client(tmp_path)
     app = owner.app

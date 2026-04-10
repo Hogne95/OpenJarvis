@@ -732,6 +732,7 @@ export interface CodingWorkspaceStatus {
   pending: PendingCodeEdit | null;
   history: CodeEditEntry[];
   result?: CodeEditEntry;
+  repo_memory?: CodingRepoMemory | null;
 }
 
 export interface CodingFileContents {
@@ -936,6 +937,7 @@ export interface DurableOperatorSignals {
 export interface DurableOperatorMemory {
   profile: DurableOperatorProfile;
   signals: DurableOperatorSignals;
+  coding_repos?: Record<string, CodingRepoMemory>;
   missions?: Array<{
     id: string;
     title: string;
@@ -1138,6 +1140,18 @@ export interface DurableOperatorMemory {
       notes: string;
     }
   >;
+}
+
+export interface CodingRepoMemory {
+  key: string;
+  title: string;
+  convention_notes: string;
+  workflow_notes: string;
+  preferred_verification_commands: string[];
+  common_pitfalls: string[];
+  repeated_failures: string[];
+  last_successful_verification: string;
+  updated_at: string;
 }
 
 export interface JarvisIntent {

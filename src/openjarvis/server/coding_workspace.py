@@ -202,6 +202,7 @@ class CodingWorkspaceManager:
         summary: str | None = None,
         rationale: str | None = None,
         verification_commands: list[str] | None = None,
+        preferred_checks: list[str] | None = None,
     ) -> dict:
         target = _safe_file_path(repo_root, file_path)
         if not target.exists():
@@ -220,11 +221,12 @@ class CodingWorkspaceManager:
         )
         added_lines, removed_lines = _diff_line_stats(original_content, updated_content)
         repo_path = Path(repo_root).expanduser().resolve()
-        suggested_checks = (
-            [item.strip() for item in verification_commands if item and item.strip()]
-            if verification_commands
-            else _infer_suggested_checks(repo_path, file_path)
-        )
+        if verification_commands:
+            suggested_checks = [item.strip() for item in verification_commands if item and item.strip()]
+        else:
+            inferred_checks = _infer_suggested_checks(repo_path, file_path)
+            preferred = [item.strip() for item in (preferred_checks or []) if item and item.strip()]
+            suggested_checks = list(dict.fromkeys([*preferred, *inferred_checks]))
         change_summary = summary.strip() if summary and summary.strip() else (
             f"Update {file_path} with {added_lines + removed_lines} changed line"
             f"{'' if added_lines + removed_lines == 1 else 's'}."

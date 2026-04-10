@@ -195,6 +195,27 @@ def test_operator_memory_layered_relevant_context_separates_layers(tmp_path) -> 
     assert any("Past lesson" in item["label"] for item in layers.long_term)
 
 
+def test_operator_memory_uses_coding_repo_context_only_for_relevant_queries(tmp_path) -> None:
+    memory = OperatorMemory(path=str(tmp_path / "operator_memory.json"))
+    memory.update_coding_repo(
+        "C:/workspace/repo",
+        {
+            "title": "Workspace Repo",
+            "convention_notes": "Always run the smoke test before broad validation.",
+            "workflow_notes": "Keep repo edits small and verify the narrowest changed path first.",
+            "preferred_verification_commands": ["python -m pytest tests/test_smoke.py -q"],
+            "common_pitfalls": ["Skipping the smoke test hides fast regressions."],
+        },
+    )
+
+    coding_layers = memory.layered_relevant_context("Which repo checks should I run before I commit this coding change?", limit=5)
+    non_coding_layers = memory.layered_relevant_context("How should I phrase the email update to the client?", limit=5)
+
+    assert any("Coding repo memory" in item["label"] for item in coding_layers.session_focus)
+    flattened_non_coding = " ".join(item["label"] for item in non_coding_layers.flattened(limit=5))
+    assert "Coding repo memory" not in flattened_non_coding
+
+
 def test_chat_route_injects_identity_and_relevant_memory(tmp_path) -> None:
     engine = _EngineStub()
     app = create_app(engine, "test-model")
