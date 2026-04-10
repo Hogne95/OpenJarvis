@@ -625,6 +625,22 @@ name = "demo"
     assert pending_after_verify["verification"]["latest_run"]["output"] == "1 passed"
 
 
+def test_workbench_manager_preserves_command_metadata(tmp_path: Path):
+    from openjarvis.server.workbench import WorkbenchManager
+
+    manager = WorkbenchManager(default_working_dir=str(tmp_path))
+
+    staged = manager.stage(
+        command="echo ok",
+        metadata={"coding_verification": True, "file_path": "src/app.py"},
+    )
+
+    pending = staged["pending"]
+    assert pending is not None
+    assert pending["metadata"]["coding_verification"] is True
+    assert pending["metadata"]["file_path"] == "src/app.py"
+
+
 def test_connectors_chunk_counts_reuse_recent_cache():
     app = create_app(_make_engine(), "test-model")
 

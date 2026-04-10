@@ -691,6 +691,51 @@ def test_coding_workspace_state_is_isolated_per_authenticated_user(tmp_path: Pat
     assert owner_approve.json()["result"]["latest_verification"]["success"] is True
 
 
+def test_coding_verification_can_stage_into_workbench_and_sync_results(tmp_path: Path):
+    client = _make_client(tmp_path)
+    bootstrap = client.post(
+        "/v1/auth/bootstrap",
+        json={
+            "username": "owner",
+            "password": "supersecret123",
+            "display_name": "Owner",
+        },
+    )
+    assert bootstrap.status_code == 200
+
+    repo = _init_git_repo(tmp_path / "repo-verify")
+    target = repo / "note.txt"
+    target.write_text("before\n", encoding="utf-8")
+    tests_dir = repo / "tests"
+    tests_dir.mkdir()
+    (tests_dir / "test_smoke.py").write_text("def test_ok():\n    assert True\n", encoding="utf-8")
+
+    stage = client.post(
+        "/v1/coding/stage-edit",
+        json={
+            "repo_root": str(repo.resolve()),
+            "file_path": "note.txt",
+            "updated_content": "after\n",
+        },
+    )
+    assert stage.status_code == 200
+
+    staged_verification = client.post("/v1/coding/stage-verification", json={})
+    assert staged_verification.status_code == 200
+    workbench_pending = staged_verification.json()["workbench"]["pending"]
+    assert workbench_pending["command"] == "python -m pytest tests -q"
+    assert workbench_pending["metadata"]["coding_verification"] is True
+    assert workbench_pending["metadata"]["file_path"] == "note.txt"
+
+    approved_verification = client.post("/v1/workbench/approve")
+    assert approved_verification.status_code == 200
+    result_status = approved_verification.json()["result"]["status"]
+    assert result_status in {"success", "error"}
+    expected_verification_status = "passed" if result_status == "success" else "failed"
+    assert approved_verification.json()["coding"]["pending"]["verification"]["status"] == expected_verification_status
+    assert approved_verification.json()["coding"]["pending"]["verification"]["latest_run"]["command"] == "python -m pytest tests -q"
+
+
 def test_action_center_state_is_isolated_per_authenticated_user(tmp_path: Path):
     owner = _make_client(tmp_path)
     app = owner.app

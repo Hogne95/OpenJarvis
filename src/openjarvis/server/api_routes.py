@@ -412,6 +412,7 @@ class WorkbenchStageRequest(BaseModel):
     command: str
     working_dir: Optional[str] = None
     timeout: int = 30
+    metadata: Optional[dict[str, str | bool]] = None
 
 
 class WorkspaceRepoRegisterRequest(BaseModel):
@@ -444,6 +445,11 @@ class CodingRecordVerificationRequest(BaseModel):
     command: str
     success: bool
     output: Optional[str] = None
+
+
+class CodingStageVerificationRequest(BaseModel):
+    command: Optional[str] = None
+    timeout: int = 60
 
 
 class ActionEmailDraftRequest(BaseModel):
@@ -2144,6 +2150,7 @@ async def workbench_stage(req: WorkbenchStageRequest, request: Request):
             command=req.command,
             working_dir=req.working_dir,
             timeout=req.timeout,
+            metadata=req.metadata,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
@@ -2155,6 +2162,7 @@ async def workbench_approve(request: Request):
     try:
         result = await run_in_threadpool(manager.approve)
         latest = result.get("result", {}) if isinstance(result, dict) else {}
+        workbench_metadata = latest.get("metadata", {}) if isinstance(latest.get("metadata"), dict) else {}
         operator_memory = get_operator_memory_manager(request)
         command = str(latest.get("command", "")).lower()
         is_validation = any(
@@ -2215,6 +2223,18 @@ async def workbench_approve(request: Request):
                 tags=["validation", "workbench", "success" if success else "mistake"],
                 confidence=0.76 if success else 0.82,
             )
+        if workbench_metadata.get("coding_verification"):
+            coding_manager = get_coding_workspace_manager(request)
+            try:
+                coding_status = coding_manager.record_verification(
+                    command=str(latest.get("command", "")).strip(),
+                    success=str(latest.get("status", "")).strip().lower() == "success",
+                    output=str(latest.get("output", "")).strip(),
+                )
+                if isinstance(result, dict):
+                    result["coding"] = coding_status
+            except ValueError:
+                pass
         return result
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
@@ -4386,6 +4406,42 @@ async def coding_record_verification(req: CodingRecordVerificationRequest, reque
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
+
+
+@coding_router.post("/stage-verification")
+async def coding_stage_verification(req: CodingStageVerificationRequest, request: Request):
+    coding_manager = get_coding_workspace_manager(request)
+    workbench_manager = get_workbench_manager(request)
+    pending = coding_manager.status().get("pending")
+    if not isinstance(pending, dict):
+        raise HTTPException(status_code=400, detail="No pending code edit to verify")
+
+    suggested_checks = pending.get("suggested_checks", [])
+    selected_command = (req.command or "").strip()
+    if not selected_command:
+        if not isinstance(suggested_checks, list) or not suggested_checks:
+            raise HTTPException(status_code=400, detail="No suggested verification commands available")
+        selected_command = str(suggested_checks[0]).strip()
+    if not selected_command:
+        raise HTTPException(status_code=400, detail="Verification command is required")
+
+    try:
+        staged = workbench_manager.stage(
+            command=selected_command,
+            working_dir=str(pending.get("repo_root", "")).strip() or None,
+            timeout=max(10, min(int(req.timeout), 300)),
+            metadata={
+                "coding_verification": True,
+                "file_path": str(pending.get("file_path", "")).strip(),
+            },
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    return {
+        "coding": coding_manager.status(),
+        "workbench": staged,
+    }
 
 
 @coding_router.post("/hold")

@@ -639,6 +639,7 @@ export interface WorkbenchEntry {
   status: string;
   output: string;
   returncode: number | null;
+  metadata?: Record<string, string | boolean>;
 }
 
 export interface PendingWorkbenchCommand {
@@ -648,6 +649,7 @@ export interface PendingWorkbenchCommand {
   timeout: number;
   created_at: number;
   status: string;
+  metadata?: Record<string, string | boolean>;
 }
 
 export interface WorkbenchStatus {
@@ -655,6 +657,7 @@ export interface WorkbenchStatus {
   history: WorkbenchEntry[];
   default_working_dir: string;
   result?: WorkbenchEntry;
+  coding?: CodingWorkspaceStatus;
 }
 
 export interface PendingCodeEdit {
@@ -1608,6 +1611,7 @@ export async function stageWorkbenchCommand(body: {
   command: string;
   working_dir?: string;
   timeout?: number;
+  metadata?: Record<string, string | boolean>;
 }): Promise<WorkbenchStatus> {
   const res = await authFetch('/v1/workbench/stage', {
     method: 'POST',
@@ -1700,6 +1704,22 @@ export async function recordCodingVerification(body: {
   if (!res.ok) {
     const detail = await res.json().catch(() => ({ detail: res.statusText }));
     throw new Error(detail.detail || `Record coding verification failed: ${res.status}`);
+  }
+  return res.json();
+}
+
+export async function stageCodingVerification(body?: {
+  command?: string;
+  timeout?: number;
+}): Promise<{ coding: CodingWorkspaceStatus; workbench: WorkbenchStatus }> {
+  const res = await authFetch('/v1/coding/stage-verification', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body || {}),
+  });
+  if (!res.ok) {
+    const detail = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(detail.detail || `Stage coding verification failed: ${res.status}`);
   }
   return res.json();
 }

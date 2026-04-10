@@ -16,6 +16,7 @@ class PendingCommand:
     command: str
     working_dir: str
     timeout: int
+    metadata: dict[str, str | bool] = field(default_factory=dict)
     created_at: float = field(default_factory=time.time)
     status: str = "pending"
 
@@ -34,6 +35,7 @@ class WorkbenchEntry:
     status: str
     output: str
     returncode: int | None = None
+    metadata: dict[str, str | bool] = field(default_factory=dict)
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -58,7 +60,14 @@ class WorkbenchManager:
     def set_default_working_dir(self, working_dir: str) -> None:
         self._default_working_dir = str(Path(working_dir).resolve())
 
-    def stage(self, *, command: str, working_dir: str | None = None, timeout: int = 30) -> dict:
+    def stage(
+        self,
+        *,
+        command: str,
+        working_dir: str | None = None,
+        timeout: int = 30,
+        metadata: dict[str, str | bool] | None = None,
+    ) -> dict:
         cleaned = command.strip()
         if not cleaned:
             raise ValueError("Command is required")
@@ -74,6 +83,7 @@ class WorkbenchManager:
             command=cleaned,
             working_dir=wd,
             timeout=max(1, min(int(timeout), 300)),
+            metadata=dict(metadata or {}),
         )
         return self.status()
 
@@ -88,6 +98,7 @@ class WorkbenchManager:
                 command=pending.command,
                 working_dir=pending.working_dir,
                 timeout=pending.timeout,
+                metadata=dict(pending.metadata),
                 created_at=pending.created_at,
                 completed_at=time.time(),
                 status="held",
@@ -115,6 +126,7 @@ class WorkbenchManager:
                 command=pending.command,
                 working_dir=pending.working_dir,
                 timeout=pending.timeout,
+                metadata=dict(pending.metadata),
                 created_at=pending.created_at,
                 completed_at=time.time(),
                 status="success" if result.success else "error",

@@ -86,6 +86,7 @@ import {
   startVoiceLoop,
   stageCalendarBrief,
   stageCodeEdit,
+  stageCodingVerification,
   stageEmailDraft,
   stageInboxAction,
   stageTask,
@@ -5136,7 +5137,11 @@ export default function JarvisHudDashboard({
       }
       setWorkbenchDirectory(prepared.root);
       setWorkbenchCommand(prepared.command);
-      setWorkbenchNotice(notice);
+      setWorkbenchNotice(
+        prepared.ready
+          ? notice
+          : `Commit command prepared with caution: ${prepared.changed_count} changed file(s), ${prepared.staged_count} staged, ${prepared.unstaged_count} unstaged.`,
+      );
     } catch (error) {
       setWorkbenchNotice(error instanceof Error ? error.message : 'Unable to prepare commit command.');
     } finally {
@@ -5154,7 +5159,11 @@ export default function JarvisHudDashboard({
       const prepared = await prepareWorkspaceStage();
       setWorkbenchDirectory(prepared.root);
       setWorkbenchCommand(prepared.command);
-      setWorkbenchNotice('Stage command prepared for the active workspace repo.');
+      setWorkbenchNotice(
+        prepared.ready
+          ? prepared.message || 'Stage command prepared for the active workspace repo.'
+          : prepared.message || 'No working tree changes detected.',
+      );
     } catch (error) {
       setWorkbenchNotice(error instanceof Error ? error.message : 'Unable to prepare stage command.');
     } finally {
@@ -5168,9 +5177,32 @@ export default function JarvisHudDashboard({
       const prepared = await prepareWorkspacePush();
       setWorkbenchDirectory(prepared.root);
       setWorkbenchCommand(prepared.command);
-      setWorkbenchNotice('Push command prepared. Stage it when ready.');
+      setWorkbenchNotice(
+        prepared.ready
+          ? `Push command prepared for ${prepared.branch}.`
+          : prepared.blocked_reason || 'Push command is not ready yet for this repository.',
+      );
     } catch (error) {
       setWorkbenchNotice(error instanceof Error ? error.message : 'Unable to prepare push command.');
+    } finally {
+      setWorkbenchBusy(null);
+    }
+  }
+
+  async function handleStageCodingVerification(command?: string) {
+    setWorkbenchBusy('prepare');
+    try {
+      const staged = await stageCodingVerification(command ? { command } : undefined);
+      setCodingWorkspace(staged.coding);
+      setWorkbench(staged.workbench);
+      const selectedCommand =
+        staged.workbench.pending?.command ||
+        command ||
+        pendingCodeEdit?.verification?.suggested_checks?.[0] ||
+        'verification command';
+      setWorkbenchNotice(`Verification staged: ${selectedCommand}`);
+    } catch (error) {
+      setWorkbenchNotice(error instanceof Error ? error.message : 'Unable to stage patch verification.');
     } finally {
       setWorkbenchBusy(null);
     }
@@ -6490,6 +6522,9 @@ export default function JarvisHudDashboard({
     try {
       const next = await approveWorkbenchCommand();
       setWorkbench(next);
+      if (next.coding) {
+        setCodingWorkspace(next.coding);
+      }
       setWorkbenchNotice(next.result ? 'Command executed.' : 'No pending command.');
       if (next.result) {
         useAppStore.getState().addLogEntry({
@@ -6498,6 +6533,14 @@ export default function JarvisHudDashboard({
           category: 'tool',
           message: `Workbench ${next.result.status}: ${next.result.command}`,
         });
+        if (next.result.metadata?.coding_verification) {
+          const verificationPassed = next.result.status === 'success';
+          setWorkbenchNotice(
+            verificationPassed
+              ? 'Verification completed and patch state updated.'
+              : 'Verification failed. Patch state updated with the failure.',
+          );
+        }
       }
     } catch (error) {
       setWorkbenchNotice(error instanceof Error ? error.message : 'Unable to approve command.');
@@ -7115,6 +7158,15 @@ export default function JarvisHudDashboard({
                     </span>
                   </button>
                 </div>
+                {pendingCodeEdit?.verification?.suggested_checks?.length && !pendingWorkbench ? (
+                  <button
+                    onClick={() => handleStageCodingVerification()}
+                    disabled={workbenchBusy !== null || actionBusy !== null || editorBusy !== null}
+                    className="mt-3 w-full rounded-[1.05rem] border border-cyan-400/20 bg-cyan-400/[0.08] px-4 py-3 text-sm uppercase tracking-[0.24em] text-cyan-100 transition hover:bg-cyan-400/[0.14] disabled:cursor-not-allowed disabled:opacity-45"
+                  >
+                    Stage Verification
+                  </button>
+                ) : null}
 
                 <div className="mt-4 rounded-[1.15rem] border border-cyan-400/12 bg-cyan-400/[0.05] px-4 py-3 text-sm text-slate-100/80">
                   {approvalLabel}
@@ -7126,7 +7178,9 @@ export default function JarvisHudDashboard({
                     (pendingAction
                       ? 'Approve to send the staged email or finalize the calendar plan.'
                       : pendingCodeEdit
-                      ? 'Approve to apply the staged file diff to the active repository.'
+                      ? pendingCodeEdit.verification?.suggested_checks?.length
+                        ? `Approve to apply the staged file diff, or stage verification first: ${pendingCodeEdit.verification.suggested_checks[0]}`
+                        : 'Approve to apply the staged file diff to the active repository.'
                       : pendingWorkbench
                       ? 'Approve to execute the staged terminal command.'
                       : 'No staged action right now.')}
@@ -7894,6 +7948,39 @@ ${item.details}`,
                       <div className="text-[10px] uppercase tracking-[0.22em] text-cyan-300/55">Root</div>
                       <div className="mt-1 text-sm text-cyan-50/92">{workspaceSummary?.root?.split(/[\\\\/]/).slice(-1)[0] || 'Workspace'}</div>
                     </div>
+                  </div>
+                  <div className="mt-3 grid gap-3 sm:grid-cols-4">
+                    <div className="rounded-[0.95rem] border border-cyan-400/10 bg-black/20 px-3 py-3">
+                      <div className="text-[10px] uppercase tracking-[0.22em] text-cyan-300/55">Staged</div>
+                      <div className="mt-1 text-sm text-cyan-50/92">{workspaceSummary?.staged_count ?? 0}</div>
+                    </div>
+                    <div className="rounded-[0.95rem] border border-cyan-400/10 bg-black/20 px-3 py-3">
+                      <div className="text-[10px] uppercase tracking-[0.22em] text-cyan-300/55">Unstaged</div>
+                      <div className="mt-1 text-sm text-cyan-50/92">{workspaceSummary?.unstaged_count ?? 0}</div>
+                    </div>
+                    <div className="rounded-[0.95rem] border border-cyan-400/10 bg-black/20 px-3 py-3">
+                      <div className="text-[10px] uppercase tracking-[0.22em] text-cyan-300/55">Ahead / Behind</div>
+                      <div className="mt-1 text-sm text-cyan-50/92">
+                        {workspaceSummary ? `${workspaceSummary.ahead_count ?? 0} / ${workspaceSummary.behind_count ?? 0}` : '0 / 0'}
+                      </div>
+                    </div>
+                    <div className="rounded-[0.95rem] border border-cyan-400/10 bg-black/20 px-3 py-3">
+                      <div className="text-[10px] uppercase tracking-[0.22em] text-cyan-300/55">Upstream</div>
+                      <div className="mt-1 text-sm text-cyan-50/92">
+                        {workspaceSummary ? (workspaceSummary.has_upstream ? 'Linked' : 'Missing') : 'Checking'}
+                      </div>
+                    </div>
+                  </div>
+                  <div className="mt-3 rounded-[0.95rem] border border-cyan-400/10 bg-black/20 px-3 py-3 text-sm text-cyan-50/82">
+                    {workspaceSummary
+                      ? workspaceSummary.push_ready
+                        ? `Push-ready on ${workspaceSummary.branch}. ${workspaceSummary.ahead_count ?? 0} local commit(s) are ready to publish.`
+                        : workspaceSummary.commit_ready
+                        ? `Commit-ready with ${workspaceSummary.changed_count} changed file(s). Stage and review before pushing.`
+                        : workspaceSummary.dirty
+                        ? 'Local changes exist, but more staging or cleanup is needed before commit/push.'
+                        : 'Workspace is clean. No commit or push action is pending.'
+                      : 'Inspecting repository readiness.'}
                   </div>
                   <div className="mt-3 rounded-[0.95rem] border border-cyan-400/10 bg-black/20 px-3 py-3">
                     <div className="text-[10px] uppercase tracking-[0.22em] text-cyan-300/55">Changed Files</div>

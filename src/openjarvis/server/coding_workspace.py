@@ -55,23 +55,24 @@ def _infer_suggested_checks(repo_root: Path, file_path: str) -> list[str]:
     suffix = Path(file_path).suffix.lower()
     suggested: list[str] = []
     has_tests_dir = (repo_root / "tests").is_dir()
+    package_scripts = _load_package_scripts(repo_root)
+    has_python_files = any(repo_root.glob("*.py")) or any((repo_root / "src").glob("*.py")) or any((repo_root / "tests").glob("*.py"))
 
     if suffix in {".py", ".pyi"}:
-        if (repo_root / "pyproject.toml").exists() or (repo_root / "requirements.txt").exists():
+        if (repo_root / "pyproject.toml").exists() or (repo_root / "requirements.txt").exists() or has_python_files:
             if has_tests_dir:
                 suggested.append("python -m pytest tests -q")
             if any((repo_root / name).exists() for name in ("ruff.toml", ".ruff.toml", "pyproject.toml")):
                 suggested.append("python -m ruff check src tests")
 
     if suffix in {".ts", ".tsx", ".js", ".jsx"}:
-        scripts = _load_package_scripts(repo_root)
-        if "typecheck" in scripts:
+        if "typecheck" in package_scripts:
             suggested.append("npm run typecheck")
-        if "lint" in scripts:
+        if "lint" in package_scripts:
             suggested.append("npm run lint")
-        if "test" in scripts:
+        if "test" in package_scripts:
             suggested.append("npm test")
-        if "build" in scripts:
+        if "build" in package_scripts:
             suggested.append("npm run build")
 
     if suffix in {".rs"} and (repo_root / "Cargo.toml").exists():
@@ -79,6 +80,24 @@ def _infer_suggested_checks(repo_root: Path, file_path: str) -> list[str]:
 
     if suffix in {".go"} and (repo_root / "go.mod").exists():
         suggested.extend(["go test ./...", "go build ./..."])
+
+    if not suggested:
+        if ((repo_root / "pyproject.toml").exists() or (repo_root / "requirements.txt").exists() or has_python_files) and has_tests_dir:
+            suggested.append("python -m pytest tests -q")
+        if any((repo_root / name).exists() for name in ("ruff.toml", ".ruff.toml")):
+            suggested.append("python -m ruff check src tests")
+        if "typecheck" in package_scripts:
+            suggested.append("npm run typecheck")
+        if "lint" in package_scripts:
+            suggested.append("npm run lint")
+        if "test" in package_scripts:
+            suggested.append("npm test")
+        if "build" in package_scripts:
+            suggested.append("npm run build")
+        if (repo_root / "Cargo.toml").exists():
+            suggested.extend(["cargo check", "cargo test"])
+        if (repo_root / "go.mod").exists():
+            suggested.extend(["go test ./...", "go build ./..."])
 
     return list(dict.fromkeys(suggested))
 
