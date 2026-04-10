@@ -68,6 +68,15 @@ class VoiceLoopManager:
 
     _FOLLOWUP_WINDOW_SECONDS = 15.0
     _RECENT_TRANSCRIPTS_LIMIT = 4
+    _DIRECT_INTERRUPT_PHRASES = {
+        "stop",
+        "cancel",
+        "quiet",
+        "wait",
+        "hold on",
+        "be quiet",
+        "pause",
+    }
 
     def __init__(
         self,
@@ -156,6 +165,11 @@ class VoiceLoopManager:
         if not match:
             return original
         return (match.group("rest") or "").strip()
+
+    @staticmethod
+    def _is_direct_interrupt_phrase(text: str) -> bool:
+        normalized = " ".join(text.strip().lower().split())
+        return normalized in VoiceLoopManager._DIRECT_INTERRUPT_PHRASES
 
     def _transcribe_with_hints(
         self,
@@ -507,6 +521,7 @@ class VoiceLoopManager:
                 "message": str(exc),
             }
 
+        transcript_text = result.text.strip()
         payload = self.ingest_transcript(result.text)
         if analysis.wake_detected and result.text.strip() and not payload.get("accepted"):
             with self._lock:
@@ -526,12 +541,20 @@ class VoiceLoopManager:
         with self._lock:
             self._snapshot.last_transcribe_ms = transcribe_ms
             self._snapshot.last_process_ms = max(0.0, (time.time() - process_started) * 1000.0)
-            if payload.get("accepted") and previous_phase == "speaking":
+            if previous_phase == "speaking" and transcript_text:
                 interrupted = True
                 self._snapshot.interruption_count += 1
                 self._snapshot.last_interruption_at = time.time()
                 self._snapshot.tts_active = False
                 self._snapshot.tts_started_at = None
+                if (
+                    not payload.get("accepted")
+                    and self._is_direct_interrupt_phrase(transcript_text)
+                ):
+                    payload = {
+                        **payload,
+                        "message": "Interrupted current output. Awaiting next command.",
+                    }
             self._snapshot.interrupted = interrupted
             self._snapshot.phase = "listening"
             self._snapshot.updated_at = time.time()

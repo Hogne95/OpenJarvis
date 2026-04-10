@@ -88,6 +88,14 @@ cd OpenJarvis
 uv sync --extra dev
 ```
 
+### Windows Note
+
+If you open the repo from Windows while the checked-in project environment was created inside WSL/Linux, `uv` can trip over the `.venv/lib64` symlink and fail before tests even start. In that case, use the dedicated Windows-safe backend check script, which points `uv` at a separate Windows-managed project environment instead of mutating the WSL one:
+
+```powershell
+./scripts/run_backend_checks.ps1
+```
+
 ### Pre-commit Hooks
 
 We use [pre-commit](https://pre-commit.com/) to run linting and formatting checks before each commit:
@@ -137,6 +145,10 @@ Use the appropriate [issue template](https://github.com/open-jarvis/OpenJarvis/i
 1. Run the full test suite:
    ```bash
    uv run pytest tests/ -v
+   ```
+   On Windows against a WSL-created environment, prefer:
+   ```powershell
+   ./scripts/run_backend_checks.ps1
    ```
 2. Run the linter:
    ```bash

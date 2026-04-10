@@ -150,6 +150,12 @@ uv run pre-commit install
 uv run pytest tests/ -v
 ```
 
+If you are developing from Windows while the repo's existing `.venv` came from WSL/Linux, use the Windows-safe backend check wrapper instead of the default `uv run` path:
+
+```powershell
+./scripts/run_backend_checks.ps1
+```
+
 Browse the [Roadmap](https://open-jarvis.github.io/OpenJarvis/development/roadmap/) for areas where help is needed. Comment **"take"** on any issue to get auto-assigned.
 
 ## About

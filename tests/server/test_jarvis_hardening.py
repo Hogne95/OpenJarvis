@@ -193,6 +193,40 @@ def test_voice_loop_process_audio_records_diagnostics_and_recent_transcripts():
     assert result["recent_transcripts"][-1] == "Hey Jarvis open mail"
 
 
+def test_voice_loop_barge_in_interrupts_speaking_even_without_wake_acceptance():
+    manager = VoiceLoopManager(speech_backend=None)
+    manager._snapshot.backend_available = True
+    manager._snapshot.active = True
+    manager._snapshot.always_listening = True
+    manager._snapshot.phase = "speaking"
+    manager._snapshot.tts_active = True
+    manager._snapshot.wake_required = True
+    manager._audio_gate.analyze = lambda audio, format="webm": SimpleNamespace(  # type: ignore[method-assign]
+        vad_backend="energy",
+        wake_backend="transcript",
+        rms_level=0.05,
+        wake_score=None,
+        wake_detected=False,
+        speech_detected=True,
+        duration_seconds=0.7,
+    )
+    manager._transcribe_with_hints = lambda *args, **kwargs: SimpleNamespace(  # type: ignore[method-assign]
+        text="stop",
+        language="en",
+        confidence=0.88,
+        duration_seconds=0.7,
+    )
+
+    result = manager.process_audio(b"fake-audio", format="webm")
+
+    assert result["accepted"] is False
+    assert result["interrupted"] is True
+    assert result["phase"] == "listening"
+    assert result["message"] == "Interrupted current output. Awaiting next command."
+    assert result["tts_active"] is False
+    assert result["interruption_count"] == 1
+
+
 def test_desktop_state_snapshot_degrades_without_cached_success_when_probe_fails():
     jarvis_intent._DESKTOP_STATE_LAST_SUCCESS = None
     jarvis_intent._DESKTOP_STATE_LAST_SUCCESS_AT = 0.0
