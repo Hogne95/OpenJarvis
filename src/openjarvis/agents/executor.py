@@ -93,7 +93,7 @@ class AgentExecutor:
         )
         return agent.run(input_text)
 
-    def execute_tick(self, agent_id: str) -> None:
+    def execute_tick(self, agent_id: str, *, guard_acquired: bool = False) -> None:
         """Run one tick for the given agent.
 
         1. Acquire concurrency guard (start_tick)
@@ -101,12 +101,15 @@ class AgentExecutor:
         3. Update stats
         4. Release guard (end_tick)
         """
-        try:
-            self._manager.start_tick(agent_id)
+        if not guard_acquired:
+            try:
+                self._manager.start_tick(agent_id)
+                self._set_activity(agent_id, "Preparing tick...")
+            except ValueError:
+                logger.warning("Agent %s already running, skipping tick", agent_id)
+                return
+        else:
             self._set_activity(agent_id, "Preparing tick...")
-        except ValueError:
-            logger.warning("Agent %s already running, skipping tick", agent_id)
-            return
 
         agent = self._manager.get_agent(agent_id)
         if agent is None:

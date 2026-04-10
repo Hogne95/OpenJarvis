@@ -119,3 +119,22 @@ def test_core_agent_architecture_bootstraps_on_startup(tmp_path: Path):
     assert managed_roles["planner"]["ready"] is True
     assert managed_roles["executor"]["ready"] is True
     assert managed_roles["vision"]["ready"] is True
+
+
+def test_run_agent_returns_running_when_agent_is_already_running(tmp_path: Path):
+    manager = AgentManager(str(tmp_path / "run-agents.db"))
+    agent = manager.create_agent(
+        name="Inbox",
+        agent_type="monitor_operative",
+        config={"model": "test-model", "schedule_type": "manual"},
+    )
+    manager.start_tick(agent["id"])
+    app = create_app(_make_engine(), "test-model", agent_manager=manager)
+    client = TestClient(app)
+
+    response = client.post(f"/v1/managed-agents/{agent['id']}/run")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["status"] == "running"
+    assert data["already_running"] is True

@@ -17,6 +17,8 @@ except ImportError:
 
 logger = logging.getLogger("openjarvis.server.agent_manager")
 
+_STALE_RUNNING_SECONDS = 45
+
 
 class CreateAgentRequest(BaseModel):
     name: str
@@ -1144,6 +1146,7 @@ def create_agent_manager_router(
     @agents_router.post("/{agent_id}/run")
     async def run_agent(agent_id: str, request: Request):
         import threading
+        import time as _time
 
         agent = manager.get_agent(agent_id)
         if not agent:
@@ -1155,11 +1158,30 @@ def create_agent_manager_router(
         if agent["status"] in ("error", "needs_attention"):
             manager.update_agent(agent_id, status="idle")
 
-        # Acquire tick BEFORE spawning thread — prevents race
+        def _is_stale_running(agent_state: Dict[str, Any]) -> bool:
+            if agent_state.get("status") != "running":
+                return False
+            current_activity = str(agent_state.get("current_activity") or "").strip()
+            if current_activity:
+                return False
+            updated_at = float(agent_state.get("updated_at") or 0.0)
+            last_activity_at = float(agent_state.get("last_activity_at") or 0.0)
+            latest_signal = max(updated_at, last_activity_at)
+            return latest_signal > 0 and (_time.time() - latest_signal) >= _STALE_RUNNING_SECONDS
+
+        # Acquire tick before spawning the worker. If the agent is stuck in a
+        # stale running state, clear it and retry once.
         try:
             manager.start_tick(agent_id)
         except ValueError:
-            raise HTTPException(status_code=409, detail="Agent is already running")
+            refreshed = manager.get_agent(agent_id) or agent
+            if _is_stale_running(refreshed):
+                logger.warning("Recovering stale running state for agent %s", agent_id)
+                manager.end_tick(agent_id)
+                manager.update_agent(agent_id, status="idle")
+                manager.start_tick(agent_id)
+            else:
+                return {"status": "running", "agent_id": agent_id, "already_running": True}
 
         # Re-use the server's engine + model so we don't pick a
         # random model from Ollama's list.
@@ -1184,7 +1206,7 @@ def create_agent_manager_router(
                     server_config,
                 )
                 executor.set_system(system)
-                executor.execute_tick(agent_id)
+                executor.execute_tick(agent_id, guard_acquired=True)
             except Exception as exc:
                 logger.error(
                     "Run-tick failed for agent %s: %s",

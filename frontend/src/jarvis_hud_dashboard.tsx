@@ -707,6 +707,8 @@ export default function JarvisHudDashboard({
   const lastVoicePlaybackAtRef = useRef(0);
   const fastRefreshInFlightRef = useRef(false);
   const slowRefreshInFlightRef = useRef(false);
+  const desktopStateFailureCountRef = useRef(0);
+  const desktopStateCooldownUntilRef = useRef(0);
 
   const {
     state: hudSpeechState,
@@ -773,6 +775,23 @@ export default function JarvisHudDashboard({
       if (slowRefreshInFlightRef.current) return;
       slowRefreshInFlightRef.current = true;
       try {
+        const desktopStateRequest =
+          desktopStateCooldownUntilRef.current > Date.now()
+            ? Promise.resolve<DesktopState | null>(null)
+            : fetchDesktopState()
+                .then((value) => {
+                  desktopStateFailureCountRef.current = 0;
+                  desktopStateCooldownUntilRef.current = 0;
+                  return value;
+                })
+                .catch((error) => {
+                  desktopStateFailureCountRef.current += 1;
+                  if (desktopStateFailureCountRef.current >= 3) {
+                    desktopStateCooldownUntilRef.current = Date.now() + 2 * 60 * 1000;
+                  }
+                  throw error;
+                });
+
         const [
           automationLogResult,
           digest,
@@ -803,7 +822,7 @@ export default function JarvisHudDashboard({
           fetchWorkspaceSummary(),
           fetchWorkspaceRepos(),
           fetchWorkspaceChecks(),
-          fetchDesktopState(),
+          desktopStateRequest,
           fetchAgentArchitectureStatus(),
         ]);
 
@@ -819,7 +838,7 @@ export default function JarvisHudDashboard({
         if (workspace.status === 'fulfilled') setWorkspaceSummary(workspace.value);
         if (repos.status === 'fulfilled') setWorkspaceRepos(repos.value);
         if (checks.status === 'fulfilled') setWorkspaceChecks(checks.value);
-        if (desktop.status === 'fulfilled') setDesktopState(desktop.value);
+        if (desktop.status === 'fulfilled' && desktop.value) setDesktopState(desktop.value);
         if (architecture.status === 'fulfilled') setAgentArchitecture(architecture.value);
         if (profile.status === 'fulfilled') setSpeechProfile(profile.value);
         if (agents.status === 'fulfilled') {
@@ -6054,10 +6073,16 @@ export default function JarvisHudDashboard({
     try {
       const agent = await ensureAgent(kind);
       setSelectedAgentId(agent.id);
+      const refreshAgents = async () => {
+        const latest = await fetchManagedAgents({ compact: true }).catch(() => null);
+        if (latest) setManagedAgents(latest);
+      };
       if (kind === 'inbox') {
         await runManagedAgent(agent.id);
-        setAgentNotice('Inbox Triager launched in Agents.');
+        await refreshAgents();
+        setAgentNotice('Inbox Triager is running in Agents.');
       } else {
+        await refreshAgents();
         setAgentNotice('Meeting Prep agent is ready in Agents.');
       }
       navigate('/agents');
