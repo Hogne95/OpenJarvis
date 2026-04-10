@@ -154,7 +154,12 @@ import { DESIGN_ARCHETYPES, getDesignArchetype, type DesignArchetypeId } from '.
 import { buildDesignBrief, buildDesignScorecard } from './lib/designBriefPresentation';
 import { buildDocumentIntelBrief, buildVisualIntelBrief } from './lib/intelBriefPresentation';
 import { buildFivemCodingBrief } from './lib/fivemBriefPresentation';
-import { buildDurableMissionLookup } from './lib/missionPresentation';
+import {
+  buildCommercialMission,
+  buildDesignMission,
+  buildDurableMissionLookup,
+  buildFivemMission,
+} from './lib/missionPresentation';
 import { buildSalesBrief } from './lib/salesBriefPresentation';
 import { buildShopifyBrief } from './lib/shopifyBriefPresentation';
 import { buildSelfImproveBrief, buildSelfImprovePatchPlan } from './lib/selfImprovePresentation';
@@ -2811,176 +2816,39 @@ export default function JarvisHudDashboard({
         });
       }
 
-      if (commercialBrief || durableMissionLookup.commercial) {
-        const durable = durableMissionLookup.commercial;
-        const pipelineRisk = Number(commercialBrief?.counts.find((item) => item.label === 'Pipeline Risk')?.value || 0);
-        const customerPressure = Number(commercialBrief?.counts.find((item) => item.label === 'Customer Pressure')?.value || 0);
-        const storePressure =
-          Number(commercialBrief?.counts.find((item) => item.label === 'Open Orders')?.value || 0) +
-          Number(commercialBrief?.counts.find((item) => item.label === 'Low Stock')?.value || 0);
-        missions.push({
-          id: durable?.id || 'mission-commercial',
-          title: durable?.title || commercialBrief?.title || 'Commercial mission',
-          domain: 'commercial',
-          status: ((durable?.status as MissionStatus | undefined) || (commercialBrief ? 'active' : 'idle')),
-          phase:
-            ((durable?.phase as MissionPhase | undefined) ||
-              (customerPressure > 0 || storePressure > 0 ? 'act' : pipelineRisk > 0 ? 'plan' : commercialBrief ? 'verify' : 'detect')),
-          summary: durable?.summary || commercialBrief?.summary || 'Commercial ops lane is ready.',
-          nextStep:
-            durable?.next_step ||
-            (customerPressure > 0
-              ? 'Resolve the highest customer pressure before it spreads into churn.'
-              : storePressure > 0
-              ? 'Review open orders and stock risk before the next commercial push.'
-              : pipelineRisk > 0
-              ? 'Review the riskiest deal and align the next business move.'
-              : 'Review the combined commercial brief and pick the next cross-functional action.'),
-          result:
-            durable?.result ||
-            (customerPressure > 0
-              ? 'Customer pressure is active.'
-              : storePressure > 0
-              ? 'Store operations need attention.'
-              : pipelineRisk > 0
-              ? 'Pipeline risk is still present.'
-              : 'Commercial signals are stable and ready for the next growth pass.'),
-          retryHint:
-            durable?.retry_hint ||
-            'Reload Commercial Ops, route it to planner, or create a task for the most urgent cross-functional issue.',
-          nextActionLabel: typeof durable?.next_action?.label === 'string' ? durable.next_action.label : undefined,
-          resultData: durable?.result_data || {
-            pipeline_risk: pipelineRisk,
-            customer_pressure: customerPressure,
-            store_pressure: storePressure,
-          },
-          nextAction: durable?.next_action || (commercialBrief
-            ? {
-                kind: customerPressure > 0 || storePressure > 0 ? 'task' : 'brief',
-                content: customerPressure > 0 || storePressure > 0 ? commercialBrief.details : commercialBrief.plannerPrompt,
-                label: customerPressure > 0 ? 'Resolve Customer Pressure' : storePressure > 0 ? 'Review Store Ops' : 'Commercial Ops Brief',
-                source: 'commercial-mission',
-              }
-            : undefined),
-          resultMeta: durable?.result_data
-            ? summarizeMissionMeta(durable.result_data)
-            : [
-                `pipeline risk: ${pipelineRisk}`,
-                `customer pressure: ${customerPressure}`,
-                `store pressure: ${storePressure}`,
-              ],
-          actionLabel: commercialBrief ? 'Load Brief' : 'Open Commercial',
-          action: () => (commercialBrief ? injectCommand(commercialBrief.prompt) : setFocusMode(false)),
-        });
-      }
-
-      if (fivemCodingBrief || durableMissionLookup.fivem) {
-        const durable = durableMissionLookup.fivem;
-        const isFrameworkSpecific =
-          fivemCodingBrief?.framework === 'QBCore' || fivemCodingBrief?.framework === 'ESX' || fivemCodingBrief?.framework === 'ox_*';
-        const hasComplexTopology =
-          (fivemCodingBrief?.topology || '').includes('client') && (fivemCodingBrief?.topology || '').includes('server');
-        missions.push({
-          id: durable?.id || 'mission-fivem',
-          title: durable?.title || fivemCodingBrief?.title || 'FiveM mission',
-          domain: 'fivem',
-          status: ((durable?.status as MissionStatus | undefined) || (fivemCodingBrief ? 'active' : 'idle')),
-          phase:
-            ((durable?.phase as MissionPhase | undefined) ||
-              (hasComplexTopology ? 'plan' : isFrameworkSpecific ? 'verify' : fivemCodingBrief ? 'detect' : 'detect')),
-          summary:
-            durable?.summary ||
-            fivemCodingBrief?.summary ||
-            'FiveM/Lua coding lane is ready.',
-          nextStep:
-            durable?.next_step ||
-            (hasComplexTopology
-              ? 'Review client/server/shared boundaries and event flow before the next patch.'
-              : isFrameworkSpecific
-              ? `Audit ${fivemCodingBrief?.framework} usage and exports before changing logic.`
-              : 'Load the FiveM/Lua review brief and inspect the current script flow.'),
-          result:
-            durable?.result ||
-            fivemCodingBrief?.focusItems[0]?.detail ||
-            'FiveM/Lua context is ready for deeper review.',
-          retryHint:
-            durable?.retry_hint ||
-            'Reload FiveM/Lua intel, run the most relevant framework/security review, or route the brief into planner for a safer implementation pass.',
-          nextActionLabel: typeof durable?.next_action?.label === 'string' ? durable.next_action.label : undefined,
-          resultData: durable?.result_data || {
-            framework: fivemCodingBrief?.framework || 'Unknown',
-            topology: fivemCodingBrief?.topology || 'Unknown',
-            focus_area: fivemCodingBrief?.focusItems[0]?.label || 'FiveM review',
-            native_families: (fivemCodingBrief?.nativeFamilies || []).join(', '),
-          },
-          nextAction: durable?.next_action || (fivemCodingBrief
-            ? {
-                kind: hasComplexTopology || isFrameworkSpecific ? 'task' : 'prompt',
-                content: fivemCodingBrief.details,
-                label: hasComplexTopology ? 'Review Resource Boundaries' : isFrameworkSpecific ? `Review ${fivemCodingBrief.framework}` : 'FiveM Review',
-                source: 'fivem-mission',
-              }
-            : undefined),
-          resultMeta: durable?.result_data
-            ? summarizeMissionMeta(durable.result_data)
-            : [
-                `framework: ${fivemCodingBrief?.framework || 'Unknown'}`,
-                `topology: ${fivemCodingBrief?.topology || 'Unknown'}`,
-                `native families: ${(fivemCodingBrief?.nativeFamilies || []).join(', ') || 'Unknown'}`,
-              ],
-          actionLabel: fivemCodingBrief ? 'Open FiveM Intel' : 'Open Coding',
-          action: () => (fivemCodingBrief ? loadFivemCodingPrompt('fivem-review') : setFocusMode(false)),
-        });
-      }
-
-      if (savedDesignBrief || durableMissionLookup.design) {
-        const durable = durableMissionLookup.design;
-        const scoreAverage = savedDesignBrief?.scorecard?.length
-          ? savedDesignBrief.scorecard.reduce((sum, item) => sum + item.score, 0) / savedDesignBrief.scorecard.length
-          : null;
-        const weakestArea = savedDesignBrief?.scorecard?.slice().sort((left, right) => left.score - right.score)[0] || null;
-        missions.push({
-          id: durable?.id || 'mission-design',
-          title: durable?.title || 'HUD Design mission',
-          domain: 'design',
-          status: ((durable?.status as MissionStatus | undefined) || (savedDesignBrief ? 'active' : 'idle')),
-          phase:
-            ((durable?.phase as MissionPhase | undefined) ||
-              (weakestArea && weakestArea.score < 8 ? 'plan' : savedDesignBrief ? 'verify' : 'detect')),
-          summary:
-            durable?.summary ||
-            savedDesignBrief?.summary ||
-            'Design intelligence is ready to guide the next HUD improvement pass.',
-          nextStep:
-            durable?.next_step ||
-            (weakestArea
-              ? `Improve ${weakestArea.label.toLowerCase()} in the next HUD pass.`
-              : 'Run a design critique or HUD scorecard review.'),
-          result:
-            durable?.result ||
-            (weakestArea
-              ? `${weakestArea.label}: ${weakestArea.score}/10. ${weakestArea.note}`
-              : 'Awaiting the next design review result.'),
-          retryHint:
-            durable?.retry_hint ||
-            (weakestArea && weakestArea.score < 8
-              ? 'Re-audit the HUD after the next layout or styling pass.'
-              : undefined),
-          nextActionLabel: typeof durable?.next_action?.label === 'string' ? durable.next_action.label : undefined,
-          resultMeta:
-            summarizeMissionMeta(durable?.result_data) ||
-            (scoreAverage !== null
-              ? [`avg ${scoreAverage.toFixed(1)}/10`, weakestArea ? `weakest ${weakestArea.label}` : 'scorecard ready']
-              : undefined),
-          actionLabel: weakestArea ? 'Load Scorecard' : 'Load Design Brief',
-          action: () =>
-            weakestArea
-              ? loadDesignPrompt('scorecard')
-              : savedDesignBrief
-              ? injectCommand(savedDesignBrief.details || savedDesignBrief.summary)
-              : setFocusMode(false),
+      const commercialMission = buildCommercialMission({
+        durable: durableMissionLookup.commercial,
+        commercialBrief,
+        summarizeMissionMeta,
+        injectCommercialBrief: () => injectCommand(commercialBrief?.prompt || ''),
+        fallbackAction: () => setFocusMode(false),
       });
-    }
+      if (commercialMission) {
+        missions.push(commercialMission);
+      }
+
+      const fivemMission = buildFivemMission({
+        durable: durableMissionLookup.fivem,
+        fivemCodingBrief,
+        summarizeMissionMeta,
+        loadFivemReview: () => loadFivemCodingPrompt('fivem-review'),
+        fallbackAction: () => setFocusMode(false),
+      });
+      if (fivemMission) {
+        missions.push(fivemMission);
+      }
+
+      const designMission = buildDesignMission({
+        durable: durableMissionLookup.design,
+        savedDesignBrief,
+        summarizeMissionMeta,
+        loadDesignScorecard: () => loadDesignPrompt('scorecard'),
+        loadDesignBrief: () => injectCommand(savedDesignBrief?.details || savedDesignBrief?.summary || ''),
+        fallbackAction: () => setFocusMode(false),
+      });
+      if (designMission) {
+        missions.push(designMission);
+      }
 
     return missions;
   }, [
