@@ -16,6 +16,8 @@ class CommanderQueueEntry:
     detail: str
     action_label: str
     action_hint: str
+    execution_lane: str
+    verification_signal: str
     priority: int
 
 
@@ -79,6 +81,24 @@ def _build_execution_plan(*, recommendation: str, why: str, best_next_step: str,
             success_signal="JARVIS can state what changed, what remains, and the next safest move.",
         ),
     ]
+
+
+def _build_execution_summary(
+    *,
+    recommendation: str,
+    best_next_step: str,
+    execution_plan: list[CommanderExecutionPhase],
+    risks: list[str],
+) -> str:
+    lane = execution_plan[1].goal if len(execution_plan) > 1 else best_next_step
+    verification = execution_plan[2].success_signal if len(execution_plan) > 2 else "Verification signal pending."
+    top_risk = risks[0] if risks else "No major systemic risk is dominating right now."
+    return (
+        f"Recommendation: {recommendation} "
+        f"Execute: {lane} "
+        f"Verify: {verification} "
+        f"Risk: {top_risk}"
+    )
 
 
 def build_commander_brief(
@@ -181,6 +201,8 @@ def build_commander_brief(
                 detail=_clean_text(first.get("next_step")) or "Blocked mission needs a recovery pass.",
                 action_label="Route To Planner",
                 action_hint="planner_handoff",
+                execution_lane="execute",
+                verification_signal="The blocked mission has a concrete recovery step in motion.",
                 priority=100,
             )
         )
@@ -194,6 +216,8 @@ def build_commander_brief(
                 detail=_clean_text(first.get("detail")) or "Recent agent execution failure needs review.",
                 action_label="Open System",
                 action_hint="open_system",
+                execution_lane="verify",
+                verification_signal="The failing agent has a visible cause, retry state, and next recovery move.",
                 priority=92,
             )
         )
@@ -207,6 +231,8 @@ def build_commander_brief(
                 detail=_clean_text(first.get("next_step")) or "This mission can move now with a bounded next action.",
                 action_label="Continue Work",
                 action_hint="planner_handoff",
+                execution_lane="execute",
+                verification_signal="The active mission has advanced and reduced current queue pressure.",
                 priority=84,
             )
         )
@@ -220,6 +246,8 @@ def build_commander_brief(
                 detail=_clean_text(first.get("summary")) or "A recent answer or workflow should be reviewed.",
                 action_label="Open System",
                 action_hint="open_system",
+                execution_lane="report",
+                verification_signal="The review item is classified clearly enough to improve a prompt, route, or workflow.",
                 priority=74,
             )
         )
@@ -233,6 +261,8 @@ def build_commander_brief(
                 detail=first,
                 action_label="Route Improvement",
                 action_hint="planner_handoff",
+                execution_lane="plan",
+                verification_signal="A recurring friction point has a bounded improvement plan and owner.",
                 priority=72,
             )
         )
@@ -245,6 +275,8 @@ def build_commander_brief(
                 detail="No dominant blocker detected. Keep momentum on the next active objective.",
                 action_label="Open System",
                 action_hint="open_system",
+                execution_lane="monitor",
+                verification_signal="No urgent blocker is rising faster than the current work can absorb.",
                 priority=50,
             )
         )
@@ -254,6 +286,12 @@ def build_commander_brief(
         recommendation=recommendation,
         why=why,
         best_next_step=best_next_step,
+        risks=risks,
+    )
+    execution_summary = _build_execution_summary(
+        recommendation=recommendation,
+        best_next_step=best_next_step,
+        execution_plan=execution_plan,
         risks=risks,
     )
     planner_prompt = (
@@ -280,6 +318,7 @@ def build_commander_brief(
         "best_next_step": best_next_step,
         "queue": [asdict(item) for item in queue],
         "execution_plan": [asdict(item) for item in execution_plan],
+        "execution_summary": execution_summary,
         "operating_mode": _clean_text(awareness_mode.get("level")) or "unknown",
         "interaction_style": _interaction_style(profile),
         "user_temperament": temperament.summary,

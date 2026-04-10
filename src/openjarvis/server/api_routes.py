@@ -675,6 +675,8 @@ class OperatorCommanderQueueItem(BaseModel):
     detail: str
     action_label: str
     action_hint: str
+    execution_lane: str
+    verification_signal: str
     priority: int
 
 
@@ -694,6 +696,7 @@ class OperatorCommanderBriefResponse(BaseModel):
     best_next_step: str
     queue: list[OperatorCommanderQueueItem]
     execution_plan: list[OperatorCommanderExecutionPhase]
+    execution_summary: str
     operating_mode: str
     interaction_style: str
     user_temperament: str

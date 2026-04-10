@@ -1,11 +1,4 @@
-export type CommanderQueueItem = {
-  id: string;
-  label: string;
-  title: string;
-  detail: string;
-  actionLabel: string;
-  action: () => void;
-};
+import type { CommanderQueueDisplayItem as CommanderQueueItem } from '../../lib/commanderPresentation';
 
 export function CommanderQueue({
   items,
@@ -34,6 +27,20 @@ export function CommanderQueue({
               </button>
             </div>
             <div className="mt-2 text-sm leading-6 text-slate-200/72">{item.detail}</div>
+            {(item.executionLane || item.verificationSignal) ? (
+              <div className="mt-3 flex flex-wrap items-center gap-2">
+                {item.executionLane ? (
+                  <div className="rounded-full border border-cyan-300/15 bg-cyan-400/[0.06] px-2.5 py-1 text-[10px] uppercase tracking-[0.22em] text-cyan-200/80">
+                    {item.executionLane}
+                  </div>
+                ) : null}
+                {item.verificationSignal ? (
+                  <div className="text-xs leading-5 text-slate-300/68">
+                    Verify: {item.verificationSignal}
+                  </div>
+                ) : null}
+              </div>
+            ) : null}
           </div>
         ))
       ) : (

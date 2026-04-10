@@ -147,7 +147,20 @@ import {
   type WorkbenchStatus,
 } from './lib/api';
 import { listConnectors } from './lib/connectors-api';
+import { buildCommanderHandoffBrief, buildCommanderQueueItems } from './lib/commanderPresentation';
 import { DESIGN_ARCHETYPES, getDesignArchetype } from './lib/designCanon';
+import { buildDocumentIntelBrief, buildVisualIntelBrief } from './lib/intelBriefPresentation';
+import { buildSelfImproveBrief, buildSelfImprovePatchPlan } from './lib/selfImprovePresentation';
+import {
+  buildActiveAutomationAlerts,
+  buildPrepQueue,
+  buildPrioritizedContacts,
+  countAutomationAlerts,
+  filterAutomationAlerts,
+  getImmediateReminder,
+  sortInboxByPriority,
+} from './lib/hudOperationsPresentation';
+import { buildHudStatusMeta, getHudStatus } from './lib/hudStatusPresentation';
 import { useAppStore } from './lib/store';
 import { subscribeAgentEvents } from './lib/agentEvents';
 import {
@@ -1220,44 +1233,25 @@ export default function JarvisHudDashboard({
   }, [latestCodeResult, latestWorkbenchResult]);
   const latestAutomationLog = automationLogs[0] ?? null;
   const activeAutomationAlerts = useMemo(
-    () =>
-      [...automationLogs]
-        .sort((left, right) => {
-          if (left.success !== right.success) return left.success ? 1 : -1;
-          return new Date(right.started_at).getTime() - new Date(left.started_at).getTime();
-        })
-        .slice(0, 4)
-        .filter((item) => !dismissedAutomationAlerts.includes(`${item.task_id}:${item.started_at}`)),
+    () => buildActiveAutomationAlerts(automationLogs, dismissedAutomationAlerts),
     [automationLogs, dismissedAutomationAlerts],
   );
   const filteredAutomationAlerts = useMemo(
-    () =>
-      activeAutomationAlerts.filter((item) => {
-        if (alertFilter === 'errors') return !item.success;
-        if (alertFilter === 'ready') return item.success;
-        return true;
-      }),
+    () => filterAutomationAlerts(activeAutomationAlerts, alertFilter),
     [activeAutomationAlerts, alertFilter],
   );
   const alertCounts = useMemo(
-    () => ({
-      all: activeAutomationAlerts.length,
-      errors: activeAutomationAlerts.filter((item) => !item.success).length,
-      ready: activeAutomationAlerts.filter((item) => item.success).length,
-    }),
+    () => countAutomationAlerts(activeAutomationAlerts),
     [activeAutomationAlerts],
   );
   const prioritizedContacts = useMemo(
     () =>
-      [
-        ...operatorProfile.priorityContacts
-          .split(',')
-          .map((item) => item.trim().toLowerCase())
-          .filter(Boolean),
-        ...(durableOperatorMemory?.profile.priority_contacts || []),
-        ...operatorSignals.topContacts,
-        ...(durableOperatorMemory?.signals.top_contacts || []),
-      ].filter((item, index, array) => array.indexOf(item) === index),
+      buildPrioritizedContacts({
+        profilePriorityContacts: operatorProfile.priorityContacts,
+        durablePriorityContacts: durableOperatorMemory?.profile.priority_contacts,
+        signalTopContacts: operatorSignals.topContacts,
+        durableSignalTopContacts: durableOperatorMemory?.signals.top_contacts,
+      }),
     [
       durableOperatorMemory?.profile.priority_contacts,
       durableOperatorMemory?.signals.top_contacts,
@@ -1265,62 +1259,19 @@ export default function JarvisHudDashboard({
       operatorSignals.topContacts,
     ],
   );
-  const sortedInboxSummary = useMemo(() => {
-    return [...inboxSummary].sort((left, right) => {
-      const leftContact = (left.author_email || left.author).toLowerCase();
-      const rightContact = (right.author_email || right.author).toLowerCase();
-      const leftPriority = prioritizedContacts.findIndex((item) => leftContact.includes(item));
-      const rightPriority = prioritizedContacts.findIndex((item) => rightContact.includes(item));
-      const leftRank = leftPriority === -1 ? Number.MAX_SAFE_INTEGER : leftPriority;
-      const rightRank = rightPriority === -1 ? Number.MAX_SAFE_INTEGER : rightPriority;
-      if (leftRank !== rightRank) return leftRank - rightRank;
-      return (right.timestamp || '').localeCompare(left.timestamp || '');
-    });
-  }, [inboxSummary, prioritizedContacts]);
+  const sortedInboxSummary = useMemo(
+    () => sortInboxByPriority(inboxSummary, prioritizedContacts),
+    [inboxSummary, prioritizedContacts],
+  );
   const inboxFocusQueue = useMemo(
     () => sortedInboxSummary.slice(0, Math.max(1, Math.min(5, operatorProfile.inboxFocusCount || 3))),
     [operatorProfile.inboxFocusCount, sortedInboxSummary],
   );
-  const immediateReminder = useMemo(() => {
-    const now = Date.now();
-    const enriched = reminders
-      .map((item) => {
-        const parsed = new Date(item.when).getTime();
-        return {
-          ...item,
-          deltaMs: Number.isNaN(parsed) ? Number.POSITIVE_INFINITY : parsed - now,
-        };
-      })
-      .sort((a, b) => a.deltaMs - b.deltaMs);
-    return enriched[0] ?? null;
-  }, [reminders]);
-  const prepQueue = useMemo(() => {
-    const now = Date.now();
-    const meetingMemory = durableOperatorMemory?.meetings || {};
-    return reminders
-      .filter((item) => item.kind === 'event')
-      .map((item) => {
-        const parsed = new Date(item.when).getTime();
-        const deltaMs = Number.isNaN(parsed) ? Number.POSITIVE_INFINITY : parsed - now;
-        const memory = meetingMemory[normalizeMeetingKey(item.title)];
-        const importanceBoost =
-          memory?.importance === 'high' ? 3 : memory?.importance === 'normal' ? 1 : 0;
-        const urgencyBoost =
-          deltaMs <= 90 * 60 * 1000 ? 4 : deltaMs <= 4 * 60 * 60 * 1000 ? 2 : 0;
-        return {
-          ...item,
-          deltaMs,
-          memory,
-          score: importanceBoost + urgencyBoost,
-        };
-      })
-      .filter((item) => item.deltaMs >= -15 * 60 * 1000 && item.deltaMs <= 24 * 60 * 60 * 1000)
-      .sort((left, right) => {
-        if (left.score !== right.score) return right.score - left.score;
-        return left.deltaMs - right.deltaMs;
-      })
-      .slice(0, 3);
-  }, [durableOperatorMemory?.meetings, reminders]);
+  const immediateReminder = useMemo(() => getImmediateReminder(reminders), [reminders]);
+  const prepQueue = useMemo(
+    () => buildPrepQueue(reminders, durableOperatorMemory?.meetings, normalizeMeetingKey),
+    [durableOperatorMemory?.meetings, reminders],
+  );
   const structuredReviewQueue = useMemo(() => {
     const files = workspaceSummary?.changed_files || [];
     return files.slice(0, 8).map((filePath, index) => ({
@@ -1511,99 +1462,35 @@ export default function JarvisHudDashboard({
     pendingWorkbench,
     workspaceSummary?.changed_files,
   ]);
-  const visualBrief = useMemo(() => {
-    const visualLabel =
-      screenSnapshot?.label || (screenDeck.length > 1 ? 'Multi-Screen Session' : screenDeck[0]?.label) || 'Visual session';
-    const sections: string[] = [];
-    const summaryParts: string[] = [];
-
-    if (visionSignals) {
-      const topSignal =
-        visionSignals.blockers[0] || visionSignals.deadlines[0] || visionSignals.attention_items[0] || visionSignals.summary;
-      if (topSignal) summaryParts.push(topSignal);
-      sections.push(`Signals summary: ${visionSignals.summary || 'No major signals extracted.'}`);
-      sections.push(`Blockers: ${visionSignals.blockers.join(' | ') || 'None'}`);
-      sections.push(`Deadlines: ${visionSignals.deadlines.join(' | ') || 'None'}`);
-      sections.push(`Attention items: ${visionSignals.attention_items.join(' | ') || 'None'}`);
-    }
-
-    if (visionAnalysis?.content.trim()) {
-      const firstLine = visionAnalysis.content.split('\n').find((line) => line.trim()) || '';
-      if (firstLine && !summaryParts.includes(firstLine)) summaryParts.push(firstLine);
-      sections.push(`Visual analysis: ${visionAnalysis.content}`);
-    }
-
-    if (visionQuery?.answer.trim()) {
-      const firstLine = visionQuery.answer.split('\n').find((line) => line.trim()) || '';
-      if (firstLine && !summaryParts.includes(firstLine)) summaryParts.push(firstLine);
-      sections.push(`Visual Q&A\nQuestion: ${visionQuery.question}\nAnswer: ${visionQuery.answer}`);
-    }
-
-    if (visionSuggestedActions?.actions?.length) {
-      const topActions = [...visionSuggestedActions.actions]
-        .sort((left, right) => right.priority - left.priority)
-        .slice(0, 2)
-        .map((item, index) => `${index + 1}. ${item.title} - ${item.detail}`);
-      if (topActions.length) {
-        if (!summaryParts.length) summaryParts.push(topActions[0]);
-        sections.push(`Suggested next actions:\n${topActions.join('\n')}`);
-      }
-    }
-
-    if (visionTextExtraction?.content.trim()) {
-      const topLines = visionTextExtraction.content
-        .split('\n')
-        .map((line) => line.trim())
-        .filter(Boolean)
-        .slice(0, 3);
-      if (topLines.length) sections.push(`Visible text highlights:\n${topLines.join('\n')}`);
-    }
-
-    if (!sections.length) return null;
-
-    return {
-      title: visualLabel,
-      summary: summaryParts[0] || `Visual intel ready from ${visualLabel}.`,
-      details: sections.join('\n\n'),
-      prompt:
-        `I have a visual briefing for "${visualLabel}".\n${sections.join('\n\n')}\n\n` +
-        'Turn this into the next best action, note any risks, and tell me what deserves attention first.',
-      dailyOpsPrompt:
-        `Visual briefing from "${visualLabel}":\n${sections.join('\n\n')}\n\n` +
-        'Blend this visual context into my operations brief and highlight anything urgent or blocking.',
-    };
-  }, [
-    screenDeck,
-    screenSnapshot?.label,
-    visionAnalysis?.content,
-    visionQuery?.answer,
-    visionQuery?.question,
-    visionSignals,
-    visionSuggestedActions?.actions,
-    visionTextExtraction?.content,
-  ]);
-  const documentBrief = useMemo(() => {
-    if (!documentAnalysis?.content.trim()) return null;
-    const label = documentAnalysisTitle.trim() || documentAnalysis.files[0] || 'Document set';
-    const modeLabel = documentAnalysis.mode.replace(/_/g, ' ');
-    const summary =
-      documentAnalysis.content.split('\n').find((line) => line.trim())?.trim() ||
-      `Document analysis ready in ${modeLabel} mode.`;
-    const details = `Mode: ${modeLabel}\nFiles: ${documentAnalysis.files.join(', ') || 'Unknown'}\n\n${documentAnalysis.content}`;
-    return {
-      title: `Document Intel · ${label}`,
-      summary,
-      details,
-      memoPrompt:
-        `Create a concise ${modeLabel} deliverable for these documents.\n` +
-        `Title: ${label}\nFiles: ${documentAnalysis.files.join(', ')}\n\n${documentAnalysis.content}\n\n` +
-        'Return a sharp executive-ready memo with summary, key metrics, risks, open questions, and recommended next step.',
-      prompt:
-        `I analyzed these documents: ${documentAnalysis.files.join(', ')}.\n` +
-        `Mode: ${documentAnalysis.mode}\nTitle: ${label}\n\n${documentAnalysis.content}\n\n` +
-        'Turn this into the next best action, decisions, risks, and open questions.',
-    };
-  }, [documentAnalysis, documentAnalysisTitle]);
+  const visualBrief = useMemo(
+    () =>
+      buildVisualIntelBrief({
+        screenSnapshotLabel: screenSnapshot?.label,
+        screenDeck,
+        visionSignals,
+        visionAnalysis,
+        visionQuery,
+        visionSuggestedActions,
+        visionTextExtraction,
+      }),
+    [
+      screenDeck,
+      screenSnapshot?.label,
+      visionAnalysis,
+      visionQuery,
+      visionSignals,
+      visionSuggestedActions,
+      visionTextExtraction,
+    ],
+  );
+  const documentBrief = useMemo(
+    () =>
+      buildDocumentIntelBrief({
+        documentAnalysis,
+        documentAnalysisTitle,
+      }),
+    [documentAnalysis, documentAnalysisTitle],
+  );
   const salesBrief = useMemo(() => {
     if (!needsExtendedIntelBriefs) return null;
     const accounts = Object.values(durableOperatorMemory?.sales_accounts || {});
@@ -2519,130 +2406,51 @@ export default function JarvisHudDashboard({
     if (!agentArchitecture?.handoff?.source?.startsWith('fivem')) return null;
     return architectureTaskOutcome;
   }, [agentArchitecture?.handoff?.source, architectureTaskOutcome]);
-  const selfImproveBrief = useMemo(() => {
-    const sections: string[] = [];
-    const summaryParts: string[] = [];
-    const inferredProjectKey = normalizeMeetingKey(workspaceSummary?.root || workspaceSummary?.branch || 'workspace');
-    const inferredProjectMemory = durableOperatorMemory?.projects?.[inferredProjectKey] || null;
-    const inferredActiveRepo = workspaceRepos?.repos.find((repo) => repo.root === workspaceRepos.active_root) || null;
-    const repoLabel = workspaceSummary?.root || inferredActiveRepo?.root || 'active workspace';
-
-    if (workspaceSummary) {
-      sections.push(
-        `Workspace\nRoot: ${workspaceSummary.root}\nBranch: ${workspaceSummary.branch || 'unknown'}\nDirty: ${
-          workspaceSummary.dirty ? 'yes' : 'no'
-        }\nChanged files: ${(workspaceSummary.changed_files || []).slice(0, 8).join(', ') || 'None'}`,
-      );
-    }
-
-    if (inferredProjectMemory) {
-      sections.push(
-        `Project memory\nFocus: ${inferredProjectMemory.focus || 'None'}\nStatus: ${inferredProjectMemory.status || 'Unknown'}\nNext step: ${
-          inferredProjectMemory.next_step || 'None'
-        }\nNotes: ${inferredProjectMemory.notes || 'None'}`,
-      );
-    }
-
-    if (latestValidationFailure) {
-      summaryParts.push('Validation is failing.');
-      sections.push(
-        `Latest validation failure\nCommand: ${latestValidationFailure.command}\nOutput:\n${latestValidationFailure.output}`,
-      );
-    } else if (latestValidationSuccess) {
-      summaryParts.push('Validation is currently green.');
-      sections.push(`Latest validation success\nCommand: ${latestValidationSuccess.command}`);
-    }
-
-    if (nextReviewQueueItem) {
-      sections.push(`Review queue\nNext file: ${nextReviewQueueItem.filePath}\nStatus: ${nextReviewQueueItem.status}`);
-    }
-
-    if (nextCodingTask) {
-      sections.push(
-        `Coding task\nTitle: ${nextCodingTask.title}\nFile: ${nextCodingTask.filePath}\nMode: ${nextCodingTask.mode}\nStatus: ${nextCodingTask.status}`,
-      );
-    }
-
-    if (workspaceChecks?.checks?.length) {
-      sections.push(
-        `Recommended checks\n${workspaceChecks.checks
-          .slice(0, 4)
-          .map((item) => `${item.label}: ${item.command}`)
-          .join('\n')}`,
-      );
-    }
-
-    if (!sections.length) return null;
-
-    return {
-      title: 'Self-Improve',
-      summary: summaryParts[0] || `JARVIS has enough coding context to inspect ${repoLabel}.`,
-      details: sections.join('\n\n'),
-      prompt:
-        `Inspect the current JARVIS coding state for "${repoLabel}".\n${sections.join('\n\n')}\n\n` +
-        'Identify the highest-value self-improvement step, explain the root cause, and propose the safest next patch.',
-    };
-  }, [
-    durableOperatorMemory?.projects,
-    latestValidationFailure,
-    latestValidationSuccess,
-    nextCodingTask,
-    nextReviewQueueItem,
-    workspaceChecks?.checks,
-    workspaceRepos,
-    workspaceSummary,
-  ]);
-  const selfImprovePatchPlan = useMemo(() => {
-    const targetFile = (activeSelfImproveTask?.filePath || selfImproveTargetFile || '').trim();
-    const latestRun = selfImproveRuns[0] || null;
-    if (!selfImproveBrief && !targetFile && !latestRun) return null;
-
-    const summary =
-      latestRun?.phase === 'blocker'
-        ? 'A blocker was returned. Focus the target file and prepare the smallest safe patch.'
-        : latestRun?.phase === 'patch'
-        ? 'A patch landed. Re-check the target and validate the change.'
-        : latestValidationFailure
-        ? 'Validation is failing. Inspect the target file and prepare the next safe fix.'
-        : latestValidationSuccess
-        ? 'Validation is green. Review the patch and decide whether to commit or continue refining.'
-        : 'JARVIS has enough context to prepare the next self-improvement patch.';
-
-    const steps = [
-      targetFile ? `Open ${targetFile} and inspect the active mission scope.` : 'Inspect the highest-signal active file in the current repo.',
-      latestRun?.phase === 'blocker' || latestValidationFailure
-        ? 'Trace the blocker or validation failure back to the smallest plausible root cause.'
-        : latestRun?.phase === 'patch'
-        ? 'Review the applied patch and confirm whether it addressed the intended mission.'
-        : 'Review the current mission state and identify the smallest safe improvement.',
-      workspaceChecks?.checks?.[0]
-        ? `Run ${workspaceChecks.checks[0].label} once the next patch is ready.`
-        : 'Prepare the next available validation step after the patch.',
-    ];
-
-    const prompt =
-      `Build the next self-improvement patch plan.\n` +
-      `${targetFile ? `Target file: ${targetFile}\n` : ''}` +
-      `${selfImproveBrief ? `Mission brief:\n${selfImproveBrief.details}\n\n` : ''}` +
-      `${latestRun ? `Latest cycle event (${latestRun.phase}): ${latestRun.summary}\n${latestRun.detail}\n\n` : ''}` +
-      `${latestValidationFailure ? `Latest validation failure:\n${latestValidationFailure.command}\n${latestValidationFailure.output}\n\n` : ''}` +
-      `Return:\n1. Root cause\n2. Smallest safe patch\n3. Validation step\n4. Risks`;
-
-    return {
-      targetFile,
-      summary,
-      steps,
-      prompt,
-    };
-  }, [
-    activeSelfImproveTask?.filePath,
-    latestValidationFailure,
-    latestValidationSuccess,
-    selfImproveBrief,
-    selfImproveRuns,
-    selfImproveTargetFile,
-    workspaceChecks?.checks,
-  ]);
+  const selfImproveBrief = useMemo(
+    () =>
+      buildSelfImproveBrief({
+        workspaceSummary,
+        workspaceRepos,
+        durableProjects: durableOperatorMemory?.projects,
+        normalizeMeetingKey,
+        latestValidationFailure,
+        latestValidationSuccess,
+        nextReviewQueueItem,
+        nextCodingTask,
+        workspaceChecks,
+      }),
+    [
+      durableOperatorMemory?.projects,
+      latestValidationFailure,
+      latestValidationSuccess,
+      nextCodingTask,
+      nextReviewQueueItem,
+      workspaceChecks,
+      workspaceRepos,
+      workspaceSummary,
+    ],
+  );
+  const selfImprovePatchPlan = useMemo(
+    () =>
+      buildSelfImprovePatchPlan({
+        activeSelfImproveTask,
+        selfImproveTargetFile,
+        selfImproveRuns,
+        selfImproveBrief,
+        latestValidationFailure,
+        latestValidationSuccess,
+        workspaceChecks,
+      }),
+    [
+      activeSelfImproveTask,
+      latestValidationFailure,
+      latestValidationSuccess,
+      selfImproveBrief,
+      selfImproveRuns,
+      selfImproveTargetFile,
+      workspaceChecks,
+    ],
+  );
   const durableMissionLookup = useMemo(() => {
     const entries = durableOperatorMemory?.missions || [];
       return {
@@ -3195,36 +3003,12 @@ export default function JarvisHudDashboard({
   }
   const commanderQueue = useMemo(() => {
     if (!needsExtendedIntelBriefs) return [];
-    const items: Array<{
-      id: string;
-      priority: number;
-      label: string;
-      title: string;
-      detail: string;
-      actionLabel: string;
-      action: () => void;
-    }> = [];
-
-    commanderBrief?.queue?.forEach((item) => {
-      const posture = commanderBrief?.command_posture?.trim();
-      items.push({
-        id: `commander-${item.id}`,
-        priority: Math.max(40, Math.min(110, item.priority)),
-        label: item.label,
-        title: item.title,
-        detail: posture ? `${item.detail} Posture: ${posture}.` : item.detail,
-        actionLabel: item.action_label,
-        action: () => {
-          if (item.action_hint === 'planner_handoff') {
-            void handoffWithBrief(
-              commanderBrief.planner_prompt || `${item.title}\n\nWhy now: ${commanderBrief.why}\n\nBest next step: ${commanderBrief.best_next_step}`,
-              'commander-brief',
-            );
-            return;
-          }
-          navigate('/system');
-        },
-      });
+    const items = buildCommanderQueueItems({
+      commanderBrief,
+      onPlannerHandoff: (prompt) => {
+        void handoffWithBrief(prompt, 'commander-brief');
+      },
+      onOpenSystem: () => navigate('/system'),
     });
 
     if (pendingAction) {
@@ -3857,64 +3641,50 @@ export default function JarvisHudDashboard({
     lastAutoInboxRef.current = inboxKey;
   }, [inboxFocusQueue, operatorProfile.autoTriageInbox, streamState.activeToolCalls.length, streamState.isStreaming]);
 
-  const status: Status = useMemo(() => {
-    if (streamState.isStreaming && streamState.content.trim()) return 'Responding';
-    if (streamState.isStreaming || streamState.activeToolCalls.length > 0) return 'Analyzing';
-    if (voiceLoop?.active || (settings.speechEnabled && speechAvailable)) return 'Listening';
-    return 'Standby';
-  }, [settings.speechEnabled, speechAvailable, streamState, voiceLoop?.active]);
+  const status: Status = useMemo(
+    () =>
+      getHudStatus({
+        isStreaming: streamState.isStreaming,
+        streamContent: streamState.content,
+        activeToolCallCount: streamState.activeToolCalls.length,
+        voiceLoopActive: !!voiceLoop?.active,
+        speechEnabled: settings.speechEnabled,
+        speechAvailable: !!speechAvailable,
+      }),
+    [
+      settings.speechEnabled,
+      speechAvailable,
+      streamState.activeToolCalls.length,
+      streamState.content,
+      streamState.isStreaming,
+      voiceLoop?.active,
+    ],
+  );
 
-  const statusMeta = useMemo(() => {
-    switch (status) {
-      case 'Listening':
-        return {
-          accent: 'text-emerald-300',
-          label: voiceLoop?.active ? 'Voice loop armed' : 'Voice ready',
-          transcript: compactText(
-            latestUserMessage?.content || voiceLoop?.last_transcript || '',
-            'The command core is armed. Speak Norwegian or English.',
-          ),
-          reply: compactText(
-            latestAssistantMessage?.content || '',
-            'JARVIS is waiting for your next voice or text command.',
-          ),
-          bars: [42, 58, 82, 68, 92, 74, 54, 36],
-        };
-      case 'Analyzing':
-        return {
-          accent: 'text-amber-300',
-          label: streamState.phase || 'Routing tools and inference',
-          transcript: compactText(
-            latestUserMessage?.content || '',
-            'Intent received. Routing through tools and model selection.',
-          ),
-          reply: compactText(toolSummary, 'Working through the current request.'),
-          bars: [30, 40, 58, 66, 61, 47, 35, 22],
-        };
-      case 'Responding':
-        return {
-          accent: 'text-sky-300',
-          label: streamState.phase || 'Streaming response',
-          transcript: compactText(latestUserMessage?.content || '', 'Active request in progress.'),
-          reply: compactText(
-            streamState.content || latestAssistantMessage?.content || '',
-            'Rendering assistant response...',
-          ),
-          bars: [45, 61, 80, 71, 86, 77, 60, 41],
-        };
-      default:
-        return {
-          accent: 'text-cyan-200',
-          label: 'System idle',
-          transcript: compactText(latestUserMessage?.content || '', 'No active command.'),
-          reply: compactText(
-            latestAssistantMessage?.content || '',
-            'All systems nominal. Use the reactor mic or command deck to begin.',
-          ),
-          bars: [18, 24, 20, 25, 16, 21, 18, 14],
-        };
-    }
-  }, [latestAssistantMessage, latestUserMessage, status, streamState.content, streamState.phase, toolSummary, voiceLoop?.active, voiceLoop?.last_transcript]);
+  const statusMeta = useMemo(
+    () =>
+      buildHudStatusMeta({
+        status,
+        voiceLoopActive: !!voiceLoop?.active,
+        voiceLoopTranscript: voiceLoop?.last_transcript || '',
+        streamPhase: streamState.phase || '',
+        streamContent: streamState.content,
+        latestUserMessage: latestUserMessage?.content || '',
+        latestAssistantMessage: latestAssistantMessage?.content || '',
+        toolSummary,
+        compactText,
+      }),
+    [
+      latestAssistantMessage?.content,
+      latestUserMessage?.content,
+      status,
+      streamState.content,
+      streamState.phase,
+      toolSummary,
+      voiceLoop?.active,
+      voiceLoop?.last_transcript,
+    ],
+  );
   const voiceEnvironmentLabel = useMemo(
     () => getVoiceEnvironmentLabel(voiceLoop, hudSpeechTelemetry),
     [hudSpeechTelemetry, voiceLoop],
@@ -5713,30 +5483,13 @@ export default function JarvisHudDashboard({
 
   function buildArchitectureHandoffBrief() {
     const trimmedIntent = intentCommand.trim();
-    if (trimmedIntent) {
-      return `User command: ${trimmedIntent}`;
-    }
-    if (visualBrief) {
-      return `Visual brief from ${visualBrief.title}:\n${visualBrief.details}`;
-    }
-    if (commanderQueue[0]) {
-      const frictionSummary = commanderBrief?.friction_summary?.trim();
-      const rootCause = commanderBrief?.root_cause?.trim();
-      return [
-        'Commander queue item:',
-        `Label: ${commanderQueue[0].label}`,
-        `Title: ${commanderQueue[0].title}`,
-        `Detail: ${commanderQueue[0].detail}`,
-        frictionSummary ? `Friction: ${frictionSummary}` : '',
-        rootCause ? `Root cause: ${rootCause}` : '',
-      ]
-        .filter(Boolean)
-        .join('\n');
-    }
-    if (screenContextNote.trim()) {
-      return `Current screen note: ${screenContextNote.trim()}`;
-    }
-    return '';
+    return buildCommanderHandoffBrief({
+      trimmedIntent,
+      visualBrief: visualBrief ? { title: visualBrief.title, details: visualBrief.details } : null,
+      commanderQueue,
+      commanderBrief,
+      screenContextNote,
+    });
   }
 
   function buildLearningContextForSource(source: string) {
@@ -6824,7 +6577,7 @@ export default function JarvisHudDashboard({
 
     if (voiceLoop?.active) {
       try {
-        await stopContinuousListening();
+        await stopContinuousListening({ flushPendingAudio: false });
         const snapshot = await stopVoiceLoop();
         setVoiceLoop(snapshot);
         setVoiceNotice('Always-listening voice loop disarmed.');
@@ -6878,7 +6631,7 @@ export default function JarvisHudDashboard({
   async function handleDisarmVoiceLoop() {
     if (!voiceLoop?.active) return;
     try {
-      await stopContinuousListening();
+      await stopContinuousListening({ flushPendingAudio: false });
       const snapshot = await stopVoiceLoop();
       setVoiceLoop(snapshot);
       setVoiceNotice('Voice loop disarmed.');

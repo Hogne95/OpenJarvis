@@ -127,13 +127,13 @@ export function SystemPage() {
     }
     setBusy('routing-commander');
     setNotice('');
-    try {
-      const next = await handoffAgentArchitecture(commanderBrief.planner_prompt, 'system-commander');
-      setArchitecture(next);
-      setNotice('Commander plan routed to the planner.');
-    } catch (error) {
-      setNotice(error instanceof Error ? error.message : 'Unable to route the commander plan.');
-    } finally {
+      try {
+        const next = await handoffAgentArchitecture(commanderBrief.planner_prompt, 'system-commander');
+        setArchitecture(next);
+        setNotice(commanderBrief.execution_summary || 'Commander plan routed to the planner.');
+      } catch (error) {
+        setNotice(error instanceof Error ? error.message : 'Unable to route the commander plan.');
+      } finally {
       setBusy('idle');
     }
   }
@@ -391,6 +391,12 @@ export function SystemPage() {
                       </div>
                     ))}
                   </div>
+                ) : null}
+                {commanderBrief?.execution_summary ? (
+                  <>
+                    <div className="mt-4 text-[10px] uppercase tracking-[0.22em] text-cyan-300/55">Execution Summary</div>
+                    <div className="mt-1 text-xs leading-6 text-slate-200/72">{commanderBrief.execution_summary}</div>
+                  </>
                 ) : null}
                 <div className="mt-4 flex flex-wrap gap-3">
                   <button

@@ -2028,6 +2028,8 @@ export interface OperatorCommanderBriefResponse {
     detail: string;
     action_label: string;
     action_hint: string;
+    execution_lane: string;
+    verification_signal: string;
     priority: number;
   }>;
   execution_plan: Array<{
@@ -2035,6 +2037,7 @@ export interface OperatorCommanderBriefResponse {
     goal: string;
     success_signal: string;
   }>;
+  execution_summary: string;
   operating_mode: string;
   interaction_style: string;
   user_temperament: string;

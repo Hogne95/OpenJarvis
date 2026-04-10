@@ -29,8 +29,12 @@ def test_commander_brief_prioritizes_blocked_mission():
     assert brief["recommendation"] == "Unblock Repair voice loop first."
     assert brief["best_next_step"] == "Inspect the latest interruption failure and patch cleanup."
     assert brief["queue"][0]["action_hint"] == "planner_handoff"
+    assert brief["queue"][0]["execution_lane"] == "execute"
+    assert "recovery step" in brief["queue"][0]["verification_signal"]
     assert "voice unavailable" in brief["risks"]
     assert [item["phase"] for item in brief["execution_plan"]] == ["plan", "execute", "verify", "report"]
+    assert "Recommendation: Unblock Repair voice loop first." in brief["execution_summary"]
+    assert "Risk: voice unavailable" in brief["execution_summary"]
     assert "Commander mode directive." in brief["planner_prompt"]
 
 
@@ -57,6 +61,7 @@ def test_commander_brief_falls_back_to_review_queue():
 
     assert brief["queue"][0]["id"] == "review-review-1"
     assert brief["queue"][0]["action_hint"] == "open_system"
+    assert brief["queue"][0]["execution_lane"] == "report"
     assert brief["risks"][0] == "Review queue: A recent answer felt too passive."
     assert brief["execution_plan"][0]["phase"] == "plan"
 

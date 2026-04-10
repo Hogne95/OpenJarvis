@@ -40,11 +40,13 @@ export function useSpeech() {
   const chunksRef = useRef<Blob[]>([]);
   const streamRef = useRef<MediaStream | null>(null);
   const continuousRef = useRef(false);
+  const continuousSessionRef = useRef(0);
   const processingQueueRef = useRef(Promise.resolve());
   const continuousOptionsRef = useRef<ContinuousListenOptions | null>(null);
   const audioContextRef = useRef<AudioContext | null>(null);
   const sourceNodeRef = useRef<MediaStreamAudioSourceNode | null>(null);
   const processorNodeRef = useRef<ScriptProcessorNode | null>(null);
+  const silenceGainNodeRef = useRef<GainNode | null>(null);
   const pcmChunksRef = useRef<Float32Array[]>([]);
   const captureRateRef = useRef(16000);
   const flushIntervalRef = useRef<number | null>(null);
@@ -80,8 +82,10 @@ export function useSpeech() {
     }
     processorNodeRef.current?.disconnect();
     sourceNodeRef.current?.disconnect();
+    silenceGainNodeRef.current?.disconnect();
     processorNodeRef.current = null;
     sourceNodeRef.current = null;
+    silenceGainNodeRef.current = null;
     pcmChunksRef.current = [];
     speechEnergyRef.current = { frames: 0, activeFrames: 0, peakRms: 0 };
     noiseFloorRef.current = NOISE_FLOOR_MIN;
@@ -166,24 +170,27 @@ export function useSpeech() {
     }
 
     const activeOptions = continuousOptionsRef.current;
+    const sessionId = continuousSessionRef.current;
     const blob = encodeWav(merged, captureRateRef.current);
     processingQueueRef.current = processingQueueRef.current
       .catch(() => {})
       .then(async () => {
-        if (!continuousRef.current) return;
+        if (!continuousRef.current || continuousSessionRef.current !== sessionId) return;
         setState('transcribing');
         try {
           const result = await processVoiceLoopAudio(blob, {
             filename: 'voice-loop.wav',
             languageHints: activeOptions?.languageHints || languageHints(),
           });
+          if (!continuousRef.current || continuousSessionRef.current !== sessionId) return;
           activeOptions?.onChunkProcessed?.(result);
-          if (continuousRef.current) setState('listening');
+          if (continuousRef.current && continuousSessionRef.current === sessionId) setState('listening');
         } catch (err) {
           const nextError = err instanceof Error ? err : new Error('Voice loop processing failed');
+          if (!continuousRef.current || continuousSessionRef.current !== sessionId) return;
           setError(nextError.message);
           activeOptions?.onError?.(nextError);
-          if (continuousRef.current) setState('listening');
+          if (continuousRef.current && continuousSessionRef.current === sessionId) setState('listening');
         }
       });
   }, [encodeWav, languageHints]);
@@ -261,6 +268,7 @@ export function useSpeech() {
       }
 
       continuousRef.current = true;
+      continuousSessionRef.current += 1;
       continuousOptionsRef.current = options;
       processingQueueRef.current = Promise.resolve();
 
@@ -280,6 +288,9 @@ export function useSpeech() {
         sourceNodeRef.current = source;
         const processor = audioContext.createScriptProcessor(4096, 1, 1);
         processorNodeRef.current = processor;
+        const silenceGain = audioContext.createGain();
+        silenceGain.gain.value = 0;
+        silenceGainNodeRef.current = silenceGain;
 
         processor.onaudioprocess = (event) => {
           if (!continuousRef.current) return;
@@ -316,7 +327,8 @@ export function useSpeech() {
         };
 
         source.connect(processor);
-        processor.connect(audioContext.destination);
+        processor.connect(silenceGain);
+        silenceGain.connect(audioContext.destination);
         flushIntervalRef.current = window.setInterval(() => {
           void flushContinuousAudio();
         }, options.chunkMs ?? 2200);
@@ -336,15 +348,22 @@ export function useSpeech() {
     [languageHints, stopMediaTracks],
   );
 
-  const stopContinuousListening = useCallback(async (): Promise<void> => {
+  const stopContinuousListening = useCallback(async (options: { flushPendingAudio?: boolean } = {}): Promise<void> => {
     continuousRef.current = false;
+    continuousSessionRef.current += 1;
     continuousOptionsRef.current = null;
+    const flushPendingAudio = options.flushPendingAudio ?? false;
 
     const recorder = mediaRecorderRef.current;
     if (recorder && recorder.state !== 'inactive') {
       recorder.stop();
     }
-    await flushContinuousAudio();
+    if (flushPendingAudio) {
+      await flushContinuousAudio();
+    } else {
+      pcmChunksRef.current = [];
+      speechEnergyRef.current = { frames: 0, activeFrames: 0, peakRms: 0 };
+    }
     resetContinuousAudioGraph();
     stopMediaTracks();
 
@@ -358,6 +377,7 @@ export function useSpeech() {
   useEffect(() => {
     return () => {
       continuousRef.current = false;
+      continuousSessionRef.current += 1;
       const recorder = mediaRecorderRef.current;
       if (recorder && recorder.state !== 'inactive') {
         recorder.stop();
