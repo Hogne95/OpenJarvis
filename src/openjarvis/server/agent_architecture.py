@@ -38,11 +38,30 @@ def _workspace_awareness(app_state: Any) -> dict[str, Any]:
         active_root = str(registry.active_root() or "")
     except Exception:
         active_root = ""
-    return {
+    payload = {
         "available": True,
         "active_root": active_root,
         "repo_count": len(repos),
     }
+    if active_root:
+        try:
+            summary = registry.summary(active_root)
+        except Exception:
+            summary = {}
+        payload.update(
+            {
+                "branch": str(summary.get("branch") or ""),
+                "dirty": bool(summary.get("dirty")),
+                "staged_count": int(summary.get("staged_count", 0) or 0),
+                "unstaged_count": int(summary.get("unstaged_count", 0) or 0),
+                "has_upstream": bool(summary.get("has_upstream")),
+                "ahead_count": int(summary.get("ahead_count", 0) or 0),
+                "behind_count": int(summary.get("behind_count", 0) or 0),
+                "commit_ready": bool(summary.get("commit_ready")),
+                "push_ready": bool(summary.get("push_ready")),
+            }
+        )
+    return payload
 
 
 def _voice_awareness(app_state: Any) -> dict[str, Any]:

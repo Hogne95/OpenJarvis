@@ -28,6 +28,13 @@ class CommanderExecutionPhase:
     success_signal: str
 
 
+@dataclass(frozen=True)
+class CommanderCodingPhase:
+    phase: str
+    goal: str
+    verification: str
+
+
 def _clean_text(value: Any) -> str:
     return str(value or "").strip()
 
@@ -117,6 +124,7 @@ def build_commander_brief(
     review_items = list(analytics.get("review_items") or [])
     focus = list(analytics.get("focus_recommendations") or [])
     improvement_opportunities = list(analytics.get("improvement_opportunities") or [])
+    coding_repos = list(analytics.get("coding_repos") or [])
     friction_brief = analytics.get("friction_brief") if isinstance(analytics.get("friction_brief"), dict) else {}
     signals = analytics.get("signals") if isinstance(analytics.get("signals"), dict) else {}
     awareness_mode = awareness.get("mode") if isinstance(awareness.get("mode"), dict) else {}
@@ -125,8 +133,22 @@ def build_commander_brief(
         if isinstance(awareness.get("agents"), dict)
         else []
     )
+    workspace = awareness.get("workspace") if isinstance(awareness.get("workspace"), dict) else {}
     temperament = infer_user_temperament(stored_profile=profile)
     command_posture, guidance_note = _command_posture(profile)
+    active_coding_repo = next(
+        (
+            item
+            for item in coding_repos
+            if str(item.get("key") or "").strip() == str(workspace.get("active_root") or "").strip()
+        ),
+        coding_repos[0] if coding_repos else {},
+    )
+    coding_repo_failures = list(active_coding_repo.get("repeated_failures") or []) if isinstance(active_coding_repo, dict) else []
+    coding_repo_checks = list(active_coding_repo.get("preferred_verification_commands") or []) if isinstance(active_coding_repo, dict) else []
+    active_repo_name = _clean_text(active_coding_repo.get("title") if isinstance(active_coding_repo, dict) else "") or _clean_text(
+        active_coding_repo.get("key") if isinstance(active_coding_repo, dict) else ""
+    ) or "the active repo"
 
     recommendation = "Stabilize the stack and clear blockers first."
     why = "The fastest path to momentum is clearing work that is already blocked."
@@ -145,6 +167,14 @@ def build_commander_brief(
         primary_active = active[0]
         recommendation = f"Advance {primary_active.get('title') or 'the active mission'} now."
         why = primary_active.get("next_step") or "There is active work ready to move without extra setup."
+    elif coding_repo_failures or (workspace.get("available") and workspace.get("active_root") and not workspace.get("commit_ready")):
+        recommendation = f"Stabilize {active_repo_name} before broader coding work."
+        if coding_repo_failures:
+            why = coding_repo_failures[0]
+        elif workspace.get("dirty"):
+            why = "The active repository still has unstaged or unverified changes, so shipping more changes now adds risk."
+        else:
+            why = "The active repository is not yet ready for a clean commit/push handoff."
     elif improvement_opportunities:
         recommendation = improvement_opportunities[0]
         why = "Repeated friction suggests this is worth tightening before it spreads."
@@ -170,6 +200,17 @@ def build_commander_brief(
         summary = _clean_text(item.get("summary"))
         if summary:
             risks.append(f"Review queue: {summary}")
+    if workspace.get("available") and workspace.get("active_root"):
+        if workspace.get("dirty"):
+            risks.append(
+                f"Workspace: {int(workspace.get('staged_count') or 0)} staged and {int(workspace.get('unstaged_count') or 0)} unstaged changes are still in flight."
+            )
+        elif not workspace.get("has_upstream"):
+            risks.append("Workspace: the active branch has no upstream tracking branch.")
+        elif int(workspace.get("behind_count") or 0) > 0:
+            risks.append(f"Workspace: upstream is ahead by {int(workspace.get('behind_count') or 0)} commit(s).")
+    if coding_repo_failures:
+        risks.append(f"Coding memory: {coding_repo_failures[0]}")
     for item in improvement_opportunities[:2]:
         cleaned = _clean_text(item)
         if cleaned:
@@ -185,6 +226,8 @@ def build_commander_brief(
         best_next_step = _clean_text(blocked[0].get("next_step"))
     if not best_next_step and active:
         best_next_step = _clean_text(active[0].get("next_step"))
+    if not best_next_step and coding_repo_checks:
+        best_next_step = f"Run {coding_repo_checks[0]} and review the repo state before the next coding handoff."
     if not best_next_step and focus:
         best_next_step = _clean_text(focus[0])
     if not best_next_step:
@@ -234,6 +277,31 @@ def build_commander_brief(
                 execution_lane="execute",
                 verification_signal="The active mission has advanced and reduced current queue pressure.",
                 priority=84,
+            )
+        )
+    if workspace.get("available") and workspace.get("active_root") and (coding_repo_failures or workspace.get("dirty") or not workspace.get("commit_ready")):
+        queue.append(
+            CommanderQueueEntry(
+                id="coding-repo-recovery",
+                label="Coding",
+                title=f"Stabilize {active_repo_name}",
+                detail=(
+                    coding_repo_failures[0]
+                    if coding_repo_failures
+                    else (
+                        f"Active repo has {int(workspace.get('staged_count') or 0)} staged and "
+                        f"{int(workspace.get('unstaged_count') or 0)} unstaged changes. Verify before commit."
+                    )
+                ),
+                action_label="Route Coding Plan",
+                action_hint="planner_handoff",
+                execution_lane="verify",
+                verification_signal=(
+                    coding_repo_checks[0]
+                    if coding_repo_checks
+                    else "The repo reaches a clean verified state with a clear next git move."
+                ),
+                priority=86,
             )
         )
     if review_items:
@@ -325,4 +393,149 @@ def build_commander_brief(
         "command_posture": command_posture,
         "guidance_note": guidance_note,
         "planner_prompt": planner_prompt,
+    }
+
+
+def build_coding_commander_brief(
+    *,
+    repo_summary: dict[str, Any],
+    repo_memory: dict[str, Any] | None = None,
+    profile: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Build a bounded coding workflow brief for the active repository."""
+
+    repo_memory = repo_memory or {}
+    profile = profile or {}
+    temperament = infer_user_temperament(stored_profile=profile)
+    branch = _clean_text(repo_summary.get("branch")) or "unknown"
+    repo_root = _clean_text(repo_summary.get("root")) or _clean_text(repo_memory.get("key"))
+    repo_name = _clean_text(repo_memory.get("title")) or (repo_root.rsplit("/", 1)[-1].rsplit("\\", 1)[-1] if repo_root else "active repo")
+    staged = int(repo_summary.get("staged_count") or 0)
+    unstaged = int(repo_summary.get("unstaged_count") or 0)
+    ahead = int(repo_summary.get("ahead_count") or 0)
+    behind = int(repo_summary.get("behind_count") or 0)
+    has_upstream = bool(repo_summary.get("has_upstream"))
+    dirty = bool(repo_summary.get("dirty"))
+    commit_ready = bool(repo_summary.get("commit_ready"))
+    push_ready = bool(repo_summary.get("push_ready"))
+    changed_files = list(repo_summary.get("changed_files") or [])
+    preferred_checks = [str(item).strip() for item in repo_memory.get("preferred_verification_commands", []) if str(item).strip()]
+    repeated_failures = [str(item).strip() for item in repo_memory.get("repeated_failures", []) if str(item).strip()]
+    pitfalls = [str(item).strip() for item in repo_memory.get("common_pitfalls", []) if str(item).strip()]
+    convention_notes = _clean_text(repo_memory.get("convention_notes"))
+    workflow_notes = _clean_text(repo_memory.get("workflow_notes"))
+
+    headline = f"Coding command brief for {repo_name}."
+    recommendation = f"Stabilize {repo_name} on {branch} before shipping more code."
+    why = "The active repo needs a clean verify -> commit -> push path so new coding work compounds safely."
+    best_next_step = "Inspect the current repo state and prepare the narrowest relevant verification."
+
+    if repeated_failures:
+        why = repeated_failures[0]
+    elif dirty and staged:
+        why = f"{staged} staged and {unstaged} unstaged changes are in flight."
+    elif dirty:
+        why = "There are local changes that should be narrowed and verified before broader work continues."
+    elif behind > 0:
+        why = f"The local branch is behind upstream by {behind} commit(s), so coding decisions may be landing on stale context."
+    elif not has_upstream:
+        why = "The branch has no upstream tracking branch, which makes push and review handoff brittle."
+    elif ahead > 0 and not push_ready:
+        why = f"There are {ahead} local commit(s) ahead of upstream, but the repo is not yet in a clean push-ready state."
+    elif commit_ready:
+        recommendation = f"Verify and finalize the pending patch in {repo_name}."
+        why = "The repo already has a bounded patch staged in the working tree, so the best move is to prove it and commit cleanly."
+    elif push_ready:
+        recommendation = f"Prepare {repo_name} for push and review handoff."
+        why = "The repo is already in a push-ready state, so the next move is a clean review/release handoff."
+
+    primary_check = preferred_checks[0] if preferred_checks else ""
+    if primary_check:
+        best_next_step = f"Run {primary_check}, then decide whether the repo is ready to commit or needs one more patch pass."
+    elif changed_files:
+        best_next_step = f"Review {changed_files[0]} first, then run the narrowest repo check available."
+    elif behind > 0:
+        best_next_step = "Reconcile upstream changes first, then resume coding on a clean base."
+    elif push_ready:
+        best_next_step = "Prepare the push and review handoff while the repo is already clean."
+
+    phases = [
+        CommanderCodingPhase(
+            phase="assess",
+            goal=(
+                f"Inspect branch {branch}, staged={staged}, unstaged={unstaged}, ahead={ahead}, behind={behind}."
+            ),
+            verification="Repo state is understood well enough to choose one bounded next move.",
+        ),
+        CommanderCodingPhase(
+            phase="patch",
+            goal=(
+                "Apply the smallest safe follow-up patch."
+                if repeated_failures or dirty
+                else "Keep patch scope bounded unless the repo is already verification-ready."
+            ),
+            verification="Changed files stay narrow and tied to one clear rationale.",
+        ),
+        CommanderCodingPhase(
+            phase="verify",
+            goal=primary_check or "Run the narrowest relevant test, lint, or build check.",
+            verification="Verification either passes cleanly or produces one precise follow-up target.",
+        ),
+        CommanderCodingPhase(
+            phase="report",
+            goal="State whether the repo is hold, commit, or push ready.",
+            verification="The next git action is explicit and honest about remaining risk.",
+        ),
+    ]
+
+    risks: list[str] = []
+    if repeated_failures:
+        risks.append(f"Coding memory: {repeated_failures[0]}")
+    if pitfalls:
+        risks.append(f"Pitfall: {pitfalls[0]}")
+    if convention_notes:
+        risks.append(f"Convention: {convention_notes}")
+    if workflow_notes:
+        risks.append(f"Workflow: {workflow_notes}")
+    if behind > 0:
+        risks.append(f"Upstream is ahead by {behind} commit(s).")
+    if not has_upstream:
+        risks.append("Branch has no upstream tracking branch.")
+    if dirty:
+        risks.append(f"Repo is still dirty with {staged + unstaged} local change bucket(s).")
+    risks = risks[:5] or ["No major repo risk is dominating right now."]
+
+    execution_summary = (
+        f"Assess {repo_name} on {branch}. "
+        f"Patch only if the repo still has unresolved local risk. "
+        f"Verify with {primary_check or 'the narrowest relevant repo check'}. "
+        f"Report whether the repo is ready to hold, commit, or push."
+    )
+    planner_prompt = (
+        "Coding commander directive.\n"
+        f"Repo: {repo_name}\n"
+        f"Root: {repo_root}\n"
+        f"Recommendation: {recommendation}\n"
+        f"Why: {why}\n"
+        f"User temperament: {temperament.summary}\n"
+        f"Best next step: {best_next_step}\n"
+        + "\n".join(
+            f"- {phase.phase.title()}: {phase.goal} (verify: {phase.verification})" for phase in phases
+        )
+    )
+
+    return {
+        "headline": headline,
+        "repo_name": repo_name,
+        "repo_root": repo_root,
+        "branch": branch,
+        "recommendation": recommendation,
+        "why": why,
+        "best_next_step": best_next_step,
+        "risks": risks,
+        "phases": [asdict(item) for item in phases],
+        "preferred_checks": preferred_checks[:4],
+        "execution_summary": execution_summary,
+        "planner_prompt": planner_prompt,
+        "user_temperament": temperament.summary,
     }

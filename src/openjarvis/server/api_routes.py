@@ -19,6 +19,7 @@ from fastapi import APIRouter, HTTPException, Request, Response, WebSocket, WebS
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 from openjarvis.assistant import build_commander_brief
+from openjarvis.assistant.commander import build_coding_commander_brief
 from openjarvis.connectors.shopify import ShopifyConnector
 from openjarvis.server.agent_architecture import (
     build_architecture_status,
@@ -730,6 +731,28 @@ class OperatorCommanderBriefResponse(BaseModel):
     command_posture: str
     guidance_note: str
     planner_prompt: str
+
+
+class OperatorCodingCommanderPhase(BaseModel):
+    phase: str
+    goal: str
+    verification: str
+
+
+class OperatorCodingCommanderBriefResponse(BaseModel):
+    headline: str
+    repo_name: str
+    repo_root: str
+    branch: str
+    recommendation: str
+    why: str
+    best_next_step: str
+    risks: list[str]
+    phases: list[OperatorCodingCommanderPhase]
+    preferred_checks: list[str]
+    execution_summary: str
+    planner_prompt: str
+    user_temperament: str
 
 
 class OperatorReviewItemRequest(BaseModel):
@@ -2577,6 +2600,25 @@ async def operator_memory_commander_brief(request: Request):
     analytics = manager.analytics_summary()
     profile = manager.snapshot().get("profile", {})
     return build_commander_brief(analytics=analytics, awareness=awareness, profile=profile)
+
+
+@operator_memory_router.get("/coding-brief", response_model=OperatorCodingCommanderBriefResponse)
+async def operator_memory_coding_brief(request: Request):
+    manager = get_operator_memory_manager(request)
+    profile = manager.snapshot().get("profile", {})
+    registry = get_workspace_registry(request)
+    if registry is None:
+        raise HTTPException(status_code=503, detail="Workspace registry not configured")
+    try:
+        repo_summary = registry.summary()
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    repo_memory = manager.get_coding_repo(str(repo_summary.get("root", "")).strip()) or {}
+    return build_coding_commander_brief(
+        repo_summary=repo_summary,
+        repo_memory=repo_memory,
+        profile=profile,
+    )
 
 
 @operator_memory_router.post("/review")

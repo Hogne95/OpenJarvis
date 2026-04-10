@@ -2190,6 +2190,26 @@ export interface OperatorCommanderBriefResponse {
   planner_prompt: string;
 }
 
+export interface OperatorCodingCommanderBriefResponse {
+  headline: string;
+  repo_name: string;
+  repo_root: string;
+  branch: string;
+  recommendation: string;
+  why: string;
+  best_next_step: string;
+  risks: string[];
+  phases: Array<{
+    phase: string;
+    goal: string;
+    verification: string;
+  }>;
+  preferred_checks: string[];
+  execution_summary: string;
+  planner_prompt: string;
+  user_temperament: string;
+}
+
 export async function fetchOperatorMemoryContext(body: {
   query: string;
   limit?: number;
@@ -2220,6 +2240,15 @@ export async function fetchOperatorCommanderBrief(): Promise<OperatorCommanderBr
   if (!res.ok) {
     const detail = await res.json().catch(() => ({ detail: res.statusText }));
     throw new Error(detail.detail || `Operator commander brief failed: ${res.status}`);
+  }
+  return res.json();
+}
+
+export async function fetchOperatorCodingBrief(): Promise<OperatorCodingCommanderBriefResponse> {
+  const res = await authFetch('/v1/operator-memory/coding-brief');
+  if (!res.ok) {
+    const detail = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(detail.detail || `Operator coding brief failed: ${res.status}`);
   }
   return res.json();
 }

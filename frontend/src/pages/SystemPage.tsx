@@ -7,6 +7,7 @@ import {
   fetchOperatorMemoryContext,
   fetchOperatorMemoryAnalytics,
   fetchOperatorCommanderBrief,
+  fetchOperatorCodingBrief,
   addOperatorReviewItem,
   handoffAgentArchitecture,
   fetchRuntimeReadiness,
@@ -18,6 +19,7 @@ import {
   type OperatorMemoryContextResponse,
   type OperatorMemoryAnalyticsResponse,
   type OperatorCommanderBriefResponse,
+  type OperatorCodingCommanderBriefResponse,
   type RuntimeReadiness,
   type SpeechHealth,
   type VoiceLoopStatus,
@@ -36,6 +38,7 @@ export function SystemPage() {
   const [memoryContext, setMemoryContext] = useState<OperatorMemoryContextResponse | null>(null);
   const [memoryAnalytics, setMemoryAnalytics] = useState<OperatorMemoryAnalyticsResponse | null>(null);
   const [commanderBrief, setCommanderBrief] = useState<OperatorCommanderBriefResponse | null>(null);
+  const [codingBrief, setCodingBrief] = useState<OperatorCodingCommanderBriefResponse | null>(null);
   const [busy, setBusy] = useState<RefreshState>('idle');
   const [notice, setNotice] = useState('');
   const awarenessHeadline = useMemo(
@@ -69,6 +72,7 @@ export function SystemPage() {
       );
       setMemoryAnalytics(await fetchOperatorMemoryAnalytics().catch(() => null));
       setCommanderBrief(await fetchOperatorCommanderBrief().catch(() => null));
+      setCodingBrief(await fetchOperatorCodingBrief().catch(() => null));
     } finally {
       setBusy('idle');
     }
@@ -407,6 +411,80 @@ export function SystemPage() {
                     {busy === 'routing-commander' ? 'Routing' : 'Route Commander Plan'}
                   </button>
                 </div>
+              </div>
+            </div>
+
+            <div className="rounded-[1.5rem] border border-cyan-400/12 bg-slate-950/55 p-5">
+              <div className="text-[10px] uppercase tracking-[0.3em] text-cyan-300/55">Coding Command Brief</div>
+              <div className="mt-3 text-sm leading-7 text-slate-200/76">
+                Root cause of earlier coding drift was that repo state, verification, and conventions were visible, but
+                not compressed into one bounded coding command flow. This brief turns the active repo into an assess,
+                patch, verify, and report plan.
+              </div>
+              <div className="mt-4 rounded-[1rem] border border-cyan-400/10 bg-black/20 px-4 py-3">
+                <div className="flex items-center justify-between gap-3">
+                  <div className="text-xs uppercase tracking-[0.22em] text-cyan-300/55">Repo</div>
+                  <div className="text-[10px] uppercase tracking-[0.22em] text-cyan-300/55">
+                    {codingBrief?.branch || 'unknown'}
+                  </div>
+                </div>
+                <div className="mt-2 text-sm text-cyan-50/92">
+                  {codingBrief?.recommendation || 'Waiting for coding command guidance.'}
+                </div>
+                <div className="mt-2 text-xs leading-6 text-slate-200/72">
+                  {codingBrief?.why || 'Coding command mode will explain the repo pressure once workspace state is available.'}
+                </div>
+                <div className="mt-3 text-[10px] uppercase tracking-[0.22em] text-cyan-300/55">Best Next Step</div>
+                <div className="mt-1 text-sm text-slate-200/78">
+                  {codingBrief?.best_next_step || 'No coding action selected yet.'}
+                </div>
+                {codingBrief?.preferred_checks?.length ? (
+                  <>
+                    <div className="mt-3 text-[10px] uppercase tracking-[0.22em] text-cyan-300/55">Preferred Checks</div>
+                    <div className="mt-2 flex flex-wrap gap-2">
+                      {codingBrief.preferred_checks.map((check) => (
+                        <div
+                          key={check}
+                          className="rounded-full border border-cyan-300/18 bg-cyan-400/[0.05] px-3 py-1 text-[10px] uppercase tracking-[0.18em] text-cyan-100/80"
+                        >
+                          {check}
+                        </div>
+                      ))}
+                    </div>
+                  </>
+                ) : null}
+                {codingBrief?.risks?.length ? (
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    {codingBrief.risks.map((risk) => (
+                      <div
+                        key={risk}
+                        className="rounded-full border border-amber-300/18 bg-amber-400/[0.05] px-3 py-1 text-[10px] uppercase tracking-[0.22em] text-amber-200/74"
+                      >
+                        {risk}
+                      </div>
+                    ))}
+                  </div>
+                ) : null}
+                {codingBrief?.phases?.length ? (
+                  <div className="mt-4 grid gap-2">
+                    {codingBrief.phases.map((step) => (
+                      <div
+                        key={step.phase}
+                        className="rounded-[0.9rem] border border-cyan-400/10 bg-slate-950/55 px-3 py-2"
+                      >
+                        <div className="text-[10px] uppercase tracking-[0.22em] text-cyan-300/55">{step.phase}</div>
+                        <div className="mt-1 text-sm text-cyan-50/92">{step.goal}</div>
+                        <div className="mt-1 text-xs leading-6 text-slate-200/72">{step.verification}</div>
+                      </div>
+                    ))}
+                  </div>
+                ) : null}
+                {codingBrief?.execution_summary ? (
+                  <>
+                    <div className="mt-4 text-[10px] uppercase tracking-[0.22em] text-cyan-300/55">Execution Summary</div>
+                    <div className="mt-1 text-xs leading-6 text-slate-200/72">{codingBrief.execution_summary}</div>
+                  </>
+                ) : null}
               </div>
             </div>
 

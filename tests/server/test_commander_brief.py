@@ -1,4 +1,4 @@
-from openjarvis.assistant.commander import build_commander_brief
+from openjarvis.assistant.commander import build_coding_commander_brief, build_commander_brief
 
 
 def test_commander_brief_prioritizes_blocked_mission():
@@ -99,3 +99,85 @@ def test_commander_brief_uses_improvement_opportunities_when_present():
     assert "Command posture:" in brief["planner_prompt"]
     assert any(risk.startswith("Pressure point:") for risk in brief["risks"])
     assert any(item["id"] == "improvement-opportunity" for item in brief["queue"])
+
+
+def test_commander_brief_prioritizes_coding_repo_stabilization_when_repo_is_not_ready():
+    brief = build_commander_brief(
+        analytics={
+            "signals": {"urgent_reviews": 0},
+            "active_missions": [],
+            "blocked_missions": [],
+            "top_lessons": [],
+            "focus_recommendations": [],
+            "review_items": [],
+            "coding_repos": [
+                {
+                    "key": "C:/repo",
+                    "title": "OpenJarvis",
+                    "preferred_verification_commands": ["python -m pytest tests/test_smoke.py -q"],
+                    "repeated_failures": ["python -m pytest tests/test_smoke.py -q: smoke test failed after the last patch"],
+                }
+            ],
+        },
+        awareness={
+            "mode": {"level": "healthy", "reasons": []},
+            "agents": {"recent_failures": []},
+            "workspace": {
+                "available": True,
+                "active_root": "C:/repo",
+                "dirty": True,
+                "staged_count": 2,
+                "unstaged_count": 1,
+                "commit_ready": False,
+                "has_upstream": True,
+                "behind_count": 0,
+            },
+        },
+        profile={"autonomy_preference": "high initiative"},
+    )
+
+    assert brief["recommendation"] == "Stabilize OpenJarvis before broader coding work."
+    assert brief["best_next_step"] == "Run python -m pytest tests/test_smoke.py -q and review the repo state before the next coding handoff."
+    assert any(item["id"] == "coding-repo-recovery" for item in brief["queue"])
+    coding_item = next(item for item in brief["queue"] if item["id"] == "coding-repo-recovery")
+    assert coding_item["action_hint"] == "planner_handoff"
+    assert coding_item["execution_lane"] == "verify"
+    assert coding_item["verification_signal"] == "python -m pytest tests/test_smoke.py -q"
+    assert any(risk.startswith("Workspace:") for risk in brief["risks"])
+    assert any(risk.startswith("Coding memory:") for risk in brief["risks"])
+
+
+def test_build_coding_commander_brief_uses_repo_state_and_repo_memory():
+    brief = build_coding_commander_brief(
+        repo_summary={
+            "root": "C:/repo",
+            "branch": "codex/test",
+            "dirty": True,
+            "staged_count": 2,
+            "unstaged_count": 1,
+            "ahead_count": 0,
+            "behind_count": 0,
+            "has_upstream": True,
+            "commit_ready": True,
+            "push_ready": False,
+            "changed_files": ["src/app.py"],
+        },
+        repo_memory={
+            "key": "C:/repo",
+            "title": "OpenJarvis",
+            "preferred_verification_commands": ["python -m pytest tests/test_smoke.py -q"],
+            "repeated_failures": ["python -m pytest tests/test_smoke.py -q: smoke test failed after the last patch"],
+            "common_pitfalls": ["Skipping the smoke test hides fast regressions."],
+            "convention_notes": "Run the smoke test before broader validation.",
+            "workflow_notes": "Keep patch scope small before commit.",
+        },
+        profile={"autonomy_preference": "high initiative"},
+    )
+
+    assert brief["headline"] == "Coding command brief for OpenJarvis."
+    assert brief["recommendation"] == "Stabilize OpenJarvis on codex/test before shipping more code."
+    assert brief["best_next_step"] == "Run python -m pytest tests/test_smoke.py -q, then decide whether the repo is ready to commit or needs one more patch pass."
+    assert brief["preferred_checks"] == ["python -m pytest tests/test_smoke.py -q"]
+    assert [item["phase"] for item in brief["phases"]] == ["assess", "patch", "verify", "report"]
+    assert any(risk.startswith("Coding memory:") for risk in brief["risks"])
+    assert "Coding commander directive." in brief["planner_prompt"]
