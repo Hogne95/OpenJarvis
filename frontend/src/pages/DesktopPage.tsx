@@ -25,6 +25,8 @@ import {
   type DesktopRuntimeStatus,
 } from '../lib/api';
 
+const isDocumentHidden = () => typeof document !== 'undefined' && document.hidden;
+
 type BusyState =
   | 'idle'
   | 'refreshing'
@@ -67,6 +69,7 @@ export function DesktopPage() {
   useEffect(() => {
     void refresh();
     const interval = setInterval(() => {
+      if (isDocumentHidden()) return;
       void getDesktopRuntimeStatus().then(setRuntime);
     }, 10000);
     return () => clearInterval(interval);

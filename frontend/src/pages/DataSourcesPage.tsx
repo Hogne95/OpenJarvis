@@ -17,6 +17,8 @@ import type { ConnectRequest } from '../types/connectors';
 import { listConnectors, connectSource, getSyncStatus, triggerSync } from '../lib/connectors-api';
 import type { SyncStatus } from '../types/connectors';
 
+const isDocumentHidden = () => typeof document !== 'undefined' && document.hidden;
+
 // ---------------------------------------------------------------------------
 // Inline connect form (reused from AgentsPage pattern)
 // ---------------------------------------------------------------------------
@@ -501,14 +503,20 @@ function DataSourcesSection() {
 
   useEffect(() => {
     loadConnectors();
-    const interval = setInterval(loadConnectors, 10000);
+    const interval = setInterval(() => {
+      if (isDocumentHidden()) return;
+      void loadConnectors();
+    }, 10000);
     return () => clearInterval(interval);
   }, [loadConnectors]);
 
   useEffect(() => {
     if (connectors.some((c) => c.connected)) {
       loadSyncStatuses();
-      const interval = setInterval(loadSyncStatuses, 5000);
+      const interval = setInterval(() => {
+        if (isDocumentHidden()) return;
+        void loadSyncStatuses();
+      }, 5000);
       return () => clearInterval(interval);
     }
   }, [connectors, loadSyncStatuses]);

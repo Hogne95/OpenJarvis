@@ -52,7 +52,7 @@ export const getBase = (): string => {
   return '';
 };
 
-async function fetchWithTimeout(input: string, init: RequestInit = {}, timeoutMs = 8000): Promise<Response> {
+export async function fetchWithTimeout(input: string, init: RequestInit = {}, timeoutMs = 8000): Promise<Response> {
   const controller = new AbortController();
   const timeout = window.setTimeout(() => controller.abort(), timeoutMs);
   try {
@@ -2553,7 +2553,7 @@ export async function fetchManagedAgents(options: { compact?: boolean } = {}): P
 }
 
 export async function fetchManagedAgent(agentId: string): Promise<ManagedAgent> {
-  const res = await fetch(`${getBase()}/v1/managed-agents/${agentId}`);
+  const res = await fetchWithTimeout(`${getBase()}/v1/managed-agents/${agentId}`, {}, 7000);
   if (!res.ok) throw new Error(`Failed: ${res.status}`);
   return res.json();
 }
@@ -2602,7 +2602,7 @@ export async function resumeManagedAgent(agentId: string): Promise<void> {
 }
 
 export async function fetchAgentTasks(agentId: string): Promise<AgentTask[]> {
-  const res = await fetch(`${getBase()}/v1/managed-agents/${agentId}/tasks`);
+  const res = await fetchWithTimeout(`${getBase()}/v1/managed-agents/${agentId}/tasks`, {}, 7000);
   if (!res.ok) throw new Error(`Failed: ${res.status}`);
   const data = await res.json();
   return data.tasks || [];
@@ -2619,7 +2619,7 @@ export async function createAgentTask(agentId: string, description: string): Pro
 }
 
 export async function fetchAgentChannels(agentId: string): Promise<ChannelBinding[]> {
-  const res = await fetch(`${getBase()}/v1/managed-agents/${agentId}/channels`);
+  const res = await fetchWithTimeout(`${getBase()}/v1/managed-agents/${agentId}/channels`, {}, 7000);
   if (!res.ok) throw new Error(`Failed: ${res.status}`);
   const data = await res.json();
   return data.bindings || [];
@@ -2834,7 +2834,7 @@ export async function sendAgentMessage(
 }
 
 export async function fetchAgentMessages(agentId: string): Promise<AgentMessage[]> {
-  const res = await fetch(`${getBase()}/v1/managed-agents/${agentId}/messages`);
+  const res = await fetchWithTimeout(`${getBase()}/v1/managed-agents/${agentId}/messages`, {}, 7000);
   if (!res.ok) throw new Error(`Failed: ${res.status}`);
   const data = await res.json();
   return data.messages || [];
@@ -2915,7 +2915,7 @@ export interface AgentTraceDetail {
 }
 
 export async function fetchLearningLog(agentId: string): Promise<LearningLogEntry[]> {
-  const res = await fetch(`${getBase()}/v1/managed-agents/${agentId}/learning`);
+  const res = await fetchWithTimeout(`${getBase()}/v1/managed-agents/${agentId}/learning`, {}, 7000);
   if (!res.ok) throw new Error(`Failed: ${res.status}`);
   const data = await res.json();
   return data.learning_log || [];
@@ -2927,14 +2927,14 @@ export async function triggerLearning(agentId: string): Promise<void> {
 }
 
 export async function fetchAgentTraces(agentId: string, limit = 20): Promise<AgentTrace[]> {
-  const res = await fetch(`${getBase()}/v1/managed-agents/${agentId}/traces?limit=${limit}`);
+  const res = await fetchWithTimeout(`${getBase()}/v1/managed-agents/${agentId}/traces?limit=${limit}`, {}, 7000);
   if (!res.ok) throw new Error(`Failed: ${res.status}`);
   const data = await res.json();
   return data.traces || [];
 }
 
 export async function fetchAgentTrace(agentId: string, traceId: string): Promise<AgentTraceDetail> {
-  const res = await fetch(`${getBase()}/v1/managed-agents/${agentId}/traces/${traceId}`);
+  const res = await fetchWithTimeout(`${getBase()}/v1/managed-agents/${agentId}/traces/${traceId}`, {}, 7000);
   if (!res.ok) throw new Error(`Failed: ${res.status}`);
   return res.json();
 }

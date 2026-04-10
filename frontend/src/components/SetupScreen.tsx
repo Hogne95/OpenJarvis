@@ -2,6 +2,8 @@ import { useState, useEffect, useCallback } from 'react';
 import { Loader2, CheckCircle2, XCircle, Cpu, Server, Database } from 'lucide-react';
 import { getSetupStatus, type SetupStatus } from '../lib/api';
 
+const isDocumentHidden = () => typeof document !== 'undefined' && document.hidden;
+
 const STEPS = [
   { key: 'ollama_ready', label: 'Inference Engine', icon: Cpu, detail: 'Starting Ollama...' },
   { key: 'model_ready', label: 'AI Model', icon: Database, detail: 'Loading model...' },
@@ -80,7 +82,10 @@ export function SetupScreen({ onReady }: { onReady: () => void }) {
 
   useEffect(() => {
     poll();
-    const interval = setInterval(poll, 800);
+    const interval = setInterval(() => {
+      if (isDocumentHidden()) return;
+      void poll();
+    }, 800);
     return () => clearInterval(interval);
   }, [poll]);
 

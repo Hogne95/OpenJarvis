@@ -20,12 +20,12 @@ import {
   ShieldAlert,
 } from 'lucide-react';
 import { useAppStore, type ThemeMode } from '../lib/store';
-import { checkHealth, fetchRuntimeReadiness, fetchSpeechHealth, type RuntimeReadiness } from '../lib/api';
+import { checkHealth, fetchRuntimeReadiness, fetchSpeechHealth, fetchWithTimeout, type RuntimeReadiness } from '../lib/api';
 
 function OllamaModelList() {
   const [models, setModels] = useState<Array<{ name: string; size: number }>>([]);
   useEffect(() => {
-    fetch('http://localhost:11434/api/tags')
+    fetchWithTimeout('http://localhost:11434/api/tags', {}, 5000)
       .then(r => r.json())
       .then(data => setModels((data.models || []).map((m: any) => ({ name: m.name, size: m.size }))))
       .catch(() => setModels([]));

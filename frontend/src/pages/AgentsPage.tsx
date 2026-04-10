@@ -25,6 +25,7 @@ import {
   fetchModels,
   updateManagedAgent,
   fetchRecommendedModel,
+  fetchWithTimeout,
   sendblueVerify,
   sendblueRegisterWebhook,
   sendblueTest,
@@ -65,6 +66,8 @@ import { listConnectors, connectSource } from '../lib/connectors-api';
 const AgentMarkdown = lazy(() =>
   import('../components/AgentMarkdown').then((module) => ({ default: module.AgentMarkdown })),
 );
+
+const isDocumentHidden = () => typeof document !== 'undefined' && document.hidden;
 
 // ---------------------------------------------------------------------------
 // Status helpers
@@ -1043,7 +1046,7 @@ function AgentConfigGrid({ agent, onAgentUpdated }: { agent: ManagedAgent; onAge
     let cancelled = false;
     async function checkModel() {
       try {
-        const res = await fetch('http://localhost:11434/api/tags');
+        const res = await fetchWithTimeout('http://localhost:11434/api/tags', {}, 5000);
         if (!res.ok) { setModelAvailable('unknown'); return; }
         const data = await res.json();
         const loadedNames: string[] = (data.models || []).map((m: { name: string }) => m.name);
@@ -1073,7 +1076,7 @@ function AgentConfigGrid({ agent, onAgentUpdated }: { agent: ManagedAgent; onAge
     } catch { /* ignore */ }
     // Also refresh Ollama models for availability indication
     try {
-      const res = await fetch('http://localhost:11434/api/tags');
+      const res = await fetchWithTimeout('http://localhost:11434/api/tags', {}, 5000);
       if (res.ok) {
         const data = await res.json();
         setOllamaModels((data.models || []).map((m: { name: string }) => m.name));
@@ -1335,7 +1338,10 @@ function InteractTab({ agentId, agentStatus }: { agentId: string; agentStatus: s
 
   useEffect(() => {
     loadData();
-    const interval = setInterval(loadData, waitingForResponse || liveStatus === 'running' ? 2000 : 5000);
+    const interval = setInterval(() => {
+      if (isDocumentHidden()) return;
+      void loadData();
+    }, waitingForResponse || liveStatus === 'running' ? 2000 : 5000);
     return () => clearInterval(interval);
   }, [loadData, liveStatus, waitingForResponse]);
 
@@ -1609,7 +1615,10 @@ function ChannelsTab({ agentId }: { agentId: string }) {
   useEffect(() => {
     loadConnectors();
     // Poll every 10s to catch background OAuth completions
-    const interval = setInterval(loadConnectors, 10000);
+    const interval = setInterval(() => {
+      if (isDocumentHidden()) return;
+      void loadConnectors();
+    }, 10000);
     return () => clearInterval(interval);
   }, [loadConnectors]);
 
@@ -2861,7 +2870,10 @@ function LogsTab({ agentId }: { agentId: string }) {
 
   useEffect(() => {
     loadData();
-    const interval = setInterval(loadData, 10000);
+    const interval = setInterval(() => {
+      if (isDocumentHidden()) return;
+      void loadData();
+    }, 10000);
     return () => clearInterval(interval);
   }, [loadData]);
 
@@ -3056,6 +3068,7 @@ export function AgentsPage() {
 
   useEffect(() => {
     const interval = setInterval(() => {
+      if (isDocumentHidden()) return;
       void refresh();
     }, 15000);
     return () => clearInterval(interval);
@@ -3075,6 +3088,7 @@ export function AgentsPage() {
       };
       void loadSelectedAgentData();
       const interval = setInterval(() => {
+        if (isDocumentHidden()) return;
         void loadSelectedAgentData();
       }, 10000);
       return () => clearInterval(interval);
@@ -3158,6 +3172,7 @@ export function AgentsPage() {
   const prevStatuses = useRef<Record<string, string>>({});
   useEffect(() => {
     const interval = setInterval(async () => {
+      if (isDocumentHidden()) return;
       try {
         const agents = await fetchManagedAgents();
         for (const agent of agents) {

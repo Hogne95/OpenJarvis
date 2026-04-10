@@ -15,6 +15,19 @@ function stripThinkTags(text: string): string {
   return cleaned.trim();
 }
 
+function looksLikeRichMarkdown(text: string): boolean {
+  return (
+    /```/.test(text) ||
+    /^\s*#{1,6}\s/m.test(text) ||
+    /^\s*[-*+]\s/m.test(text) ||
+    /^\s*\d+\.\s/m.test(text) ||
+    /\[[^\]]+\]\([^)]+\)/.test(text) ||
+    /\|.+\|/.test(text) ||
+    /`[^`]+`/.test(text) ||
+    /\$\$[\s\S]+\$\$/.test(text)
+  );
+}
+
 interface Props {
   message: ChatMessage;
 }
@@ -63,6 +76,7 @@ export function MessageBubble({ message }: Props) {
   }
 
   const cleanContent = useMemo(() => stripThinkTags(message.content), [message.content]);
+  const useRichMarkdown = useMemo(() => looksLikeRichMarkdown(cleanContent), [cleanContent]);
 
   return (
     <div className="group mb-6">
@@ -80,9 +94,15 @@ export function MessageBubble({ message }: Props) {
 
       {/* Assistant message */}
       {cleanContent && (
-        <Suspense fallback={<div className="whitespace-pre-wrap break-words">{cleanContent}</div>}>
-          <RichMessageMarkdown content={cleanContent} />
-        </Suspense>
+        useRichMarkdown ? (
+          <Suspense fallback={<div className="whitespace-pre-wrap break-words">{cleanContent}</div>}>
+            <RichMessageMarkdown content={cleanContent} />
+          </Suspense>
+        ) : (
+          <div className="whitespace-pre-wrap break-words text-sm leading-relaxed" style={{ color: 'var(--color-text)' }}>
+            {cleanContent}
+          </div>
+        )
       )}
 
       {/* Footer: copy + x-ray */}

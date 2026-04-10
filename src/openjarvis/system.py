@@ -832,6 +832,7 @@ class SystemBuilder:
     def _resolve_memory(self, config):
         """Resolve memory backend."""
         key = getattr(config.memory, "default_backend", "sqlite")
+        resolve_error: Optional[Exception] = None
         try:
             import openjarvis.tools.storage  # noqa: F401 -- trigger registration
             from openjarvis.core.registry import MemoryRegistry
@@ -839,17 +840,27 @@ class SystemBuilder:
             if MemoryRegistry.contains(key):
                 return MemoryRegistry.create(key, db_path=config.memory.db_path)
         except Exception as exc:
-            logger.warning("Failed to resolve memory backend: %s", exc)
+            resolve_error = exc
+            logger.debug("Failed to resolve memory backend %r: %s", key, exc)
         try:
             from openjarvis.tools.storage.sqlite import SQLiteMemory
 
-            logger.info(
-                "Falling back to SQLite memory backend after failing to resolve '%s'.",
-                key,
-            )
+            if key != "sqlite":
+                logger.info(
+                    "Falling back to SQLite memory backend after failing to resolve '%s'.",
+                    key,
+                )
             return SQLiteMemory(db_path=config.memory.db_path)
         except Exception as exc:
-            logger.warning("SQLite memory fallback failed: %s", exc)
+            if resolve_error is not None:
+                logger.warning(
+                    "Failed to resolve memory backend %r and SQLite fallback failed: %s; initial error: %s",
+                    key,
+                    exc,
+                    resolve_error,
+                )
+            else:
+                logger.warning("SQLite memory fallback failed: %s", exc)
         return None
 
     def _resolve_channel(self, config, bus):

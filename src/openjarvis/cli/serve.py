@@ -339,6 +339,16 @@ def serve(
 
     # Set up agent scheduler for cron/interval agents
     agent_scheduler = None
+    scheduler_runtime_system = None
+
+    def _get_scheduler_runtime_system():
+        nonlocal scheduler_runtime_system
+        if scheduler_runtime_system is None:
+            from openjarvis.system import SystemBuilder
+
+            scheduler_runtime_system = SystemBuilder(config).build()
+        return scheduler_runtime_system
+
     if agent_manager is not None:
         try:
             from openjarvis.agents.executor import AgentExecutor
@@ -358,10 +368,7 @@ def serve(
                 event_bus=bus,
                 trace_store=_trace_store,
             )
-            from openjarvis.system import SystemBuilder
-
-            system = SystemBuilder(config).build()
-            executor.set_system(system)
+            executor.set_system(_get_scheduler_runtime_system())
 
             agent_scheduler = AgentScheduler(
                 manager=agent_manager,
@@ -384,15 +391,10 @@ def serve(
     memory_backend = None
     if config.agent.context_from_memory:
         try:
-            import openjarvis.tools.storage  # noqa: F401
-            from openjarvis.core.registry import MemoryRegistry
+            from openjarvis.system import SystemBuilder
 
-            mem_key = config.memory.default_backend
-            if MemoryRegistry.contains(mem_key):
-                memory_backend = MemoryRegistry.create(
-                    mem_key,
-                    db_path=config.memory.db_path,
-                )
+            memory_backend = SystemBuilder(config)._resolve_memory(config)
+            if memory_backend is not None:
                 console.print("  Memory:    [cyan]active[/cyan]")
         except Exception as exc:
             logger.debug("Memory backend init failed: %s", exc)
@@ -406,16 +408,14 @@ def serve(
 
             from openjarvis.scheduler.scheduler import TaskScheduler
             from openjarvis.scheduler.store import SchedulerStore
-            from openjarvis.system import SystemBuilder
 
             scheduler_db = config.scheduler.db_path or str(
                 Path("~/.openjarvis/scheduler.db").expanduser()
             )
             task_scheduler_store = SchedulerStore(scheduler_db)
-            scheduler_system = SystemBuilder(config).build()
             task_scheduler = TaskScheduler(
                 task_scheduler_store,
-                system=scheduler_system,
+                system=_get_scheduler_runtime_system(),
                 poll_interval=config.scheduler.poll_interval,
                 bus=bus,
             )
