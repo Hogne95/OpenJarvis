@@ -125,7 +125,7 @@ export function TraceDebugger() {
   const fetchTraces = useCallback(async () => {
     try {
       const base = import.meta.env.VITE_API_URL || '';
-      const res = await fetch(`${base}/v1/traces?limit=50`);
+      const res = await fetch(`${base}/v1/traces?limit=50`, { credentials: 'include' });
       if (!res.ok) throw new Error();
       const data = await res.json();
       setTraces(data.traces || []);

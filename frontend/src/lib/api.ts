@@ -65,11 +65,15 @@ export async function fetchWithTimeout(input: string, init: RequestInit = {}, ti
   }
 }
 
-async function authFetch(path: string, init: RequestInit = {}, timeoutMs = 8000): Promise<Response> {
-  return fetchWithTimeout(`${getBase()}${path}`, {
+async function authFetch(path: string, init: RequestInit = {}, timeoutMs = 0): Promise<Response> {
+  const requestInit: RequestInit = {
     ...init,
     credentials: 'include',
-  }, timeoutMs);
+  };
+  if (timeoutMs > 0) {
+    return fetchWithTimeout(`${getBase()}${path}`, requestInit, timeoutMs);
+  }
+  return fetch(`${getBase()}${path}`, requestInit);
 }
 
 async function tauriInvoke<T>(command: string, args: Record<string, unknown> = {}): Promise<T> {
@@ -1443,7 +1447,7 @@ export async function processVoiceLoopAudio(
 }
 
 export async function fetchWorkbenchStatus(): Promise<WorkbenchStatus> {
-  const res = await fetch(`${getBase()}/v1/workbench/status`);
+  const res = await authFetch('/v1/workbench/status');
   if (!res.ok) throw new Error(`Workbench status failed: ${res.status}`);
   return res.json();
 }
@@ -1453,7 +1457,7 @@ export async function stageWorkbenchCommand(body: {
   working_dir?: string;
   timeout?: number;
 }): Promise<WorkbenchStatus> {
-  const res = await fetch(`${getBase()}/v1/workbench/stage`, {
+  const res = await authFetch('/v1/workbench/stage', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
@@ -1466,7 +1470,7 @@ export async function stageWorkbenchCommand(body: {
 }
 
 export async function approveWorkbenchCommand(): Promise<WorkbenchStatus> {
-  const res = await fetch(`${getBase()}/v1/workbench/approve`, { method: 'POST' });
+  const res = await authFetch('/v1/workbench/approve', { method: 'POST' });
   if (!res.ok) {
     const detail = await res.json().catch(() => ({ detail: res.statusText }));
     throw new Error(detail.detail || `Workbench approval failed: ${res.status}`);
@@ -1475,7 +1479,7 @@ export async function approveWorkbenchCommand(): Promise<WorkbenchStatus> {
 }
 
 export async function holdWorkbenchCommand(): Promise<WorkbenchStatus> {
-  const res = await fetch(`${getBase()}/v1/workbench/hold`, { method: 'POST' });
+  const res = await authFetch('/v1/workbench/hold', { method: 'POST' });
   if (!res.ok) {
     const detail = await res.json().catch(() => ({ detail: res.statusText }));
     throw new Error(detail.detail || `Workbench hold failed: ${res.status}`);
@@ -1484,13 +1488,13 @@ export async function holdWorkbenchCommand(): Promise<WorkbenchStatus> {
 }
 
 export async function fetchCodingStatus(): Promise<CodingWorkspaceStatus> {
-  const res = await fetchWithTimeout(`${getBase()}/v1/coding/status`, {}, 7000);
+  const res = await authFetch('/v1/coding/status', {}, 7000);
   if (!res.ok) throw new Error(`Coding status failed: ${res.status}`);
   return res.json();
 }
 
 export async function readCodingFile(repo_root: string, file_path: string): Promise<CodingFileContents> {
-  const res = await fetch(`${getBase()}/v1/coding/read-file`, {
+  const res = await authFetch('/v1/coding/read-file', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ repo_root, file_path }),
@@ -1507,7 +1511,7 @@ export async function stageCodeEdit(body: {
   file_path: string;
   updated_content: string;
 }): Promise<CodingWorkspaceStatus> {
-  const res = await fetch(`${getBase()}/v1/coding/stage-edit`, {
+  const res = await authFetch('/v1/coding/stage-edit', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
@@ -1520,7 +1524,7 @@ export async function stageCodeEdit(body: {
 }
 
 export async function approveCodeEdit(): Promise<CodingWorkspaceStatus> {
-  const res = await fetch(`${getBase()}/v1/coding/approve`, { method: 'POST' });
+  const res = await authFetch('/v1/coding/approve', { method: 'POST' });
   if (!res.ok) {
     const detail = await res.json().catch(() => ({ detail: res.statusText }));
     throw new Error(detail.detail || `Approve code edit failed: ${res.status}`);
@@ -1529,7 +1533,7 @@ export async function approveCodeEdit(): Promise<CodingWorkspaceStatus> {
 }
 
 export async function holdCodeEdit(): Promise<CodingWorkspaceStatus> {
-  const res = await fetch(`${getBase()}/v1/coding/hold`, { method: 'POST' });
+  const res = await authFetch('/v1/coding/hold', { method: 'POST' });
   if (!res.ok) {
     const detail = await res.json().catch(() => ({ detail: res.statusText }));
     throw new Error(detail.detail || `Hold code edit failed: ${res.status}`);
@@ -1668,7 +1672,7 @@ export async function fetchTaskSummary(limit: number = 6): Promise<TaskSummaryIt
 }
 
 export async function fetchDailyDigest(): Promise<DailyDigest> {
-  const res = await fetch(`${getBase()}/api/digest`);
+  const res = await authFetch('/api/digest');
   if (!res.ok) {
     const detail = await res.json().catch(() => ({ detail: res.statusText }));
     throw new Error(detail.detail || `Digest fetch failed: ${res.status}`);
@@ -1677,7 +1681,7 @@ export async function fetchDailyDigest(): Promise<DailyDigest> {
 }
 
 export async function generateDailyDigest(): Promise<{ status: string; text: string }> {
-  const res = await fetch(`${getBase()}/api/digest/generate`, { method: 'POST' });
+  const res = await authFetch('/api/digest/generate', { method: 'POST' });
   if (!res.ok) {
     const detail = await res.json().catch(() => ({ detail: res.statusText }));
     throw new Error(detail.detail || `Digest generation failed: ${res.status}`);
@@ -1690,7 +1694,7 @@ export function getDailyDigestAudioUrl(): string {
 }
 
 export async function fetchDigestSchedule(): Promise<DigestSchedule> {
-  const res = await fetch(`${getBase()}/api/digest/schedule`);
+  const res = await authFetch('/api/digest/schedule');
   if (!res.ok) {
     const detail = await res.json().catch(() => ({ detail: res.statusText }));
     throw new Error(detail.detail || `Digest schedule fetch failed: ${res.status}`);
@@ -1699,7 +1703,7 @@ export async function fetchDigestSchedule(): Promise<DigestSchedule> {
 }
 
 export async function updateDigestSchedule(body: DigestSchedule): Promise<DigestSchedule> {
-  const res = await fetch(`${getBase()}/api/digest/schedule`, {
+  const res = await authFetch('/api/digest/schedule', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
@@ -1712,7 +1716,7 @@ export async function updateDigestSchedule(body: DigestSchedule): Promise<Digest
 }
 
 export async function fetchAutomationStatus(): Promise<AutomationStatus> {
-  const res = await fetchWithTimeout(`${getBase()}/v1/automation/status`, {}, 7000);
+  const res = await authFetch('/v1/automation/status', {}, 7000);
   if (!res.ok) {
     const detail = await res.json().catch(() => ({ detail: res.statusText }));
     throw new Error(detail.detail || `Automation status fetch failed: ${res.status}`);
@@ -1726,7 +1730,7 @@ export async function updateAutomationRoutine(body: {
   cron?: string;
   agent?: string;
 }): Promise<AutomationStatus> {
-  const res = await fetch(`${getBase()}/v1/automation/routine`, {
+  const res = await authFetch('/v1/automation/routine', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
@@ -1742,7 +1746,7 @@ export async function fetchAutomationLogs(limit: number = 12): Promise<{
   available: boolean;
   items: AutomationLogEntry[];
 }> {
-  const res = await fetch(`${getBase()}/v1/automation/logs?limit=${limit}`);
+  const res = await authFetch(`/v1/automation/logs?limit=${limit}`);
   if (!res.ok) {
     const detail = await res.json().catch(() => ({ detail: res.statusText }));
     throw new Error(detail.detail || `Automation logs fetch failed: ${res.status}`);
@@ -1751,7 +1755,7 @@ export async function fetchAutomationLogs(limit: number = 12): Promise<{
 }
 
 export async function fetchWorkspaceSummary(): Promise<WorkspaceSummary> {
-  const res = await fetchWithTimeout(`${getBase()}/v1/workspace/summary`, {}, 7000);
+  const res = await authFetch('/v1/workspace/summary', {}, 7000);
   if (!res.ok) {
     const detail = await res.json().catch(() => ({ detail: res.statusText }));
     throw new Error(detail.detail || `Workspace summary fetch failed: ${res.status}`);
@@ -1760,7 +1764,7 @@ export async function fetchWorkspaceSummary(): Promise<WorkspaceSummary> {
 }
 
 export async function fetchWorkspaceRepos(): Promise<WorkspaceRepoCatalog> {
-  const res = await fetchWithTimeout(`${getBase()}/v1/workspace/repos`, {}, 7000);
+  const res = await authFetch('/v1/workspace/repos', {}, 7000);
   if (!res.ok) {
     const detail = await res.json().catch(() => ({ detail: res.statusText }));
     throw new Error(detail.detail || `Workspace repos fetch failed: ${res.status}`);
@@ -1769,7 +1773,7 @@ export async function fetchWorkspaceRepos(): Promise<WorkspaceRepoCatalog> {
 }
 
 export async function registerWorkspaceRepo(path: string): Promise<WorkspaceRepoCatalog> {
-  const res = await fetch(`${getBase()}/v1/workspace/repos/register`, {
+  const res = await authFetch('/v1/workspace/repos/register', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ path }),
@@ -1782,7 +1786,7 @@ export async function registerWorkspaceRepo(path: string): Promise<WorkspaceRepo
 }
 
 export async function selectWorkspaceRepo(root: string): Promise<WorkspaceRepoCatalog> {
-  const res = await fetch(`${getBase()}/v1/workspace/repos/select`, {
+  const res = await authFetch('/v1/workspace/repos/select', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ root }),
@@ -1795,7 +1799,7 @@ export async function selectWorkspaceRepo(root: string): Promise<WorkspaceRepoCa
 }
 
 export async function fetchWorkspaceChecks(): Promise<WorkspaceChecks> {
-  const res = await fetchWithTimeout(`${getBase()}/v1/workspace/checks`, {}, 7000);
+  const res = await authFetch('/v1/workspace/checks', {}, 7000);
   if (!res.ok) {
     const detail = await res.json().catch(() => ({ detail: res.statusText }));
     throw new Error(detail.detail || `Workspace checks fetch failed: ${res.status}`);
@@ -1804,7 +1808,7 @@ export async function fetchWorkspaceChecks(): Promise<WorkspaceChecks> {
 }
 
 export async function prepareWorkspaceStage(): Promise<{ root: string; command: string }> {
-  const res = await fetchWithTimeout(`${getBase()}/v1/workspace/git/prepare-stage`, {
+  const res = await authFetch('/v1/workspace/git/prepare-stage', {
     method: 'POST',
   }, 7000);
   if (!res.ok) {
@@ -1815,7 +1819,7 @@ export async function prepareWorkspaceStage(): Promise<{ root: string; command: 
 }
 
 export async function prepareWorkspaceCommit(message: string): Promise<{ root: string; command: string; message: string }> {
-  const res = await fetchWithTimeout(`${getBase()}/v1/workspace/git/prepare-commit`, {
+  const res = await authFetch('/v1/workspace/git/prepare-commit', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ message }),
@@ -1828,7 +1832,7 @@ export async function prepareWorkspaceCommit(message: string): Promise<{ root: s
 }
 
 export async function prepareWorkspacePush(): Promise<{ root: string; command: string }> {
-  const res = await fetchWithTimeout(`${getBase()}/v1/workspace/git/prepare-push`, {}, 7000);
+  const res = await authFetch('/v1/workspace/git/prepare-push', {}, 7000);
   if (!res.ok) {
     const detail = await res.json().catch(() => ({ detail: res.statusText }));
     throw new Error(detail.detail || `Prepare push failed: ${res.status}`);
@@ -1837,7 +1841,7 @@ export async function prepareWorkspacePush(): Promise<{ root: string; command: s
 }
 
 export async function fetchOperatorMemory(): Promise<DurableOperatorMemory> {
-  const res = await fetch(`${getBase()}/v1/operator-memory`);
+  const res = await authFetch('/v1/operator-memory');
   if (!res.ok) {
     const detail = await res.json().catch(() => ({ detail: res.statusText }));
     throw new Error(detail.detail || `Operator memory fetch failed: ${res.status}`);
@@ -1846,7 +1850,7 @@ export async function fetchOperatorMemory(): Promise<DurableOperatorMemory> {
 }
 
 export async function fetchShopifySummary(): Promise<ShopifySummary> {
-  const res = await fetch(`${getBase()}/v1/shopify/summary`);
+  const res = await authFetch('/v1/shopify/summary');
   if (!res.ok) {
     const detail = await res.json().catch(() => ({ detail: res.statusText }));
     throw new Error(detail.detail || `Shopify summary failed: ${res.status}`);
@@ -1855,7 +1859,7 @@ export async function fetchShopifySummary(): Promise<ShopifySummary> {
 }
 
 export async function updateOperatorMemoryProfile(body: Partial<DurableOperatorProfile>): Promise<DurableOperatorMemory> {
-  const res = await fetch(`${getBase()}/v1/operator-memory/profile`, {
+  const res = await authFetch('/v1/operator-memory/profile', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
@@ -1871,7 +1875,7 @@ export async function recordOperatorMemorySignal(body: {
   kind: 'reply' | 'meeting' | 'task' | 'urgent';
   contact?: string;
 }): Promise<DurableOperatorMemory> {
-  const res = await fetch(`${getBase()}/v1/operator-memory/signal`, {
+  const res = await authFetch('/v1/operator-memory/signal', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
@@ -1890,7 +1894,7 @@ export async function updateOperatorRelationship(body: {
   relationship?: string;
   notes?: string;
 }): Promise<DurableOperatorMemory> {
-  const res = await fetch(`${getBase()}/v1/operator-memory/relationship`, {
+  const res = await authFetch('/v1/operator-memory/relationship', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
@@ -1909,7 +1913,7 @@ export async function updateOperatorMeeting(body: {
   prep_style?: string;
   notes?: string;
 }): Promise<DurableOperatorMemory> {
-  const res = await fetch(`${getBase()}/v1/operator-memory/meeting`, {
+  const res = await authFetch('/v1/operator-memory/meeting', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
@@ -1929,7 +1933,7 @@ export async function updateOperatorProject(body: {
   next_step?: string;
   notes?: string;
 }): Promise<DurableOperatorMemory> {
-  const res = await fetch(`${getBase()}/v1/operator-memory/project`, {
+  const res = await authFetch('/v1/operator-memory/project', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
@@ -1952,7 +1956,7 @@ export async function updateOperatorSalesAccount(body: {
   last_interaction?: string;
   notes?: string;
 }): Promise<DurableOperatorMemory> {
-  const res = await fetch(`${getBase()}/v1/operator-memory/sales-account`, {
+  const res = await authFetch('/v1/operator-memory/sales-account', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
@@ -1976,7 +1980,7 @@ export async function updateOperatorSalesLead(body: {
   last_interaction?: string;
   notes?: string;
 }): Promise<DurableOperatorMemory> {
-  const res = await fetch(`${getBase()}/v1/operator-memory/sales-lead`, {
+  const res = await authFetch('/v1/operator-memory/sales-lead', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
@@ -2001,7 +2005,7 @@ export async function updateOperatorSalesDeal(body: {
   last_interaction?: string;
   notes?: string;
 }): Promise<DurableOperatorMemory> {
-  const res = await fetch(`${getBase()}/v1/operator-memory/sales-deal`, {
+  const res = await authFetch('/v1/operator-memory/sales-deal', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
@@ -2025,7 +2029,7 @@ export async function updateOperatorCustomerAccount(body: {
   last_interaction?: string;
   notes?: string;
 }): Promise<DurableOperatorMemory> {
-  const res = await fetch(`${getBase()}/v1/operator-memory/customer-account`, {
+  const res = await authFetch('/v1/operator-memory/customer-account', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
@@ -2050,7 +2054,7 @@ export async function updateOperatorCustomerInteraction(body: {
   last_interaction?: string;
   notes?: string;
 }): Promise<DurableOperatorMemory> {
-  const res = await fetch(`${getBase()}/v1/operator-memory/customer-interaction`, {
+  const res = await authFetch('/v1/operator-memory/customer-interaction', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
@@ -2069,7 +2073,7 @@ export async function updateOperatorVisualObservation(body: {
   image_data_url?: string;
   created_at?: string;
 }): Promise<DurableOperatorMemory> {
-  const res = await fetch(`${getBase()}/v1/operator-memory/visual`, {
+  const res = await authFetch('/v1/operator-memory/visual', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
@@ -2087,7 +2091,7 @@ export async function updateOperatorVisualInsight(body: {
   answer: string;
   created_at?: string;
 }): Promise<DurableOperatorMemory> {
-  const res = await fetch(`${getBase()}/v1/operator-memory/visual-insight`, {
+  const res = await authFetch('/v1/operator-memory/visual-insight', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
@@ -2105,7 +2109,7 @@ export async function updateOperatorVisualBrief(body: {
   details?: string;
   created_at?: string;
 }): Promise<DurableOperatorMemory> {
-  const res = await fetch(`${getBase()}/v1/operator-memory/visual-brief`, {
+  const res = await authFetch('/v1/operator-memory/visual-brief', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
@@ -2124,7 +2128,7 @@ export async function updateOperatorDocumentBrief(body: {
   details?: string;
   created_at?: string;
 }): Promise<DurableOperatorMemory> {
-  const res = await fetch(`${getBase()}/v1/operator-memory/document-brief`, {
+  const res = await authFetch('/v1/operator-memory/document-brief', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
@@ -2148,7 +2152,7 @@ export async function updateOperatorDesignBrief(body: {
   }>;
   created_at?: string;
 }): Promise<DurableOperatorMemory> {
-  const res = await fetch(`${getBase()}/v1/operator-memory/design-brief`, {
+  const res = await authFetch('/v1/operator-memory/design-brief', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
@@ -2171,7 +2175,7 @@ export async function updateOperatorFivemBrief(body: {
   risk_tags?: string[];
   created_at?: string;
 }): Promise<DurableOperatorMemory> {
-  const res = await fetch(`${getBase()}/v1/operator-memory/fivem-brief`, {
+  const res = await authFetch('/v1/operator-memory/fivem-brief', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
@@ -2195,7 +2199,7 @@ export async function updateOperatorLearningExperience(body: {
   confidence?: number;
   created_at?: string;
 }): Promise<DurableOperatorMemory> {
-  const res = await fetch(`${getBase()}/v1/operator-memory/learning`, {
+  const res = await authFetch('/v1/operator-memory/learning', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
@@ -2212,7 +2216,7 @@ export async function markOperatorLearningExperiencesReused(ids: string[], reuse
   if (!cleaned.length) {
     throw new Error('At least one learning experience id is required.');
   }
-  const res = await fetch(`${getBase()}/v1/operator-memory/learning/reuse`, {
+  const res = await authFetch('/v1/operator-memory/learning/reuse', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ ids: cleaned, reused_at }),
@@ -2250,7 +2254,7 @@ export async function fetchOperatorLearningExperiences(params: {
   if (params.context_key) query.set('context_key', params.context_key);
   if (params.limit) query.set('limit', String(params.limit));
   const suffix = query.toString() ? `?${query.toString()}` : '';
-  const res = await fetch(`${getBase()}/v1/operator-memory/learning${suffix}`);
+  const res = await authFetch(`/v1/operator-memory/learning${suffix}`);
   if (!res.ok) {
     const detail = await res.json().catch(() => ({ detail: res.statusText }));
     throw new Error(detail.detail || `Learning experiences fetch failed: ${res.status}`);
@@ -2273,7 +2277,7 @@ export async function updateOperatorMission(body: {
   next_action?: Record<string, unknown>;
   updated_at?: string;
 }): Promise<DurableOperatorMemory> {
-  const res = await fetch(`${getBase()}/v1/operator-memory/mission`, {
+  const res = await authFetch('/v1/operator-memory/mission', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
@@ -2319,7 +2323,7 @@ export async function actOnOperatorMission(body: {
     [key: string]: unknown;
   } | null;
 }> {
-  const res = await fetch(`${getBase()}/v1/operator-memory/mission/action`, {
+  const res = await authFetch('/v1/operator-memory/mission/action', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
@@ -2342,7 +2346,7 @@ export async function fetchReminders(limit: number = 8): Promise<ReminderItem[]>
 }
 
 export async function parseJarvisIntent(text: string): Promise<JarvisIntent> {
-  const res = await fetch(`${getBase()}/v1/jarvis/intent`, {
+  const res = await authFetch('/v1/jarvis/intent', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ text }),
@@ -2356,7 +2360,7 @@ export async function parseJarvisIntent(text: string): Promise<JarvisIntent> {
 }
 
 export async function executeJarvisIntent(text: string): Promise<JarvisIntentExecution> {
-  const res = await fetch(`${getBase()}/v1/jarvis/intent/execute`, {
+  const res = await authFetch('/v1/jarvis/intent/execute', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ text }),
@@ -2373,7 +2377,7 @@ export async function analyzeVision(body: {
   note?: string;
   label?: string;
 }): Promise<VisionAnalysisResult> {
-  const res = await fetch(`${getBase()}/v1/vision/analyze`, {
+  const res = await authFetch('/v1/vision/analyze', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
@@ -2393,7 +2397,7 @@ export async function analyzeVisionMulti(body: {
   note?: string;
   label?: string;
 }): Promise<VisionAnalysisResult> {
-  const res = await fetch(`${getBase()}/v1/vision/analyze-multi`, {
+  const res = await authFetch('/v1/vision/analyze-multi', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
@@ -2410,7 +2414,7 @@ export async function extractVisionText(body: {
   note?: string;
   label?: string;
 }): Promise<VisionTextExtractionResult> {
-  const res = await fetch(`${getBase()}/v1/vision/extract-text`, {
+  const res = await authFetch('/v1/vision/extract-text', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
@@ -2430,7 +2434,7 @@ export async function extractVisionTextMulti(body: {
   note?: string;
   label?: string;
 }): Promise<VisionTextExtractionResult> {
-  const res = await fetch(`${getBase()}/v1/vision/extract-text-multi`, {
+  const res = await authFetch('/v1/vision/extract-text-multi', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
@@ -2450,7 +2454,7 @@ export async function suggestVisionActions(body: {
   note?: string;
   label?: string;
 }): Promise<VisionSuggestedActionsResult> {
-  const res = await fetch(`${getBase()}/v1/vision/suggest-actions`, {
+  const res = await authFetch('/v1/vision/suggest-actions', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
@@ -2470,7 +2474,7 @@ export async function extractVisionSignals(body: {
   note?: string;
   label?: string;
 }): Promise<VisionSignalsResult> {
-  const res = await fetch(`${getBase()}/v1/vision/extract-signals`, {
+  const res = await authFetch('/v1/vision/extract-signals', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
@@ -2490,7 +2494,7 @@ export async function extractVisionUiTargets(body: {
   note?: string;
   label?: string;
 }): Promise<VisionUiTargetsResult> {
-  const res = await fetch(`${getBase()}/v1/vision/ui-targets`, {
+  const res = await authFetch('/v1/vision/ui-targets', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
@@ -2513,7 +2517,7 @@ export async function planVisionUiAction(body: {
   note?: string;
   label?: string;
 }): Promise<VisionUiActionPlanResult> {
-  const res = await fetch(`${getBase()}/v1/vision/ui-action-plan`, {
+  const res = await authFetch('/v1/vision/ui-action-plan', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
@@ -2537,7 +2541,7 @@ export async function verifyVisionUiTarget(body: {
   note?: string;
   label?: string;
 }): Promise<VisionUiVerifyResult> {
-  const res = await fetch(`${getBase()}/v1/vision/ui-verify`, {
+  const res = await authFetch('/v1/vision/ui-verify', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
@@ -2562,7 +2566,7 @@ export async function queryVision(body: {
     answer: string;
   }>;
 }): Promise<VisionQueryResult> {
-  const res = await fetch(`${getBase()}/v1/vision/query`, {
+  const res = await authFetch('/v1/vision/query', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
@@ -2575,7 +2579,7 @@ export async function queryVision(body: {
 }
 
 export async function fetchDesktopState(): Promise<DesktopState> {
-  const res = await fetchWithTimeout(`${getBase()}/v1/jarvis/desktop/state`, {}, 7000);
+  const res = await authFetch('/v1/jarvis/desktop/state', {}, 7000);
   if (!res.ok) {
     const detail = await res.json().catch(() => ({ detail: res.statusText }));
     throw new Error(detail.detail || `Desktop state failed: ${res.status}`);
@@ -2584,7 +2588,7 @@ export async function fetchDesktopState(): Promise<DesktopState> {
 }
 
 export async function fetchAgentArchitectureStatus(): Promise<AgentArchitectureStatus> {
-  const res = await fetchWithTimeout(`${getBase()}/v1/agent-architecture/status`, {}, 7000);
+  const res = await authFetch('/v1/agent-architecture/status', {}, 7000);
   if (!res.ok) {
     const detail = await res.json().catch(() => ({ detail: res.statusText }));
     throw new Error(detail.detail || `Agent architecture failed: ${res.status}`);
@@ -2593,7 +2597,7 @@ export async function fetchAgentArchitectureStatus(): Promise<AgentArchitectureS
 }
 
 export async function ensureCoreAgentArchitecture(): Promise<AgentArchitectureStatus> {
-  const res = await fetch(`${getBase()}/v1/agent-architecture/ensure-core`, { method: 'POST' });
+  const res = await authFetch('/v1/agent-architecture/ensure-core', { method: 'POST' });
   if (!res.ok) {
     const detail = await res.json().catch(() => ({ detail: res.statusText }));
     throw new Error(detail.detail || `Ensure core agent architecture failed: ${res.status}`);
@@ -2602,7 +2606,7 @@ export async function ensureCoreAgentArchitecture(): Promise<AgentArchitectureSt
 }
 
 export async function handoffAgentArchitecture(brief: string, source = 'hud'): Promise<AgentArchitectureStatus> {
-  const res = await fetch(`${getBase()}/v1/agent-architecture/handoff`, {
+  const res = await authFetch('/v1/agent-architecture/handoff', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ brief, source }),
@@ -2693,14 +2697,14 @@ export interface AgentMessage {
 
 export async function fetchManagedAgents(options: { compact?: boolean } = {}): Promise<ManagedAgent[]> {
   const query = options.compact ? '?compact=1' : '';
-  const res = await fetchWithTimeout(`${getBase()}/v1/managed-agents${query}`, {}, 7000);
+  const res = await authFetch(`/v1/managed-agents${query}`, {}, 7000);
   if (!res.ok) throw new Error(`Failed: ${res.status}`);
   const data = await res.json();
   return data.agents || [];
 }
 
 export async function fetchManagedAgent(agentId: string): Promise<ManagedAgent> {
-  const res = await fetchWithTimeout(`${getBase()}/v1/managed-agents/${agentId}`, {}, 7000);
+  const res = await authFetch(`/v1/managed-agents/${agentId}`, {}, 7000);
   if (!res.ok) throw new Error(`Failed: ${res.status}`);
   return res.json();
 }
@@ -2711,7 +2715,7 @@ export async function createManagedAgent(body: {
   template_id?: string;
   config?: Record<string, unknown>;
 }): Promise<ManagedAgent> {
-  const res = await fetch(`${getBase()}/v1/managed-agents`, {
+  const res = await authFetch('/v1/managed-agents', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
@@ -2724,7 +2728,7 @@ export async function updateManagedAgent(
   agentId: string,
   body: Partial<{ name: string; agent_type: string; config: Record<string, unknown> }>,
 ): Promise<ManagedAgent> {
-  const res = await fetch(`${getBase()}/v1/managed-agents/${agentId}`, {
+  const res = await authFetch(`/v1/managed-agents/${agentId}`, {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
@@ -2734,29 +2738,29 @@ export async function updateManagedAgent(
 }
 
 export async function deleteManagedAgent(agentId: string): Promise<void> {
-  const res = await fetch(`${getBase()}/v1/managed-agents/${agentId}`, { method: 'DELETE' });
+  const res = await authFetch(`/v1/managed-agents/${agentId}`, { method: 'DELETE' });
   if (!res.ok) throw new Error(`Failed: ${res.status}`);
 }
 
 export async function pauseManagedAgent(agentId: string): Promise<void> {
-  const res = await fetch(`${getBase()}/v1/managed-agents/${agentId}/pause`, { method: 'POST' });
+  const res = await authFetch(`/v1/managed-agents/${agentId}/pause`, { method: 'POST' });
   if (!res.ok) throw new Error(`Failed: ${res.status}`);
 }
 
 export async function resumeManagedAgent(agentId: string): Promise<void> {
-  const res = await fetch(`${getBase()}/v1/managed-agents/${agentId}/resume`, { method: 'POST' });
+  const res = await authFetch(`/v1/managed-agents/${agentId}/resume`, { method: 'POST' });
   if (!res.ok) throw new Error(`Failed: ${res.status}`);
 }
 
 export async function fetchAgentTasks(agentId: string): Promise<AgentTask[]> {
-  const res = await fetchWithTimeout(`${getBase()}/v1/managed-agents/${agentId}/tasks`, {}, 7000);
+  const res = await authFetch(`/v1/managed-agents/${agentId}/tasks`, {}, 7000);
   if (!res.ok) throw new Error(`Failed: ${res.status}`);
   const data = await res.json();
   return data.tasks || [];
 }
 
 export async function createAgentTask(agentId: string, description: string): Promise<AgentTask> {
-  const res = await fetch(`${getBase()}/v1/managed-agents/${agentId}/tasks`, {
+  const res = await authFetch(`/v1/managed-agents/${agentId}/tasks`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ description }),
@@ -2766,7 +2770,7 @@ export async function createAgentTask(agentId: string, description: string): Pro
 }
 
 export async function fetchAgentChannels(agentId: string): Promise<ChannelBinding[]> {
-  const res = await fetchWithTimeout(`${getBase()}/v1/managed-agents/${agentId}/channels`, {}, 7000);
+  const res = await authFetch(`/v1/managed-agents/${agentId}/channels`, {}, 7000);
   if (!res.ok) throw new Error(`Failed: ${res.status}`);
   const data = await res.json();
   return data.bindings || [];
@@ -2777,18 +2781,15 @@ export async function bindAgentChannel(
   channelType: string,
   config?: Record<string, unknown>,
 ): Promise<ChannelBinding> {
-  const res = await fetch(
-    `${getBase()}/v1/managed-agents/${agentId}/channels`,
-    {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        channel_type: channelType,
-        config: config || {},
-        routing_mode: 'dedicated',
-      }),
-    },
-  );
+  const res = await authFetch(`/v1/managed-agents/${agentId}/channels`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      channel_type: channelType,
+      config: config || {},
+      routing_mode: 'dedicated',
+    }),
+  });
   if (!res.ok) throw new Error(`Failed: ${res.status}`);
   return res.json();
 }
@@ -2797,10 +2798,7 @@ export async function unbindAgentChannel(
   agentId: string,
   bindingId: string,
 ): Promise<void> {
-  const res = await fetch(
-    `${getBase()}/v1/managed-agents/${agentId}/channels/${bindingId}`,
-    { method: 'DELETE' },
-  );
+  const res = await authFetch(`/v1/managed-agents/${agentId}/channels/${bindingId}`, { method: 'DELETE' });
   if (!res.ok) throw new Error(`Failed: ${res.status}`);
 }
 
@@ -2810,7 +2808,7 @@ export async function sendblueVerify(
   apiKeyId: string,
   apiSecretKey: string,
 ): Promise<{ valid: boolean; numbers: string[]; raw: unknown }> {
-  const res = await fetch(`${getBase()}/v1/channels/sendblue/verify`, {
+  const res = await authFetch('/v1/channels/sendblue/verify', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ api_key_id: apiKeyId, api_secret_key: apiSecretKey }),
@@ -2827,7 +2825,7 @@ export async function sendblueRegisterWebhook(
   apiSecretKey: string,
   webhookUrl: string,
 ): Promise<{ registered: boolean; status: number }> {
-  const res = await fetch(`${getBase()}/v1/channels/sendblue/register-webhook`, {
+  const res = await authFetch('/v1/channels/sendblue/register-webhook', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -2849,7 +2847,7 @@ export async function sendblueTest(
   fromNumber: string,
   toNumber: string,
 ): Promise<{ sent: boolean; status: number }> {
-  const res = await fetch(`${getBase()}/v1/channels/sendblue/test`, {
+  const res = await authFetch('/v1/channels/sendblue/test', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -2867,20 +2865,20 @@ export async function sendblueTest(
 }
 
 export async function sendblueHealth(): Promise<{ channel_connected: boolean; bridge_wired: boolean; ready: boolean }> {
-  const res = await fetch(`${getBase()}/v1/channels/sendblue/health`);
+  const res = await authFetch('/v1/channels/sendblue/health');
   if (!res.ok) return { channel_connected: false, bridge_wired: false, ready: false };
   return res.json();
 }
 
 export async function fetchTemplates(): Promise<AgentTemplate[]> {
-  const res = await fetch(`${getBase()}/v1/templates`);
+  const res = await authFetch('/v1/templates');
   if (!res.ok) throw new Error(`Failed: ${res.status}`);
   const data = await res.json();
   return data.templates || [];
 }
 
 export async function runManagedAgent(agentId: string): Promise<RunManagedAgentResult> {
-  const res = await fetch(`${getBase()}/v1/managed-agents/${agentId}/run`, { method: 'POST' });
+  const res = await authFetch(`/v1/managed-agents/${agentId}/run`, { method: 'POST' });
   if (!res.ok) {
     const body = await res.json().catch(() => ({ detail: res.statusText }));
     throw new Error(body.detail || `Failed: ${res.status}`);
@@ -2889,7 +2887,7 @@ export async function runManagedAgent(agentId: string): Promise<RunManagedAgentR
 }
 
 export async function recoverManagedAgent(agentId: string): Promise<{ recovered: boolean; checkpoint: unknown }> {
-  const res = await fetch(`${getBase()}/v1/managed-agents/${agentId}/recover`, { method: 'POST' });
+  const res = await authFetch(`/v1/managed-agents/${agentId}/recover`, { method: 'POST' });
   if (!res.ok) {
     const body = await res.json().catch(() => ({ detail: res.statusText }));
     throw new Error(body.detail || `Failed: ${res.status}`);
@@ -2904,7 +2902,7 @@ export async function fetchAgentState(agentId: string): Promise<{
   messages: AgentMessage[];
   checkpoint: unknown;
 }> {
-  const res = await fetch(`${getBase()}/v1/managed-agents/${agentId}/state`);
+  const res = await authFetch(`/v1/managed-agents/${agentId}/state`);
   if (!res.ok) throw new Error(`Failed: ${res.status}`);
   return res.json();
 }
@@ -2919,7 +2917,7 @@ export async function sendAgentMessage(
     onDone?: (fullContent: string, usage?: Record<string, number>, telemetry?: Record<string, unknown>) => void;
   },
 ): Promise<AgentMessage> {
-  const res = await fetch(`${getBase()}/v1/managed-agents/${agentId}/messages`, {
+  const res = await authFetch(`/v1/managed-agents/${agentId}/messages`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ content, mode, stream: true }),
@@ -2981,14 +2979,14 @@ export async function sendAgentMessage(
 }
 
 export async function fetchAgentMessages(agentId: string): Promise<AgentMessage[]> {
-  const res = await fetchWithTimeout(`${getBase()}/v1/managed-agents/${agentId}/messages`, {}, 7000);
+  const res = await authFetch(`/v1/managed-agents/${agentId}/messages`, {}, 7000);
   if (!res.ok) throw new Error(`Failed: ${res.status}`);
   const data = await res.json();
   return data.messages || [];
 }
 
 export async function fetchErrorAgents(): Promise<ManagedAgent[]> {
-  const res = await fetch(`${getBase()}/v1/agents/errors`);
+  const res = await authFetch('/v1/agents/errors');
   if (!res.ok) throw new Error(`Failed: ${res.status}`);
   const data = await res.json();
   return data.agents || [];
@@ -3028,7 +3026,7 @@ export interface ToolInfo {
 }
 
 export async function fetchAvailableTools(): Promise<ToolInfo[]> {
-  const res = await fetch(`${getBase()}/v1/tools`);
+  const res = await authFetch('/v1/tools');
   if (!res.ok) throw new Error(`Failed: ${res.status}`);
   const data = await res.json();
   return data.tools || [];
@@ -3038,7 +3036,7 @@ export async function saveToolCredentials(
   toolName: string,
   credentials: Record<string, string>,
 ): Promise<void> {
-  const res = await fetch(`${getBase()}/v1/tools/${toolName}/credentials`, {
+  const res = await authFetch(`/v1/tools/${toolName}/credentials`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(credentials),
@@ -3062,26 +3060,26 @@ export interface AgentTraceDetail {
 }
 
 export async function fetchLearningLog(agentId: string): Promise<LearningLogEntry[]> {
-  const res = await fetchWithTimeout(`${getBase()}/v1/managed-agents/${agentId}/learning`, {}, 7000);
+  const res = await authFetch(`/v1/managed-agents/${agentId}/learning`, {}, 7000);
   if (!res.ok) throw new Error(`Failed: ${res.status}`);
   const data = await res.json();
   return data.learning_log || [];
 }
 
 export async function triggerLearning(agentId: string): Promise<void> {
-  const res = await fetch(`${getBase()}/v1/managed-agents/${agentId}/learning/run`, { method: 'POST' });
+  const res = await authFetch(`/v1/managed-agents/${agentId}/learning/run`, { method: 'POST' });
   if (!res.ok) throw new Error(`Failed: ${res.status}`);
 }
 
 export async function fetchAgentTraces(agentId: string, limit = 20): Promise<AgentTrace[]> {
-  const res = await fetchWithTimeout(`${getBase()}/v1/managed-agents/${agentId}/traces?limit=${limit}`, {}, 7000);
+  const res = await authFetch(`/v1/managed-agents/${agentId}/traces?limit=${limit}`, {}, 7000);
   if (!res.ok) throw new Error(`Failed: ${res.status}`);
   const data = await res.json();
   return data.traces || [];
 }
 
 export async function fetchAgentTrace(agentId: string, traceId: string): Promise<AgentTraceDetail> {
-  const res = await fetchWithTimeout(`${getBase()}/v1/managed-agents/${agentId}/traces/${traceId}`, {}, 7000);
+  const res = await authFetch(`/v1/managed-agents/${agentId}/traces/${traceId}`, {}, 7000);
   if (!res.ok) throw new Error(`Failed: ${res.status}`);
   return res.json();
 }

@@ -46,8 +46,8 @@ export function SystemPanel() {
     try {
       const base = getBase();
       const [energyRes, telRes] = await Promise.allSettled([
-        fetch(`${base}/v1/telemetry/energy`).then((r) => (r.ok ? r.json() : null)),
-        fetch(`${base}/v1/telemetry/stats`).then((r) => (r.ok ? r.json() : null)),
+        fetch(`${base}/v1/telemetry/energy`, { credentials: 'include' }).then((r) => (r.ok ? r.json() : null)),
+        fetch(`${base}/v1/telemetry/stats`, { credentials: 'include' }).then((r) => (r.ok ? r.json() : null)),
       ]);
       if (energyRes.status === 'fulfilled' && energyRes.value) {
         setEnergy(energyRes.value as EnergyData);

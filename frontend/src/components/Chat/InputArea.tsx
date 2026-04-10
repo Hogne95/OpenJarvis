@@ -260,7 +260,7 @@ export function InputArea() {
       // Check if the response has digest audio available
       let audioMeta: { url: string } | undefined;
       try {
-        const digestRes = await fetch(`${getBase()}/api/digest`);
+        const digestRes = await fetch(`${getBase()}/api/digest`, { credentials: 'include' });
         if (digestRes.ok) {
           const digest = await digestRes.json();
           if (digest.audio_available) {
