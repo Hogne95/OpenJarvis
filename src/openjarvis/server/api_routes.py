@@ -435,6 +435,15 @@ class CodingStageEditRequest(BaseModel):
     repo_root: str
     file_path: str
     updated_content: str
+    summary: Optional[str] = None
+    rationale: Optional[str] = None
+    verification_commands: Optional[list[str]] = None
+
+
+class CodingRecordVerificationRequest(BaseModel):
+    command: str
+    success: bool
+    output: Optional[str] = None
 
 
 class ActionEmailDraftRequest(BaseModel):
@@ -4095,37 +4104,16 @@ async def workspace_checks(request: Request, root: Optional[str] = None):
     repo_root = Path(summary["root"])
     checks: list[dict[str, str]] = []
     git_actions: list[dict[str, str]] = []
-
-    if (repo_root / "pyproject.toml").exists():
-        checks.extend(
-            [
-                {"label": "Pytest", "command": "python -m pytest tests -q", "kind": "test"},
-                {"label": "Ruff", "command": "python -m ruff check src tests", "kind": "lint"},
-            ]
-        )
-
-    package_json = repo_root / "package.json"
-    if package_json.exists():
-        try:
-            package = json.loads(package_json.read_text(encoding="utf-8"))
-            scripts = package.get("scripts", {})
-        except Exception:
-            scripts = {}
-        if isinstance(scripts, dict):
-            if "test" in scripts:
-                checks.append({"label": "npm test", "command": "npm test", "kind": "test"})
-            if "build" in scripts:
-                checks.append({"label": "npm build", "command": "npm run build", "kind": "typecheck"})
-            if "lint" in scripts:
-                checks.append({"label": "npm lint", "command": "npm run lint", "kind": "lint"})
-
-    if (repo_root / "Cargo.toml").exists():
-        checks.extend(
-            [
-                {"label": "cargo test", "command": "cargo test", "kind": "test"},
-                {"label": "cargo check", "command": "cargo check", "kind": "typecheck"},
-            ]
-        )
+    summary_commands = summary.get("commands") or {}
+    for kind in ("test", "lint", "typecheck", "build"):
+        for command in summary_commands.get(kind, []):
+            checks.append(
+                {
+                    "label": _workspace_command_label(command),
+                    "command": command,
+                    "kind": "typecheck" if kind == "build" else kind,
+                }
+            )
 
     changed_files = summary.get("changed_files") or []
     git_actions.append({"label": "Git Status", "command": "git status --short", "kind": "status"})
@@ -4137,7 +4125,24 @@ async def workspace_checks(request: Request, root: Optional[str] = None):
         "root": summary["root"],
         "checks": checks,
         "git_actions": git_actions,
+        "repo_profile": {
+            "languages": summary.get("languages") or [],
+            "package_managers": summary.get("package_managers") or [],
+            "conventions": summary.get("conventions") or [],
+        },
     }
+
+
+def _workspace_command_label(command: str) -> str:
+    cleaned = str(command).strip()
+    if not cleaned:
+        return "Workspace Check"
+    parts = cleaned.split()
+    if cleaned.startswith("python -m "):
+        return " ".join(parts[:3])
+    if cleaned.startswith("npm run "):
+        return " ".join(parts[:3])
+    return " ".join(parts[:2]) if len(parts) >= 2 else cleaned
 
 
 def _workspace_changed_paths(summary: dict[str, Any]) -> list[str]:
@@ -4217,6 +4222,15 @@ async def workspace_prepare_stage(request: Request, root: Optional[str] = None):
     return {
         "root": summary["root"],
         "command": "git add -A",
+        "ready": bool(summary.get("changed_count")),
+        "changed_count": summary.get("changed_count", 0),
+        "staged_count": summary.get("staged_count", 0),
+        "unstaged_count": summary.get("unstaged_count", 0),
+        "message": (
+            "Stage the current working tree changes."
+            if summary.get("changed_count")
+            else "No working tree changes detected."
+        ),
     }
 
 
@@ -4234,6 +4248,11 @@ async def workspace_prepare_commit(req: WorkspaceGitActionRequest, request: Requ
         "root": summary["root"],
         "message": message,
         "command": f'git commit -m "{message.replace(chr(34), chr(39))}"',
+        "ready": bool(summary.get("commit_ready")),
+        "changed_count": summary.get("changed_count", 0),
+        "staged_count": summary.get("staged_count", 0),
+        "unstaged_count": summary.get("unstaged_count", 0),
+        "branch": summary.get("branch", "unknown"),
     }
 
 
@@ -4246,9 +4265,27 @@ async def workspace_prepare_push(request: Request, root: Optional[str] = None):
         raise HTTPException(status_code=400, detail=str(exc))
 
     branch = summary.get("branch") or "HEAD"
+    remote_url = str(summary.get("remote_url", "")).strip()
+    has_upstream = bool(summary.get("has_upstream"))
+    ahead_count = int(summary.get("ahead_count", 0))
+    blocked_reason = ""
+    if not remote_url:
+        blocked_reason = "No remote origin is configured for this repository."
+    elif not has_upstream:
+        blocked_reason = "The current branch does not have an upstream tracking branch."
+    elif summary.get("dirty"):
+        blocked_reason = "The working tree is still dirty. Commit or hold local changes before pushing."
+    elif ahead_count <= 0:
+        blocked_reason = "No local commits are ahead of the upstream branch."
     return {
         "root": summary["root"],
         "command": f"git push origin {branch}",
+        "ready": not blocked_reason,
+        "blocked_reason": blocked_reason or None,
+        "branch": branch,
+        "ahead_count": ahead_count,
+        "behind_count": int(summary.get("behind_count", 0)),
+        "has_upstream": has_upstream,
     }
 
 
@@ -4288,6 +4325,9 @@ async def coding_stage_edit(req: CodingStageEditRequest, request: Request):
             repo_root=req.repo_root,
             file_path=req.file_path,
             updated_content=req.updated_content,
+            summary=req.summary,
+            rationale=req.rationale,
+            verification_commands=req.verification_commands,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
@@ -4331,6 +4371,19 @@ async def coding_approve(request: Request):
             confidence=0.68,
         )
         return result
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@coding_router.post("/record-verification")
+async def coding_record_verification(req: CodingRecordVerificationRequest, request: Request):
+    manager = get_coding_workspace_manager(request)
+    try:
+        return manager.record_verification(
+            command=req.command,
+            success=req.success,
+            output=req.output or "",
+        )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
 

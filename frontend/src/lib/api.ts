@@ -666,7 +666,38 @@ export interface PendingCodeEdit {
   diff: string;
   created_at: number;
   status: string;
+  summary?: string;
+  rationale?: string;
+  workflow_phase?: string;
+  verification_status?: string;
+  suggested_checks?: string[];
   line_count: number;
+  changed_line_count?: number;
+  added_line_count?: number;
+  removed_line_count?: number;
+  workflow?: {
+    phase: string;
+    completed: string[];
+    remaining: string[];
+    summary: string;
+  };
+  verification?: {
+    status: string;
+    suggested_checks: string[];
+    latest_run?: {
+      command: string;
+      success: boolean;
+      output: string;
+      recorded_at: number;
+    } | null;
+    guidance: string;
+  };
+  latest_verification?: {
+    command: string;
+    success: boolean;
+    output: string;
+    recorded_at: number;
+  } | null;
 }
 
 export interface CodeEditEntry {
@@ -678,6 +709,20 @@ export interface CodeEditEntry {
   completed_at: number;
   status: string;
   result: string;
+  summary?: string;
+  rationale?: string;
+  workflow_phase?: string;
+  verification_status?: string;
+  suggested_checks?: string[];
+  latest_verification?: {
+    command: string;
+    success: boolean;
+    output: string;
+    recorded_at: number;
+  } | null;
+  changed_line_count?: number;
+  added_line_count?: number;
+  removed_line_count?: number;
 }
 
 export interface CodingWorkspaceStatus {
@@ -813,9 +858,23 @@ export interface WorkspaceSummary {
   dirty: boolean;
   changed_count: number;
   changed_files: string[];
+  staged_count?: number;
+  unstaged_count?: number;
+  untracked_count?: number;
+  ahead_count?: number;
+  behind_count?: number;
+  has_upstream?: boolean;
+  commit_ready?: boolean;
+  push_ready?: boolean;
   top_level: string[];
   remote_url?: string;
   active_root?: string;
+  languages?: string[];
+  language_counts?: Record<string, number>;
+  package_managers?: string[];
+  manifests?: string[];
+  commands?: Record<string, string[]>;
+  conventions?: string[];
 }
 
 export interface WorkspaceRepoEntry {
@@ -841,6 +900,11 @@ export interface WorkspaceChecks {
   root: string;
   checks: WorkspaceCommandSuggestion[];
   git_actions: WorkspaceCommandSuggestion[];
+  repo_profile?: {
+    languages: string[];
+    package_managers: string[];
+    conventions: string[];
+  };
 }
 
 export interface DurableOperatorProfile {
@@ -1598,6 +1662,9 @@ export async function stageCodeEdit(body: {
   repo_root: string;
   file_path: string;
   updated_content: string;
+  summary?: string;
+  rationale?: string;
+  verification_commands?: string[];
 }): Promise<CodingWorkspaceStatus> {
   const res = await authFetch('/v1/coding/stage-edit', {
     method: 'POST',
@@ -1616,6 +1683,23 @@ export async function approveCodeEdit(): Promise<CodingWorkspaceStatus> {
   if (!res.ok) {
     const detail = await res.json().catch(() => ({ detail: res.statusText }));
     throw new Error(detail.detail || `Approve code edit failed: ${res.status}`);
+  }
+  return res.json();
+}
+
+export async function recordCodingVerification(body: {
+  command: string;
+  success: boolean;
+  output?: string;
+}): Promise<CodingWorkspaceStatus> {
+  const res = await authFetch('/v1/coding/record-verification', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const detail = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(detail.detail || `Record coding verification failed: ${res.status}`);
   }
   return res.json();
 }
@@ -1895,7 +1979,15 @@ export async function fetchWorkspaceChecks(): Promise<WorkspaceChecks> {
   return res.json();
 }
 
-export async function prepareWorkspaceStage(): Promise<{ root: string; command: string }> {
+export async function prepareWorkspaceStage(): Promise<{
+  root: string;
+  command: string;
+  ready: boolean;
+  changed_count: number;
+  staged_count: number;
+  unstaged_count: number;
+  message: string;
+}> {
   const res = await authFetch('/v1/workspace/git/prepare-stage', {
     method: 'POST',
   }, 7000);
@@ -1906,7 +1998,16 @@ export async function prepareWorkspaceStage(): Promise<{ root: string; command: 
   return res.json();
 }
 
-export async function prepareWorkspaceCommit(message: string): Promise<{ root: string; command: string; message: string }> {
+export async function prepareWorkspaceCommit(message: string): Promise<{
+  root: string;
+  command: string;
+  message: string;
+  ready: boolean;
+  changed_count: number;
+  staged_count: number;
+  unstaged_count: number;
+  branch: string;
+}> {
   const res = await authFetch('/v1/workspace/git/prepare-commit', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -1919,7 +2020,16 @@ export async function prepareWorkspaceCommit(message: string): Promise<{ root: s
   return res.json();
 }
 
-export async function prepareWorkspacePush(): Promise<{ root: string; command: string }> {
+export async function prepareWorkspacePush(): Promise<{
+  root: string;
+  command: string;
+  ready: boolean;
+  blocked_reason?: string | null;
+  branch: string;
+  ahead_count: number;
+  behind_count: number;
+  has_upstream: boolean;
+}> {
   const res = await authFetch('/v1/workspace/git/prepare-push', {}, 7000);
   if (!res.ok) {
     const detail = await res.json().catch(() => ({ detail: res.statusText }));

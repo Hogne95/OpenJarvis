@@ -540,6 +540,7 @@ def test_workspace_and_workbench_state_are_isolated_per_authenticated_user(tmp_p
 
     repo_owner = _init_git_repo(tmp_path / "repo-owner")
     repo_guest = _init_git_repo(tmp_path / "repo-guest")
+    (repo_owner / "README.md").write_text("owner change\n", encoding="utf-8")
 
     guest = _browser_client(app)
     login_guest = guest.post(
@@ -581,6 +582,30 @@ def test_workspace_and_workbench_state_are_isolated_per_authenticated_user(tmp_p
     assert owner_status.json()["pending"]["working_dir"] == str(repo_owner.resolve())
     assert guest_status.json()["pending"] is None
 
+    owner_summary = owner.get("/v1/workspace/summary")
+    assert owner_summary.status_code == 200
+    summary_payload = owner_summary.json()
+    assert "languages" in summary_payload
+    assert "package_managers" in summary_payload
+    assert "commands" in summary_payload
+    assert summary_payload["dirty"] is True
+    assert summary_payload["untracked_count"] >= 1
+    assert summary_payload["commit_ready"] is True
+    assert summary_payload["push_ready"] is False
+
+    owner_checks = owner.get("/v1/workspace/checks")
+    assert owner_checks.status_code == 200
+    checks_payload = owner_checks.json()
+    assert "repo_profile" in checks_payload
+    assert set(checks_payload["repo_profile"]) == {"languages", "package_managers", "conventions"}
+
+    prepare_push = owner.get("/v1/workspace/git/prepare-push")
+    assert prepare_push.status_code == 200
+    assert prepare_push.json()["ready"] is False
+    blocked_reason = (prepare_push.json()["blocked_reason"] or "").lower()
+    assert blocked_reason
+    assert "remote" in blocked_reason or "dirty" in blocked_reason
+
 
 def test_coding_workspace_state_is_isolated_per_authenticated_user(tmp_path: Path):
     owner = _make_client(tmp_path)
@@ -618,6 +643,9 @@ def test_coding_workspace_state_is_isolated_per_authenticated_user(tmp_path: Pat
             "repo_root": str(repo.resolve()),
             "file_path": "note.txt",
             "updated_content": "new content\n",
+            "summary": "Refresh the note content.",
+            "rationale": "Keep the file aligned with the latest repo note.",
+            "verification_commands": ["python -m pytest tests -q"],
         },
     )
     assert stage.status_code == 200
@@ -627,15 +655,40 @@ def test_coding_workspace_state_is_isolated_per_authenticated_user(tmp_path: Pat
     assert owner_status.status_code == 200
     assert guest_status.status_code == 200
     assert owner_status.json()["pending"]["file_path"] == "note.txt"
+    assert owner_status.json()["pending"]["status"] == "staged"
+    assert owner_status.json()["pending"]["summary"] == "Refresh the note content."
+    assert owner_status.json()["pending"]["rationale"] == "Keep the file aligned with the latest repo note."
+    assert owner_status.json()["pending"]["workflow"]["phase"] == "verify"
+    assert owner_status.json()["pending"]["verification"]["status"] == "not_run"
+    assert owner_status.json()["pending"]["verification"]["suggested_checks"] == ["python -m pytest tests -q"]
+    assert owner_status.json()["pending"]["changed_line_count"] == 2
     assert guest_status.json()["pending"] is None
 
     guest_hold = guest.post("/v1/coding/hold")
     assert guest_hold.status_code == 200
     assert guest_hold.json()["pending"] is None
 
+    record_verification = owner.post(
+        "/v1/coding/record-verification",
+        json={
+            "command": "python -m pytest tests -q",
+            "success": True,
+            "output": "1 passed",
+        },
+    )
+    assert record_verification.status_code == 200
+    assert record_verification.json()["pending"]["verification"]["status"] == "passed"
+    assert record_verification.json()["pending"]["verification"]["latest_run"]["command"] == "python -m pytest tests -q"
+    assert guest.get("/v1/coding/status").json()["pending"] is None
+
     owner_approve = owner.post("/v1/coding/approve")
     assert owner_approve.status_code == 200
     assert target.read_text(encoding="utf-8") == "new content\n"
+    assert owner_approve.json()["result"]["workflow_phase"] == "report"
+    assert owner_approve.json()["result"]["verification_status"] == "passed"
+    assert owner_approve.json()["result"]["summary"] == "Refresh the note content."
+    assert owner_approve.json()["result"]["suggested_checks"] == ["python -m pytest tests -q"]
+    assert owner_approve.json()["result"]["latest_verification"]["success"] is True
 
 
 def test_action_center_state_is_isolated_per_authenticated_user(tmp_path: Path):

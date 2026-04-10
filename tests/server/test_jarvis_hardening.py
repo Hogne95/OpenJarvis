@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock
@@ -15,6 +16,7 @@ from openjarvis.server.agent_manager_routes import _make_lightweight_system
 from openjarvis.server.app import create_app
 import openjarvis.server.connectors_router as connectors_router
 from openjarvis.server import jarvis_intent
+from openjarvis.server.coding_workspace import CodingWorkspaceManager
 from openjarvis.server.voice_loop import VoiceLoopManager
 from openjarvis.server.repo_registry import RepoRegistry
 from openjarvis.server.workbench import WorkbenchManager
@@ -532,6 +534,95 @@ def test_repo_registry_summary_rejects_missing_root(tmp_path: Path):
         assert "does not exist" in str(exc)
     else:
         raise AssertionError("Expected summary() to reject a missing repository path")
+
+
+def test_repo_registry_summary_infers_repo_profile(tmp_path: Path):
+    storage_path = tmp_path / "repos.json"
+    repo = tmp_path / "repo-profile"
+    repo.mkdir()
+    (repo / "pyproject.toml").write_text(
+        """
+[project]
+name = "demo"
+
+[tool.uv]
+""".strip(),
+        encoding="utf-8",
+    )
+    (repo / "package.json").write_text(
+        json.dumps({"scripts": {"test": "vitest", "lint": "eslint .", "build": "vite build"}}),
+        encoding="utf-8",
+    )
+    (repo / "package-lock.json").write_text("{}", encoding="utf-8")
+    src = repo / "src"
+    src.mkdir()
+    tests_dir = repo / "tests"
+    tests_dir.mkdir()
+    (src / "main.py").write_text("print('hi')\n", encoding="utf-8")
+    (src / "app.ts").write_text("export const value = 1;\n", encoding="utf-8")
+    (repo / ".editorconfig").write_text("root=true\n", encoding="utf-8")
+
+    registry = RepoRegistry(storage_path=storage_path, default_root=str(repo))
+
+    summary = registry.summary(str(repo))
+
+    assert "python" in summary["languages"]
+    assert "typescript" in summary["languages"]
+    assert "uv" in summary["package_managers"]
+    assert "npm" in summary["package_managers"]
+    assert "pyproject.toml" in summary["manifests"]
+    assert "package.json" in summary["manifests"]
+    assert "src-layout" in summary["conventions"]
+    assert "tests-directory" in summary["conventions"]
+    assert "editorconfig" in summary["conventions"]
+    assert "python -m pytest tests -q" in summary["commands"]["test"]
+    assert "npm test" in summary["commands"]["test"]
+
+
+def test_coding_workspace_stage_edit_adds_workflow_and_suggested_checks(tmp_path: Path):
+    repo = tmp_path / "repo-coding"
+    repo.mkdir()
+    (repo / "pyproject.toml").write_text(
+        """
+[project]
+name = "demo"
+""".strip(),
+        encoding="utf-8",
+    )
+    (repo / "ruff.toml").write_text("line-length = 100\n", encoding="utf-8")
+    tests_dir = repo / "tests"
+    tests_dir.mkdir()
+    src = repo / "src"
+    src.mkdir()
+    target = src / "main.py"
+    target.write_text("print('old')\n", encoding="utf-8")
+
+    manager = CodingWorkspaceManager()
+
+    status = manager.stage_edit(
+        repo_root=str(repo),
+        file_path="src/main.py",
+        updated_content="print('new')\n",
+    )
+
+    pending = status["pending"]
+    assert pending is not None
+    assert pending["status"] == "staged"
+    assert pending["workflow"]["phase"] == "verify"
+    assert pending["verification"]["status"] == "not_run"
+    assert "python -m pytest tests -q" in pending["verification"]["suggested_checks"]
+    assert "python -m ruff check src tests" in pending["verification"]["suggested_checks"]
+    assert pending["changed_line_count"] == 2
+
+    verified = manager.record_verification(
+        command="python -m pytest tests -q",
+        success=True,
+        output="1 passed",
+    )
+    pending_after_verify = verified["pending"]
+    assert pending_after_verify is not None
+    assert pending_after_verify["verification"]["status"] == "passed"
+    assert pending_after_verify["verification"]["latest_run"]["output"] == "1 passed"
 
 
 def test_connectors_chunk_counts_reuse_recent_cache():

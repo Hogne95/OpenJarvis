@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import json
+import re
 import subprocess
 import time
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
+from collections import Counter
 
 
 def _run_git(root: Path, *args: str) -> str:
@@ -43,6 +45,173 @@ def _resolve_repo_root(path: str) -> Path:
     if result.returncode != 0 or not result.stdout.strip():
         raise ValueError(f"Not a Git repository: {path}")
     return Path(result.stdout.strip()).resolve()
+
+
+_LANGUAGE_EXTENSIONS = {
+    ".py": "python",
+    ".pyi": "python",
+    ".ts": "typescript",
+    ".tsx": "typescript",
+    ".js": "javascript",
+    ".jsx": "javascript",
+    ".rs": "rust",
+    ".go": "go",
+    ".java": "java",
+    ".kt": "kotlin",
+    ".swift": "swift",
+    ".c": "c",
+    ".cc": "cpp",
+    ".cpp": "cpp",
+    ".h": "c",
+    ".hpp": "cpp",
+    ".cs": "csharp",
+    ".rb": "ruby",
+    ".php": "php",
+    ".lua": "lua",
+}
+
+
+def _repo_profile(root: Path) -> dict:
+    package_managers: list[str] = []
+    manifests: list[str] = []
+    commands = {
+        "test": [],
+        "lint": [],
+        "typecheck": [],
+        "build": [],
+    }
+    conventions: list[str] = []
+    languages = Counter()
+
+    def _record_file(name: str) -> bool:
+        path = root / name
+        if path.exists():
+            manifests.append(name)
+            return True
+        return False
+
+    if _record_file("pyproject.toml"):
+        pyproject_text = (root / "pyproject.toml").read_text(encoding="utf-8", errors="ignore")
+        if "[tool.uv" in pyproject_text or "uv.lock" in pyproject_text or (root / "uv.lock").exists():
+            package_managers.append("uv")
+        if "[tool.poetry" in pyproject_text:
+            package_managers.append("poetry")
+        commands["test"].append("python -m pytest tests -q")
+        commands["lint"].append("python -m ruff check src tests")
+    if _record_file("requirements.txt") and "pip" not in package_managers:
+        package_managers.append("pip")
+    if _record_file("package.json"):
+        if (root / "package-lock.json").exists():
+            package_managers.append("npm")
+        elif (root / "pnpm-lock.yaml").exists():
+            package_managers.append("pnpm")
+        elif (root / "yarn.lock").exists():
+            package_managers.append("yarn")
+        elif (root / "bun.lockb").exists() or (root / "bun.lock").exists():
+            package_managers.append("bun")
+        try:
+            package = json.loads((root / "package.json").read_text(encoding="utf-8"))
+            scripts = package.get("scripts", {})
+        except Exception:
+            scripts = {}
+        if isinstance(scripts, dict):
+            if "test" in scripts:
+                commands["test"].append("npm test")
+            if "lint" in scripts:
+                commands["lint"].append("npm run lint")
+            if "typecheck" in scripts:
+                commands["typecheck"].append("npm run typecheck")
+            if "build" in scripts:
+                commands["build"].append("npm run build")
+    if _record_file("Cargo.toml"):
+        package_managers.append("cargo")
+        commands["test"].append("cargo test")
+        commands["typecheck"].append("cargo check")
+        commands["build"].append("cargo build")
+    if _record_file("go.mod"):
+        package_managers.append("go")
+        commands["test"].append("go test ./...")
+        commands["build"].append("go build ./...")
+
+    src_dir = root / "src"
+    tests_dir = root / "tests"
+    frontend_dir = root / "frontend"
+    if src_dir.is_dir():
+        conventions.append("src-layout")
+    if tests_dir.is_dir():
+        conventions.append("tests-directory")
+    if frontend_dir.is_dir():
+        conventions.append("frontend-workspace")
+    if (root / "ruff.toml").exists() or (root / ".ruff.toml").exists():
+        conventions.append("ruff")
+    if (root / ".prettierrc").exists() or (root / "prettier.config.js").exists() or (root / "prettier.config.cjs").exists():
+        conventions.append("prettier")
+    if (root / "tsconfig.json").exists():
+        conventions.append("typescript-project")
+    if (root / ".editorconfig").exists():
+        conventions.append("editorconfig")
+
+    for candidate in list(root.glob("*")) + list(src_dir.rglob("*"))[:250]:
+        if not candidate.is_file():
+            continue
+        suffix = candidate.suffix.lower()
+        language = _LANGUAGE_EXTENSIONS.get(suffix)
+        if language:
+            languages[language] += 1
+
+    primary_languages = [name for name, _count in languages.most_common(5)]
+    return {
+        "languages": primary_languages,
+        "language_counts": dict(languages),
+        "package_managers": sorted(dict.fromkeys(package_managers)),
+        "manifests": sorted(dict.fromkeys(manifests)),
+        "commands": {kind: values for kind, values in commands.items() if values},
+        "conventions": sorted(dict.fromkeys(conventions)),
+    }
+
+
+def _git_status_snapshot(root: Path) -> dict:
+    raw = _run_git(root, "status", "--short", "--branch")
+    lines = [line.rstrip() for line in raw.splitlines() if line.strip()]
+    branch_line = lines[0] if lines else ""
+    changed_lines = lines[1:] if branch_line.startswith("## ") else lines
+    ahead = 0
+    behind = 0
+    has_upstream = "..." in branch_line
+    for label, value in re.findall(r"(ahead|behind) (\d+)", branch_line):
+        if label == "ahead":
+            ahead = int(value)
+        elif label == "behind":
+            behind = int(value)
+
+    changed_files: list[str] = []
+    staged_count = 0
+    unstaged_count = 0
+    untracked_count = 0
+    for line in changed_lines:
+        if len(line) < 3:
+            continue
+        code = line[:2]
+        path = line[3:].strip() or line[2:].strip()
+        if path:
+            changed_files.append(line.strip())
+        if code == "??":
+            untracked_count += 1
+            continue
+        if code[0] != " ":
+            staged_count += 1
+        if len(code) > 1 and code[1] != " ":
+            unstaged_count += 1
+
+    return {
+        "changed_files": changed_files,
+        "staged_count": staged_count,
+        "unstaged_count": unstaged_count,
+        "untracked_count": untracked_count,
+        "ahead_count": ahead,
+        "behind_count": behind,
+        "has_upstream": has_upstream,
+    }
 
 
 @dataclass(slots=True)
@@ -173,26 +342,43 @@ class RepoRegistry:
         if not selected_root.exists() or not selected_root.is_dir():
             raise ValueError(f"Repository path does not exist: {selected_root}")
         branch = _run_git(selected_root, "rev-parse", "--abbrev-ref", "HEAD") or "unknown"
-        changed_files = [
-            line.strip()
-            for line in _run_git(selected_root, "status", "--short").splitlines()
-            if line.strip()
-        ]
+        status_snapshot = _git_status_snapshot(selected_root)
+        changed_files = status_snapshot["changed_files"]
         top_level = sorted(
             item.name
             for item in selected_root.iterdir()
             if item.is_dir() and not item.name.startswith(".")
         )[:12]
         remote_url = _run_git(selected_root, "config", "--get", "remote.origin.url")
+        profile = _repo_profile(selected_root)
         return {
             "root": str(selected_root),
             "branch": branch,
             "dirty": bool(changed_files),
             "changed_count": len(changed_files),
             "changed_files": changed_files[:8],
+            "staged_count": status_snapshot["staged_count"],
+            "unstaged_count": status_snapshot["unstaged_count"],
+            "untracked_count": status_snapshot["untracked_count"],
+            "ahead_count": status_snapshot["ahead_count"],
+            "behind_count": status_snapshot["behind_count"],
+            "has_upstream": status_snapshot["has_upstream"],
+            "commit_ready": bool(changed_files),
+            "push_ready": bool(
+                remote_url
+                and status_snapshot["has_upstream"]
+                and status_snapshot["ahead_count"] > 0
+                and not changed_files
+            ),
             "top_level": top_level,
             "remote_url": remote_url,
             "active_root": self.active_root(),
+            "languages": profile["languages"],
+            "language_counts": profile["language_counts"],
+            "package_managers": profile["package_managers"],
+            "manifests": profile["manifests"],
+            "commands": profile["commands"],
+            "conventions": profile["conventions"],
         }
 
 
