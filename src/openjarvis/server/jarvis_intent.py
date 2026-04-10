@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import re
+import shutil
 import subprocess
+import sys
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -95,6 +97,30 @@ _APP_FOCUS_TARGETS = {
 
 def _downloads_dir() -> Path:
     return Path.home() / "Downloads"
+
+
+def _powershell_executable() -> str:
+    candidates: list[str] = []
+    if sys.platform.startswith("win"):
+        candidates.extend(["powershell", "powershell.exe", "pwsh", "pwsh.exe"])
+    else:
+        candidates.extend(["powershell.exe", "pwsh", "pwsh.exe", "powershell"])
+    for candidate in candidates:
+        if shutil.which(candidate):
+            return candidate
+    raise RuntimeError("Desktop state unavailable because PowerShell is not installed or not on PATH.")
+
+
+def _run_powershell(command: str, *, timeout: int) -> subprocess.CompletedProcess[str]:
+    try:
+        return subprocess.run(
+            [_powershell_executable(), "-NoProfile", "-Command", command],
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        )
+    except FileNotFoundError as exc:
+        raise RuntimeError("Desktop state unavailable because PowerShell is not installed or not on PATH.") from exc
 
 
 def _quote_ps(value: str) -> str:
@@ -281,15 +307,8 @@ def _desktop_clipboard_read_command() -> str:
 
 
 def _read_clipboard_text() -> str:
-    result = subprocess.run(
-        [
-            "powershell",
-            "-NoProfile",
-            "-Command",
-            "$text = Get-Clipboard -Raw -ErrorAction SilentlyContinue; if ($null -eq $text) { $text = '' }; Write-Output $text",
-        ],
-        capture_output=True,
-        text=True,
+    result = _run_powershell(
+        "$text = Get-Clipboard -Raw -ErrorAction SilentlyContinue; if ($null -eq $text) { $text = '' }; Write-Output $text",
         timeout=8,
     )
     if result.returncode != 0:
@@ -312,12 +331,7 @@ if ($null -eq $selected) { $selected = '' }
 Set-Clipboard -Value $previous
 Write-Output $selected
 """
-    result = subprocess.run(
-        ["powershell", "-NoProfile", "-Command", command],
-        capture_output=True,
-        text=True,
-        timeout=10,
-    )
+    result = _run_powershell(command, timeout=10)
     if result.returncode != 0:
         raise RuntimeError((result.stderr or "Selected text unavailable.").strip())
     return (result.stdout or "").strip()
@@ -347,12 +361,7 @@ def _read_active_browser_url(target: str = "") -> str:
         "Set-Clipboard -Value $previous; "
         "Write-Output $url"
     )
-    result = subprocess.run(
-        ["powershell", "-NoProfile", "-Command", command],
-        capture_output=True,
-        text=True,
-        timeout=10,
-    )
+    result = _run_powershell(command, timeout=10)
     if result.returncode != 0:
         raise RuntimeError((result.stderr or "Active browser URL unavailable.").strip())
     return (result.stdout or "").strip()
@@ -445,12 +454,7 @@ $openWindows = Get-Process | Where-Object { $_.MainWindowTitle -and $_.MainWindo
   open_windows = $openWindows
 } | ConvertTo-Json -Depth 4 -Compress
 """
-    result = subprocess.run(
-        ["powershell", "-NoProfile", "-Command", command],
-        capture_output=True,
-        text=True,
-        timeout=12,
-    )
+    result = _run_powershell(command, timeout=12)
     if result.returncode != 0:
         raise RuntimeError((result.stderr or result.stdout or "Desktop state unavailable.").strip())
     raw = result.stdout.strip()
@@ -1829,10 +1833,8 @@ def create_jarvis_intent_router() -> APIRouter:
             }
 
         if intent.type == "desktop" and intent.action == "clipboard_read":
-            result = subprocess.run(
-                ["powershell", "-NoProfile", "-Command", _desktop_clipboard_read_command().replace("powershell -NoProfile -Command ", "", 1)],
-                capture_output=True,
-                text=True,
+            result = _run_powershell(
+                _desktop_clipboard_read_command().replace("powershell -NoProfile -Command ", "", 1),
                 timeout=8,
             )
             if result.returncode != 0:

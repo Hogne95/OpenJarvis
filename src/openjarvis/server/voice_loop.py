@@ -168,6 +168,10 @@ class VoiceLoopManager:
             self._refresh_backend()
             return self._snapshot.to_dict()
 
+    def snapshot(self) -> dict:
+        """Compatibility wrapper for callers expecting a snapshot() API."""
+        return self.status()
+
     def start(self, *, language_hints: list[str] | None = None) -> dict:
         with self._lock:
             self._refresh_backend()
