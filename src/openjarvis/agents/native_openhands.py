@@ -90,15 +90,29 @@ class NativeOpenHandsAgent(ToolUsingAgent):
         Returns (possibly_expanded_text, was_expanded).
         """
         import re as _re
+        import httpx
 
         url_match = _re.search(r"https?://[^\s,;\"'<>]+", text)
         if not url_match:
             return text, False
         url = url_match.group(0).rstrip(".,;)")
         try:
-            from openjarvis.tools.web_search import WebSearchTool
-
-            content = WebSearchTool._fetch_url(url, max_chars=4000)
+            response = httpx.get(
+                url,
+                follow_redirects=True,
+                timeout=10.0,
+                headers={"User-Agent": "OpenJarvis/1.0"},
+            )
+            response.raise_for_status()
+            content_type = response.headers.get("content-type", "").lower()
+            raw_text = response.text
+            if "html" in content_type:
+                raw_text = _re.sub(r"(?is)<script.*?>.*?</script>", " ", raw_text)
+                raw_text = _re.sub(r"(?is)<style.*?>.*?</style>", " ", raw_text)
+                raw_text = _re.sub(r"(?s)<[^>]+>", " ", raw_text)
+            content = _re.sub(r"\s+", " ", raw_text).strip()[:4000]
+            if not content:
+                return text, False
             header = f"\n\n--- Content from {url} ---\n"
             footer = "\n--- End of content ---\n"
             expanded = text.replace(url, f"{header}{content}{footer}")

@@ -79,7 +79,7 @@ class LoopGuard:
                 self._emit_triggered("rust_guard", tool_name)
                 verdict = LoopVerdict(blocked=True, reason=rust_result)
             else:
-                verdict = LoopVerdict()
+                verdict = self._python_check(tool_name, arguments)
         else:
             verdict = self._python_check(tool_name, arguments)
 
@@ -96,14 +96,15 @@ class LoopGuard:
         # 1. Hash tracking — identical calls
         call_hash = hashlib.sha256(f"{tool_name}:{arguments}".encode()).hexdigest()[:16]
         self._call_counts[call_hash] = self._call_counts.get(call_hash, 0) + 1
-        if self._call_counts[call_hash] > self._config.max_identical_calls:
+        identical_limit = max(2, self._config.max_identical_calls)
+        if self._call_counts[call_hash] >= identical_limit:
             self._emit_triggered("identical_call", tool_name)
             return LoopVerdict(
                 blocked=True,
                 reason=(
                     f"Identical call to '{tool_name}' repeated "
                     f"{self._call_counts[call_hash]} times "
-                    f"(max {self._config.max_identical_calls})."
+                    f"(max {identical_limit})."
                 ),
             )
 

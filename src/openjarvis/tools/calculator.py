@@ -48,6 +48,11 @@ _MATH_FUNCS = {
 }
 
 
+def _normalize_expression(expression: str) -> str:
+    """Normalize user-friendly calculator syntax before evaluation."""
+    return expression.replace("^", "**").replace("ln(", "log(")
+
+
 def _safe_eval_node(node: ast.AST) -> Any:
     """Recursively evaluate an AST node using only whitelisted operations."""
     if isinstance(node, ast.Expression):
@@ -62,6 +67,8 @@ def _safe_eval_node(node: ast.AST) -> Any:
             raise ValueError(f"Unsupported operator: {op_type.__name__}")
         left = _safe_eval_node(node.left)
         right = _safe_eval_node(node.right)
+        if op_type is ast.Div and right == 0:
+            return math.inf
         return _BINOPS[op_type](left, right)
     if isinstance(node, ast.UnaryOp):
         op_type = type(node.op)
@@ -84,21 +91,23 @@ def _safe_eval_node(node: ast.AST) -> Any:
             val = _MATH_FUNCS[name]
             if isinstance(val, (int, float)):
                 return val
-        raise ValueError(f"Unknown variable: {name}")
+        raise ValueError(f"unknown variable: {name}")
     raise ValueError(f"Unsupported expression type: {type(node).__name__}")
 
 
 def safe_eval(expression: str) -> float:
     """Evaluate a math expression safely — Rust backend with Python fallback."""
+    normalized = _normalize_expression(expression)
     try:
         from openjarvis._rust_bridge import get_rust_module
 
         _rust = get_rust_module()
-        return float(_rust.CalculatorTool().execute(expression))
+        return float(_rust.CalculatorTool().execute(normalized))
     except ImportError:
-        import ast as _ast
-
-        tree = _ast.parse(expression, mode="eval")
+        try:
+            tree = ast.parse(normalized, mode="eval")
+        except SyntaxError as exc:
+            raise ValueError(str(exc)) from exc
         return float(_safe_eval_node(tree.body))
 
 
@@ -146,12 +155,6 @@ class CalculatorTool(BaseTool):
                 tool_name="calculator",
                 content=str(result),
                 success=True,
-            )
-        except ZeroDivisionError:
-            return ToolResult(
-                tool_name="calculator",
-                content="Error: division by zero",
-                success=False,
             )
         except (ValueError, SyntaxError, TypeError) as exc:
             return ToolResult(

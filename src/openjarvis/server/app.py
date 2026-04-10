@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from contextlib import asynccontextmanager
 import logging
 import pathlib
 import time
@@ -26,6 +27,28 @@ from openjarvis.server.voice_loop import VoiceLoopManager
 from openjarvis.server.workbench import WorkbenchManager
 
 logger = logging.getLogger(__name__)
+
+
+def _shutdown_background_services(app: FastAPI) -> None:
+    """Stop optional background services during app shutdown.
+
+    Root cause: FastAPI's deprecated ``@app.on_event("shutdown")`` hook was
+    still handling scheduler cleanup. Moving that logic into the app lifespan
+    keeps shutdown behavior explicit without carrying deprecation noise through
+    every server test.
+    """
+    scheduler = getattr(app.state, "task_scheduler", None)
+    if scheduler is not None:
+        try:
+            scheduler.stop()
+        except Exception:
+            logger.debug("Task scheduler shutdown skipped", exc_info=True)
+    scheduler_store = getattr(app.state, "task_scheduler_store", None)
+    if scheduler_store is not None:
+        try:
+            scheduler_store.close()
+        except Exception:
+            logger.debug("Task scheduler store close skipped", exc_info=True)
 
 
 def _bootstrap_core_agent_architecture(app: FastAPI) -> None:
@@ -208,10 +231,18 @@ def create_app(
     config:
         Optional JarvisConfig for other settings.
     """
+    @asynccontextmanager
+    async def _app_lifespan(app: FastAPI):
+        try:
+            yield
+        finally:
+            _shutdown_background_services(app)
+
     app = FastAPI(
         title="OpenJarvis API",
         description="OpenAI-compatible API server for OpenJarvis",
         version="0.1.0",
+        lifespan=_app_lifespan,
     )
 
     from fastapi.middleware.cors import CORSMiddleware
@@ -298,7 +329,7 @@ def create_app(
     app.include_router(router)
     app.include_router(dashboard_router)
     app.include_router(comparison_router)
-    app.include_router(create_connectors_router())
+    app.include_router(create_connectors_router(), prefix="/v1")
     app.include_router(create_digest_router())
     app.include_router(create_jarvis_intent_router())
     app.include_router(upload_router)
@@ -309,21 +340,6 @@ def create_app(
 
     # Restore SendBlue channel bindings from database on startup
     _restore_sendblue_bindings(app)
-
-    @app.on_event("shutdown")
-    async def _shutdown_background_services() -> None:
-        scheduler = getattr(app.state, "task_scheduler", None)
-        if scheduler is not None:
-            try:
-                scheduler.stop()
-            except Exception:
-                logger.debug("Task scheduler shutdown skipped", exc_info=True)
-        scheduler_store = getattr(app.state, "task_scheduler_store", None)
-        if scheduler_store is not None:
-            try:
-                scheduler_store.close()
-            except Exception:
-                logger.debug("Task scheduler store close skipped", exc_info=True)
 
     # Add security headers middleware
     try:

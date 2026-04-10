@@ -683,6 +683,8 @@ def _mission_followup_payload(mission: dict[str, Any], action: str) -> dict[str,
         if not content:
             return None
         mode = str(result_data.get("mode", "")).strip().lower()
+        if mode in {"business_review", "finance_review", "investment_memo", "kpi_extract"}:
+            return {"kind": "brief", "content": content, "label": f"{title} Memo", "source": "document-mission"}
         if blocked:
             return {
                 "kind": "task",
@@ -690,8 +692,6 @@ def _mission_followup_payload(mission: dict[str, Any], action: str) -> dict[str,
                 "label": f"{title} Follow-up",
                 "source": "document-mission",
             }
-        if mode in {"business_review", "finance_review", "investment_memo", "kpi_extract"}:
-            return {"kind": "brief", "content": content, "label": f"{title} Memo", "source": "document-mission"}
         return {"kind": "prompt", "content": content, "label": title, "source": "document-mission"}
     if domain == "design":
         content = result or summary or next_step
@@ -4291,18 +4291,15 @@ def include_all_routes(app) -> None:
                 create_agent_manager_router,
             )
 
-            (
-                agents_r,
-                templates_r,
-                global_r,
-                tools_r,
-                sendblue_r,
-            ) = create_agent_manager_router(app.state.agent_manager)
+            routers = create_agent_manager_router(app.state.agent_manager)
+            agents_r = routers[0]
+            templates_r = routers[1]
+            global_r = routers[2]
+            tools_r = routers[3]
             app.include_router(agents_r)
             app.include_router(templates_r)
             app.include_router(global_r)
             app.include_router(tools_r)
-            app.include_router(sendblue_r)
     except ImportError:
         pass
 

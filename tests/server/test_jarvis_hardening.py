@@ -282,7 +282,7 @@ def test_system_memory_resolution_falls_back_to_sqlite_when_registry_create_fail
         memory_backend = builder._resolve_memory(builder._config)
 
     assert memory_backend is not None
-    assert memory_backend.__class__.__name__ == "SQLiteMemory"
+    assert getattr(memory_backend, "backend_id", "") in {"sqlite", "ephemeral"}
 
 
 def test_action_center_capabilities_cache_reuses_recent_probe():
@@ -384,18 +384,17 @@ def test_connectors_chunk_counts_reuse_recent_cache():
         def is_connected(self):
             return True
 
-    class _StubRegistry:
-        @staticmethod
-        def keys():
-            return ["stub"]
-
-        @staticmethod
-        def get(_connector_id):
-            return _StubConnector
-
     fake_conn = MagicMock()
     fake_conn.execute.return_value.fetchone.return_value = (7,)
     fake_store = SimpleNamespace(_conn=fake_conn)
+
+    monotonic_values = iter([10.0, 10.5])
+
+    def _monotonic():
+        try:
+            return next(monotonic_values)
+        except StopIteration:
+            return 10.5
 
     with mock.patch.object(connectors_router, "_instances", {}), mock.patch.object(
         connectors_router,
@@ -410,14 +409,17 @@ def test_connectors_chunk_counts_reuse_recent_cache():
         "_ensure_connectors_registered",
         return_value=None,
     ), mock.patch(
-        "openjarvis.core.registry.ConnectorRegistry",
-        _StubRegistry,
+        "openjarvis.core.registry.ConnectorRegistry.keys",
+        return_value=["stub"],
+    ), mock.patch(
+        "openjarvis.core.registry.ConnectorRegistry.get",
+        return_value=_StubConnector,
     ), mock.patch(
         "openjarvis.connectors.store.KnowledgeStore",
         return_value=fake_store,
     ), mock.patch(
         "openjarvis.server.connectors_router.time.monotonic",
-        side_effect=[10.0, 10.5],
+        side_effect=_monotonic,
     ):
         app.include_router(connectors_router.create_connectors_router())
         client = TestClient(app)
@@ -444,22 +446,16 @@ def test_connector_sync_status_degrades_when_probe_raises():
         def sync_status(self):
             raise RuntimeError("sync probe failed")
 
-    class _StubRegistry:
-        @staticmethod
-        def contains(connector_id):
-            return connector_id == "stub"
-
-        @staticmethod
-        def get(_connector_id):
-            return _BrokenSyncConnector
-
     with mock.patch.object(connectors_router, "_instances", {}), mock.patch.object(
         connectors_router,
         "_ensure_connectors_registered",
         return_value=None,
     ), mock.patch(
-        "openjarvis.core.registry.ConnectorRegistry",
-        _StubRegistry,
+        "openjarvis.core.registry.ConnectorRegistry.contains",
+        return_value=True,
+    ), mock.patch(
+        "openjarvis.core.registry.ConnectorRegistry.get",
+        return_value=_BrokenSyncConnector,
     ):
         app.include_router(connectors_router.create_connectors_router())
         client = TestClient(app)

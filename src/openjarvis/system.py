@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import uuid
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
@@ -13,6 +14,75 @@ from openjarvis.engine._stubs import InferenceEngine
 from openjarvis.tools._stubs import BaseTool, ToolExecutor
 
 logger = logging.getLogger(__name__)
+
+
+class _EphemeralMemoryBackend:
+    """Pure-Python emergency memory backend.
+
+    Root cause: the default SQLite backend currently depends on the optional
+    Rust module in this environment, so JARVIS can otherwise end up with no
+    memory backend at all. This keeps retrieval/store flows alive until the
+    richer backend is available.
+    """
+
+    backend_id = "ephemeral"
+
+    def __init__(self) -> None:
+        self._docs: Dict[str, Dict[str, Any]] = {}
+
+    def store(
+        self,
+        content: str,
+        *,
+        source: str = "",
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> str:
+        doc_id = str(uuid.uuid4())
+        self._docs[doc_id] = {
+            "content": content,
+            "source": source,
+            "metadata": metadata or {},
+        }
+        return doc_id
+
+    def retrieve(
+        self,
+        query: str,
+        *,
+        top_k: int = 5,
+        **kwargs: Any,
+    ) -> List[Any]:
+        from openjarvis.tools.storage._stubs import RetrievalResult
+
+        terms = [part.lower() for part in query.split() if part.strip()]
+        matches: List[RetrievalResult] = []
+        for record in self._docs.values():
+            content = str(record["content"])
+            haystack = content.lower()
+            score = 0.0
+            if not terms:
+                score = 1.0
+            else:
+                hits = sum(1 for term in terms if term in haystack)
+                if hits:
+                    score = hits / len(terms)
+            if score > 0:
+                matches.append(
+                    RetrievalResult(
+                        content=content,
+                        score=score,
+                        source=str(record.get("source", "")),
+                        metadata=dict(record.get("metadata", {})),
+                    )
+                )
+        matches.sort(key=lambda item: item.score, reverse=True)
+        return matches[:top_k]
+
+    def delete(self, doc_id: str) -> bool:
+        return self._docs.pop(doc_id, None) is not None
+
+    def clear(self) -> None:
+        self._docs.clear()
 
 
 @dataclass
@@ -861,7 +931,8 @@ class SystemBuilder:
                 )
             else:
                 logger.warning("SQLite memory fallback failed: %s", exc)
-        return None
+        logger.info("Falling back to in-process ephemeral memory backend.")
+        return _EphemeralMemoryBackend()
 
     def _resolve_channel(self, config, bus):
         """Resolve channel backend from config."""

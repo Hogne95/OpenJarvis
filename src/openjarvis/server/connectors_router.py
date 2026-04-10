@@ -93,7 +93,7 @@ def create_connectors_router():
 
     from openjarvis.core.registry import ConnectorRegistry
 
-    router = APIRouter(prefix="/v1/connectors", tags=["connectors"])
+    router = APIRouter(prefix="/connectors", tags=["connectors"])
 
     # ------------------------------------------------------------------
     # Helpers
@@ -103,6 +103,8 @@ def create_connectors_router():
         """Return a cached connector instance, creating it if needed."""
         if connector_id not in _instances:
             cls = ConnectorRegistry.get(connector_id)
+            if cls is None:
+                raise KeyError(connector_id)
             _instances[connector_id] = cls()
         return _instances[connector_id]
 
@@ -120,8 +122,11 @@ def create_connectors_router():
         progress for long.
         """
         now = time.monotonic()
-        cached_at = _chunk_count_cache_at.get(connector_id, 0.0)
-        if now - cached_at < _CHUNK_COUNT_CACHE_TTL_SECONDS:
+        cached_at = _chunk_count_cache_at.get(connector_id)
+        if (
+            cached_at is not None
+            and now - cached_at < _CHUNK_COUNT_CACHE_TTL_SECONDS
+        ):
             return _chunk_count_cache.get(connector_id, 0)
 
         chunks = 0
@@ -535,22 +540,34 @@ def create_connectors_router():
         t = threading.Thread(target=_run_sync, daemon=True)
         t.start()
         _sync_threads[connector_id] = t
+        t.join(timeout=0.25)
+
+        if not t.is_alive():
+            bg = _sync_state.get(connector_id, {})
+            return {
+                "connector_id": connector_id,
+                "status": "complete" if bg.get("state") == "complete" else bg.get("state", "started"),
+                "chunks_indexed": _chunk_count(connector_id),
+                "error": bg.get("error"),
+            }
 
         return {
             "connector_id": connector_id,
             "status": "started",
+            "chunks_indexed": _chunk_count(connector_id),
         }
 
     @router.get("/{connector_id}/sync")
     async def sync_status(connector_id: str):
         """Return the current sync status for a connector."""
         _ensure_connectors_registered()
-        if not ConnectorRegistry.contains(connector_id):
+        try:
+            instance = _get_or_create(connector_id)
+        except Exception:
             raise HTTPException(
                 status_code=404,
                 detail=f"Connector '{connector_id}' not found",
             )
-        instance = _get_or_create(connector_id)
         try:
             status = instance.sync_status()
         except Exception as exc:

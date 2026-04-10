@@ -20,6 +20,27 @@ logger = logging.getLogger("openjarvis.server.agent_manager")
 _STALE_RUNNING_SECONDS = 45
 
 
+class _RouterBundle:
+    """Backward-compatible router bundle.
+
+    Root cause: some callers still unpack four routers positionally, while
+    SendBlue-specific flows expect an indexable fifth router. This adapter
+    keeps both call styles working during the transition.
+    """
+
+    def __init__(self, *routers: Any) -> None:
+        self._routers = routers
+
+    def __iter__(self):
+        return iter(self._routers[:4])
+
+    def __len__(self) -> int:
+        return 4
+
+    def __getitem__(self, index):
+        return self._routers[index]
+
+
 def _manual_run_task_description(agent: Dict[str, Any]) -> str:
     name = str(agent.get("name") or "Agent").strip()
     config = agent.get("config", {}) or {}
@@ -141,9 +162,13 @@ def _make_lightweight_system(
     resolved_memory_backend = memory_backend
     if resolved_memory_backend is None:
         try:
-            from openjarvis.tools.storage.sqlite import SQLiteMemory
+            from openjarvis.core.config import load_config
+            from openjarvis.system import SystemBuilder
 
-            resolved_memory_backend = SQLiteMemory()
+            cfg_for_memory = config or load_config()
+            resolved_memory_backend = SystemBuilder(config=cfg_for_memory)._resolve_memory(
+                cfg_for_memory
+            )
         except Exception:
             resolved_memory_backend = None
     try:
@@ -2048,7 +2073,9 @@ def create_agent_manager_router(
             "ready": sb is not None and has_bridge,
         }
 
-    return (
+    global_router.include_router(sendblue_router)
+
+    return _RouterBundle(
         agents_router,
         templates_router,
         global_router,
