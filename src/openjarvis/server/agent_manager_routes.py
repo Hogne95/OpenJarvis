@@ -1061,9 +1061,25 @@ def create_agent_manager_router(
 
     # ── Agent lifecycle ──────────────────────────────────────
 
+    def _compact_agent(agent: Dict[str, Any]) -> Dict[str, Any]:
+        return {
+            "id": agent.get("id"),
+            "name": agent.get("name"),
+            "agent_type": agent.get("agent_type"),
+            "status": agent.get("status"),
+            "summary_memory": agent.get("summary_memory", ""),
+            "current_activity": agent.get("current_activity", ""),
+            "updated_at": agent.get("updated_at"),
+            "created_at": agent.get("created_at"),
+            "config": agent.get("config", {}),
+        }
+
     @agents_router.get("")
-    async def list_agents():
-        return {"agents": manager.list_agents()}
+    async def list_agents(compact: bool = False):
+        agents = manager.list_agents()
+        if compact:
+            return {"agents": [_compact_agent(agent) for agent in agents]}
+        return {"agents": agents}
 
     @agents_router.post("")
     async def create_agent(req: CreateAgentRequest, request: Request):

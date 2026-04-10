@@ -1718,7 +1718,11 @@ async def transcribe_speech(request: Request):
     filename = getattr(audio_file, "filename", "audio.wav")
     ext = filename.rsplit(".", 1)[-1] if "." in filename else "wav"
 
-    result = backend.transcribe(audio_bytes, format=ext, language=language or None)
+    try:
+        result = backend.transcribe(audio_bytes, format=ext, language=language or None)
+    except Exception as exc:
+        logger.warning("Speech transcription failed: %s", exc)
+        raise HTTPException(status_code=503, detail=f"Speech transcription failed: {exc}")
     return {
         "text": result.text,
         "language": result.language,
@@ -1902,7 +1906,8 @@ async def voice_loop_process_audio(request: Request):
             language_hints=language_hints or None,
         )
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc))
+        logger.warning("Voice loop audio processing failed: %s", exc)
+        raise HTTPException(status_code=503, detail=str(exc))
 
 
 @agent_architecture_router.get("/status")

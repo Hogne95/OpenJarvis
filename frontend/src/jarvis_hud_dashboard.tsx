@@ -517,6 +517,7 @@ export default function JarvisHudDashboard({
   const operatorSignals = useAppStore((s) => s.operatorSignals);
   const logEntries = useAppStore((s) => s.logEntries);
   const managedAgents = useAppStore((s) => s.managedAgents);
+  const setManagedAgents = useAppStore((s) => s.setManagedAgents);
   const setSelectedAgentId = useAppStore((s) => s.setSelectedAgentId);
   const updateOperatorProfile = useAppStore((s) => s.updateOperatorProfile);
   const recordOperatorSignal = useAppStore((s) => s.recordOperatorSignal);
@@ -796,7 +797,7 @@ export default function JarvisHudDashboard({
           fetchInboxSummary(),
           fetchTaskSummary(),
           fetchReminders(),
-          fetchManagedAgents(),
+          fetchManagedAgents({ compact: true }),
           listConnectors(),
           fetchSpeechProfile(),
           fetchWorkspaceSummary(),
@@ -822,6 +823,7 @@ export default function JarvisHudDashboard({
         if (architecture.status === 'fulfilled') setAgentArchitecture(architecture.value);
         if (profile.status === 'fulfilled') setSpeechProfile(profile.value);
         if (agents.status === 'fulfilled') {
+          setManagedAgents(agents.value);
           setRunningAgentCount(agents.value.filter((agent) => agent.status === 'running').length);
         }
 
@@ -857,7 +859,7 @@ export default function JarvisHudDashboard({
       window.clearInterval(fastInterval);
       window.clearInterval(slowInterval);
     };
-  }, []);
+  }, [setManagedAgents]);
 
   useEffect(() => {
     let cancelled = false;

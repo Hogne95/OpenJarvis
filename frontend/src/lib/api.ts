@@ -52,6 +52,19 @@ export const getBase = (): string => {
   return '';
 };
 
+async function fetchWithTimeout(input: string, init: RequestInit = {}, timeoutMs = 8000): Promise<Response> {
+  const controller = new AbortController();
+  const timeout = window.setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(input, {
+      ...init,
+      signal: controller.signal,
+    });
+  } finally {
+    window.clearTimeout(timeout);
+  }
+}
+
 async function tauriInvoke<T>(command: string, args: Record<string, unknown> = {}): Promise<T> {
   const { invoke } = await import('@tauri-apps/api/core');
   const apiUrl = getBase();
@@ -1155,7 +1168,7 @@ export async function fetchSpeechHealth(): Promise<SpeechHealth> {
       return { available: false };
     }
   }
-  const res = await fetch(`${getBase()}/v1/speech/health`);
+  const res = await fetchWithTimeout(`${getBase()}/v1/speech/health`, {}, 5000);
   if (!res.ok) return { available: false };
   return res.json();
 }
@@ -1186,7 +1199,7 @@ export async function synthesizeSpeech(body: {
 }
 
 export async function fetchVoiceLoopStatus(): Promise<VoiceLoopStatus> {
-  const res = await fetch(`${getBase()}/v1/voice-loop/status`);
+  const res = await fetchWithTimeout(`${getBase()}/v1/voice-loop/status`, {}, 5000);
   if (!res.ok) throw new Error(`Voice loop status failed: ${res.status}`);
   return res.json();
 }
@@ -1325,7 +1338,7 @@ export async function holdWorkbenchCommand(): Promise<WorkbenchStatus> {
 }
 
 export async function fetchCodingStatus(): Promise<CodingWorkspaceStatus> {
-  const res = await fetch(`${getBase()}/v1/coding/status`);
+  const res = await fetchWithTimeout(`${getBase()}/v1/coding/status`, {}, 7000);
   if (!res.ok) throw new Error(`Coding status failed: ${res.status}`);
   return res.json();
 }
@@ -1379,7 +1392,7 @@ export async function holdCodeEdit(): Promise<CodingWorkspaceStatus> {
 }
 
 export async function fetchActionCenterStatus(): Promise<ActionCenterStatus> {
-  const res = await fetch(`${getBase()}/v1/action-center/status`);
+  const res = await fetchWithTimeout(`${getBase()}/v1/action-center/status`, {}, 7000);
   if (!res.ok) throw new Error(`Action center status failed: ${res.status}`);
   return res.json();
 }
@@ -1549,7 +1562,7 @@ export async function updateDigestSchedule(body: DigestSchedule): Promise<Digest
 }
 
 export async function fetchAutomationStatus(): Promise<AutomationStatus> {
-  const res = await fetch(`${getBase()}/v1/automation/status`);
+  const res = await fetchWithTimeout(`${getBase()}/v1/automation/status`, {}, 7000);
   if (!res.ok) {
     const detail = await res.json().catch(() => ({ detail: res.statusText }));
     throw new Error(detail.detail || `Automation status fetch failed: ${res.status}`);
@@ -1588,7 +1601,7 @@ export async function fetchAutomationLogs(limit: number = 12): Promise<{
 }
 
 export async function fetchWorkspaceSummary(): Promise<WorkspaceSummary> {
-  const res = await fetch(`${getBase()}/v1/workspace/summary`);
+  const res = await fetchWithTimeout(`${getBase()}/v1/workspace/summary`, {}, 7000);
   if (!res.ok) {
     const detail = await res.json().catch(() => ({ detail: res.statusText }));
     throw new Error(detail.detail || `Workspace summary fetch failed: ${res.status}`);
@@ -1597,7 +1610,7 @@ export async function fetchWorkspaceSummary(): Promise<WorkspaceSummary> {
 }
 
 export async function fetchWorkspaceRepos(): Promise<WorkspaceRepoCatalog> {
-  const res = await fetch(`${getBase()}/v1/workspace/repos`);
+  const res = await fetchWithTimeout(`${getBase()}/v1/workspace/repos`, {}, 7000);
   if (!res.ok) {
     const detail = await res.json().catch(() => ({ detail: res.statusText }));
     throw new Error(detail.detail || `Workspace repos fetch failed: ${res.status}`);
@@ -1632,7 +1645,7 @@ export async function selectWorkspaceRepo(root: string): Promise<WorkspaceRepoCa
 }
 
 export async function fetchWorkspaceChecks(): Promise<WorkspaceChecks> {
-  const res = await fetch(`${getBase()}/v1/workspace/checks`);
+  const res = await fetchWithTimeout(`${getBase()}/v1/workspace/checks`, {}, 7000);
   if (!res.ok) {
     const detail = await res.json().catch(() => ({ detail: res.statusText }));
     throw new Error(detail.detail || `Workspace checks fetch failed: ${res.status}`);
@@ -2412,7 +2425,7 @@ export async function queryVision(body: {
 }
 
 export async function fetchDesktopState(): Promise<DesktopState> {
-  const res = await fetch(`${getBase()}/v1/jarvis/desktop/state`);
+  const res = await fetchWithTimeout(`${getBase()}/v1/jarvis/desktop/state`, {}, 7000);
   if (!res.ok) {
     const detail = await res.json().catch(() => ({ detail: res.statusText }));
     throw new Error(detail.detail || `Desktop state failed: ${res.status}`);
@@ -2421,7 +2434,7 @@ export async function fetchDesktopState(): Promise<DesktopState> {
 }
 
 export async function fetchAgentArchitectureStatus(): Promise<AgentArchitectureStatus> {
-  const res = await fetch(`${getBase()}/v1/agent-architecture/status`);
+  const res = await fetchWithTimeout(`${getBase()}/v1/agent-architecture/status`, {}, 7000);
   if (!res.ok) {
     const detail = await res.json().catch(() => ({ detail: res.statusText }));
     throw new Error(detail.detail || `Agent architecture failed: ${res.status}`);
@@ -2520,8 +2533,9 @@ export interface AgentMessage {
   created_at: number;
 }
 
-export async function fetchManagedAgents(): Promise<ManagedAgent[]> {
-  const res = await fetch(`${getBase()}/v1/managed-agents`);
+export async function fetchManagedAgents(options: { compact?: boolean } = {}): Promise<ManagedAgent[]> {
+  const query = options.compact ? '?compact=1' : '';
+  const res = await fetchWithTimeout(`${getBase()}/v1/managed-agents${query}`, {}, 7000);
   if (!res.ok) throw new Error(`Failed: ${res.status}`);
   const data = await res.json();
   return data.agents || [];

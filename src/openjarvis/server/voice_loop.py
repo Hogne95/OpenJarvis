@@ -70,7 +70,7 @@ class VoiceLoopManager:
     ) -> None:
         self._speech_backend = speech_backend
         self._lock = threading.Lock()
-        backend_available = bool(speech_backend and speech_backend.health())
+        backend_available = self._backend_available(speech_backend)
         backend_name = (
             getattr(speech_backend, "backend_id", None) if speech_backend else None
         )
@@ -93,6 +93,15 @@ class VoiceLoopManager:
             wake_model_path=wake_model_path,
             wake_threshold=wake_threshold,
         )
+
+    @staticmethod
+    def _backend_available(backend) -> bool:
+        if backend is None:
+            return False
+        try:
+            return bool(backend.health())
+        except Exception:
+            return False
 
     @staticmethod
     def _strip_wake_phrase(text: str, wake_phrases: list[str]) -> tuple[bool, str]:
@@ -160,7 +169,7 @@ class VoiceLoopManager:
 
     def _refresh_backend(self) -> None:
         backend = self._speech_backend
-        self._snapshot.backend_available = bool(backend and backend.health())
+        self._snapshot.backend_available = self._backend_available(backend)
         self._snapshot.backend_name = getattr(backend, "backend_id", None)
 
     def status(self) -> dict:
@@ -376,7 +385,19 @@ class VoiceLoopManager:
                 language_hints=language_hints,
             )
         except Exception as exc:
-            return self.update(phase="error", error=str(exc)) | {
+            with self._lock:
+                self._refresh_backend()
+                self._snapshot.last_error = str(exc)
+                self._snapshot.updated_at = time.time()
+                if self._snapshot.backend_available and self._snapshot.always_listening:
+                    self._snapshot.phase = "listening"
+                else:
+                    self._snapshot.phase = "error"
+                    self._snapshot.active = False
+                    self._snapshot.always_listening = False
+                snapshot = self._snapshot.to_dict()
+            return {
+                **snapshot,
                 "accepted": False,
                 "wake_matched": False,
                 "command": "",

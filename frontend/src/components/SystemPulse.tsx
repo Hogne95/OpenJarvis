@@ -27,7 +27,7 @@ export function SystemPulse({ apiReachable }: { apiReachable: boolean | null }) 
   useEffect(() => {
     if (apiReachable === false) return;
     const check = () =>
-      fetchManagedAgents()
+      fetchManagedAgents({ compact: true })
         .then((agents) => setHasRunningAgent(agents.some((a) => a.status === 'running')))
         .catch(() => {});
     check();
