@@ -30,10 +30,15 @@ class ScanChunksTool(BaseTool):
         store: Optional[KnowledgeStore] = None,
         engine: Optional[InferenceEngine] = None,
         model: str = "",
+        *,
+        owner_user_id: str = "",
+        account_key: str = "",
     ) -> None:
         self._store = store
         self._engine = engine
         self._model = model
+        self._owner_user_id = owner_user_id.strip()
+        self._account_key = account_key.strip()
 
     @property
     def spec(self) -> ToolSpec:
@@ -70,6 +75,10 @@ class ScanChunksTool(BaseTool):
                         "type": "string",
                         "description": "Only chunks before this ISO timestamp.",
                     },
+                    "account_key": {
+                        "type": "string",
+                        "description": "Optional account scope such as a specific inbox account id.",
+                    },
                     "max_chunks": {
                         "type": "integer",
                         "description": (
@@ -102,6 +111,8 @@ class ScanChunksTool(BaseTool):
         doc_type: str = params.get("doc_type", "")
         since: str = params.get("since", "")
         until: str = params.get("until", "")
+        owner_user_id: str = str(params.get("owner_user_id", "") or self._owner_user_id).strip()
+        account_key: str = str(params.get("account_key", "") or self._account_key).strip()
         max_chunks: int = int(params.get("max_chunks", _DEFAULT_MAX_CHUNKS))
         batch_size: int = _DEFAULT_BATCH_SIZE
 
@@ -111,6 +122,12 @@ class ScanChunksTool(BaseTool):
         if source:
             where_clauses.append("source = ?")
             sql_params.append(source)
+        if owner_user_id:
+            where_clauses.append("owner_user_id = ?")
+            sql_params.append(owner_user_id)
+        if account_key:
+            where_clauses.append("account_key = ?")
+            sql_params.append(account_key)
         if doc_type:
             where_clauses.append("doc_type = ?")
             sql_params.append(doc_type)

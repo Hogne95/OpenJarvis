@@ -9,7 +9,7 @@ from fastapi.testclient import TestClient
 
 from openjarvis.agents.executor import AgentExecutor
 from openjarvis.agents.manager import AgentManager
-from openjarvis.core.config import load_config
+from openjarvis.core.config import DEFAULT_CONFIG_DIR, load_config
 from openjarvis.server.action_center import ActionCenterManager
 from openjarvis.server.agent_manager_routes import _make_lightweight_system
 from openjarvis.server.app import create_app
@@ -305,6 +305,37 @@ def test_action_center_capabilities_cache_reuses_recent_probe():
 
     assert first == second
     assert load_tokens_mock.call_count == 4
+
+
+def test_action_center_inbox_approval_uses_account_scoped_gmail_credentials():
+    manager = ActionCenterManager(owner_user_id="owner-1")
+
+    with mock.patch(
+        "openjarvis.server.action_center.resolve_google_credentials",
+        side_effect=lambda path: path,
+    ), mock.patch(
+        "openjarvis.server.action_center.load_tokens",
+        return_value={"token": "scoped-token"},
+    ) as load_tokens_mock, mock.patch(
+        "openjarvis.server.action_center.httpx.post"
+    ) as post_mock:
+        post_mock.return_value.raise_for_status.return_value = None
+        status, result, metadata = manager._approve_inbox_action(
+            {
+                "action_kind": "archive",
+                "source": "gmail",
+                "message_id": "msg-123",
+                "account_key": "work-mail",
+            }
+        )
+
+    assert status == "completed"
+    assert "archive" in result.lower()
+    assert metadata["message_id"] == "msg-123"
+    scoped_path = str(
+        DEFAULT_CONFIG_DIR / "connectors" / "accounts" / "owner-1" / "work-mail" / "gmail.json"
+    )
+    load_tokens_mock.assert_called_once_with(scoped_path)
 
 
 def test_desktop_state_snapshot_returns_cached_success_during_failure_cooldown():

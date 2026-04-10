@@ -198,7 +198,7 @@ def get_action_center_manager(request: Request) -> ActionCenterManager:
     if cached is not None:
         return cached
 
-    manager = ActionCenterManager()
+    manager = ActionCenterManager(owner_user_id=user_id)
     cache[user_id] = manager
     return manager
 

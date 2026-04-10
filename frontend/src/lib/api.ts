@@ -740,6 +740,7 @@ export interface InboxSummaryItem {
   timestamp: string;
   snippet: string;
   source: string;
+  account_key: string;
   supports_mutation: boolean;
 }
 
@@ -1537,13 +1538,13 @@ export async function holdCodeEdit(): Promise<CodingWorkspaceStatus> {
 }
 
 export async function fetchActionCenterStatus(): Promise<ActionCenterStatus> {
-  const res = await fetchWithTimeout(`${getBase()}/v1/action-center/status`, {}, 7000);
+  const res = await authFetch('/v1/action-center/status', {}, 7000);
   if (!res.ok) throw new Error(`Action center status failed: ${res.status}`);
   return res.json();
 }
 
 export async function fetchActionCenterCapabilities(): Promise<ActionCenterCapabilities> {
-  const res = await fetch(`${getBase()}/v1/action-center/capabilities`);
+  const res = await authFetch('/v1/action-center/capabilities');
   if (!res.ok) throw new Error(`Action center capabilities failed: ${res.status}`);
   return res.json();
 }
@@ -1553,8 +1554,9 @@ export async function stageEmailDraft(body: {
   subject: string;
   body: string;
   provider?: string;
+  account_key?: string;
 }): Promise<ActionCenterStatus> {
-  const res = await fetch(`${getBase()}/v1/action-center/stage-email`, {
+  const res = await authFetch('/v1/action-center/stage-email', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
@@ -1574,8 +1576,9 @@ export async function stageCalendarBrief(body: {
   location?: string;
   notes?: string;
   provider?: string;
+  account_key?: string;
 }): Promise<ActionCenterStatus> {
-  const res = await fetch(`${getBase()}/v1/action-center/stage-calendar`, {
+  const res = await authFetch('/v1/action-center/stage-calendar', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
@@ -1588,7 +1591,7 @@ export async function stageCalendarBrief(body: {
 }
 
 export async function approveActionCenterItem(): Promise<ActionCenterStatus> {
-  const res = await fetch(`${getBase()}/v1/action-center/approve`, { method: 'POST' });
+  const res = await authFetch('/v1/action-center/approve', { method: 'POST' });
   if (!res.ok) {
     const detail = await res.json().catch(() => ({ detail: res.statusText }));
     throw new Error(detail.detail || `Action approval failed: ${res.status}`);
@@ -1597,7 +1600,7 @@ export async function approveActionCenterItem(): Promise<ActionCenterStatus> {
 }
 
 export async function holdActionCenterItem(): Promise<ActionCenterStatus> {
-  const res = await fetch(`${getBase()}/v1/action-center/hold`, { method: 'POST' });
+  const res = await authFetch('/v1/action-center/hold', { method: 'POST' });
   if (!res.ok) {
     const detail = await res.json().catch(() => ({ detail: res.statusText }));
     throw new Error(detail.detail || `Action hold failed: ${res.status}`);
@@ -1606,7 +1609,7 @@ export async function holdActionCenterItem(): Promise<ActionCenterStatus> {
 }
 
 export async function fetchInboxSummary(limit: number = 5): Promise<InboxSummaryItem[]> {
-  const res = await fetch(`${getBase()}/v1/action-center/inbox-summary?limit=${limit}`);
+  const res = await authFetch(`/v1/action-center/inbox-summary?limit=${limit}`);
   if (!res.ok) {
     const detail = await res.json().catch(() => ({ detail: res.statusText }));
     throw new Error(detail.detail || `Inbox summary failed: ${res.status}`);
@@ -1621,8 +1624,9 @@ export async function stageInboxAction(body: {
   message_id: string;
   title: string;
   author: string;
+  account_key?: string;
 }): Promise<ActionCenterStatus> {
-  const res = await fetch(`${getBase()}/v1/action-center/stage-inbox-action`, {
+  const res = await authFetch('/v1/action-center/stage-inbox-action', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
@@ -1639,8 +1643,9 @@ export async function stageTask(body: {
   notes?: string;
   due_at?: string;
   provider?: string;
+  account_key?: string;
 }): Promise<ActionCenterStatus> {
-  const res = await fetch(`${getBase()}/v1/action-center/stage-task`, {
+  const res = await authFetch('/v1/action-center/stage-task', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
@@ -1653,7 +1658,7 @@ export async function stageTask(body: {
 }
 
 export async function fetchTaskSummary(limit: number = 6): Promise<TaskSummaryItem[]> {
-  const res = await fetch(`${getBase()}/v1/action-center/task-summary?limit=${limit}`);
+  const res = await authFetch(`/v1/action-center/task-summary?limit=${limit}`);
   if (!res.ok) {
     const detail = await res.json().catch(() => ({ detail: res.statusText }));
     throw new Error(detail.detail || `Task summary failed: ${res.status}`);
@@ -2327,7 +2332,7 @@ export async function actOnOperatorMission(body: {
 }
 
 export async function fetchReminders(limit: number = 8): Promise<ReminderItem[]> {
-  const res = await fetch(`${getBase()}/v1/action-center/reminders?limit=${limit}`);
+  const res = await authFetch(`/v1/action-center/reminders?limit=${limit}`);
   if (!res.ok) {
     const detail = await res.json().catch(() => ({ detail: res.statusText }));
     throw new Error(detail.detail || `Reminder fetch failed: ${res.status}`);

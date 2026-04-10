@@ -65,6 +65,33 @@ def test_scan_empty_store(tmp_path: Path) -> None:
     assert "no chunks" in result.content.lower() or result.content == ""
 
 
+def test_scan_respects_owner_scope(tmp_path: Path) -> None:
+    from openjarvis.tools.scan_chunks import ScanChunksTool
+
+    store = KnowledgeStore(str(tmp_path / "scoped.db"))
+    store.store(
+        "Owner talked with Sequoia",
+        source="granola",
+        doc_type="document",
+        owner_user_id="owner-1",
+    )
+    store.store(
+        "Guest talked with Benchmark",
+        source="granola",
+        doc_type="document",
+        owner_user_id="guest-1",
+    )
+    engine = _fake_engine()
+    tool = ScanChunksTool(store=store, engine=engine, model="test", owner_user_id="owner-1")
+    result = tool.execute(question="Which VCs have I spoken with?")
+    assert result.success
+    call_args = engine.generate.call_args
+    messages = call_args[0][0] if call_args[0] else call_args[1].get("messages", [])
+    all_content = str(messages)
+    assert "Sequoia" in all_content
+    assert "Benchmark" not in all_content
+
+
 def test_registered() -> None:
     from openjarvis.tools.scan_chunks import ScanChunksTool
 

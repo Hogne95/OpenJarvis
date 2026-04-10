@@ -14,6 +14,10 @@ from pydantic import BaseModel
 
 from openjarvis.connectors.store import KnowledgeStore
 from openjarvis.core.config import DEFAULT_CONFIG_DIR
+from openjarvis.server.auth import (
+    get_operator_memory_manager,
+    require_current_user_if_bootstrapped,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -161,6 +165,13 @@ def _get_store() -> KnowledgeStore:
     return KnowledgeStore(db_path=db_path)
 
 
+def _owner_user_id(request: Request) -> str:
+    user = require_current_user_if_bootstrapped(request)
+    if user is None:
+        return ""
+    return str(user.get("id", "")).strip()
+
+
 # ---------------------------------------------------------------------------
 # Schemas
 # ---------------------------------------------------------------------------
@@ -203,9 +214,7 @@ def _update_document_mission(
     result_data: dict[str, Any] | None = None,
     next_action: dict[str, Any] | None = None,
 ) -> None:
-    operator_memory = getattr(request.app.state, "operator_memory", None)
-    if operator_memory is None:
-        return
+    operator_memory = get_operator_memory_manager(request)
     mission_result_data = {
         "summary": summary,
         "result": result,
@@ -311,7 +320,7 @@ def _export_document_xlsx(title: str, mode: str, content: str) -> bytes:
 
 
 @router.post("/ingest", response_model=IngestResponse)
-async def ingest_paste(body: PasteRequest) -> IngestResponse:
+async def ingest_paste(body: PasteRequest, request: Request) -> IngestResponse:
     """Ingest pasted text into the knowledge store."""
     text = body.content.strip()
     if not text:
@@ -320,6 +329,7 @@ async def ingest_paste(body: PasteRequest) -> IngestResponse:
     store = _get_store()
     doc_id = str(uuid.uuid4())
     chunks = _chunk_text(text)
+    owner_user_id = _owner_user_id(request)
 
     for idx, chunk in enumerate(chunks):
         store.store(
@@ -329,6 +339,7 @@ async def ingest_paste(body: PasteRequest) -> IngestResponse:
             doc_id=doc_id,
             title=body.title or "Pasted text",
             chunk_index=idx,
+            owner_user_id=owner_user_id,
         )
 
     logger.info("Ingested %d chunks from pasted text (doc_id=%s)", len(chunks), doc_id)
@@ -337,12 +348,14 @@ async def ingest_paste(body: PasteRequest) -> IngestResponse:
 
 @router.post("/ingest/files", response_model=IngestResponse)
 async def ingest_files(
+    request: Request,
     files: List[UploadFile] = File(...),
     title: Optional[str] = Form(None),
 ) -> IngestResponse:
     """Ingest uploaded files into the knowledge store."""
     store = _get_store()
     total_chunks = 0
+    owner_user_id = _owner_user_id(request)
 
     for upload in files:
         filename = upload.filename or "untitled"
@@ -377,6 +390,7 @@ async def ingest_files(
                 doc_id=doc_id,
                 title=doc_title,
                 chunk_index=idx,
+                owner_user_id=owner_user_id,
             )
 
         total_chunks += len(chunks)
@@ -542,15 +556,14 @@ async def analyze_files(
     if choice and choice.message:
         content = (choice.message.content or "").strip()
 
-    operator_memory = getattr(request.app.state, "operator_memory", None)
-    if operator_memory is not None:
-        try:
-            operator_memory.add_explicit_memory(
-                f"Document analysis ({selected_mode}) for {title or ', '.join(filenames[:3])}: {content[:600]}",
-                tags=["document", selected_mode, "business-finance"],
-            )
-        except Exception:
-            logger.debug("Document analysis memory update skipped", exc_info=True)
+    try:
+        operator_memory = get_operator_memory_manager(request)
+        operator_memory.add_explicit_memory(
+            f"Document analysis ({selected_mode}) for {title or ', '.join(filenames[:3])}: {content[:600]}",
+            tags=["document", selected_mode, "business-finance"],
+        )
+    except Exception:
+        logger.debug("Document analysis memory update skipped", exc_info=True)
 
     _update_document_mission(
         request,

@@ -8,10 +8,12 @@ import uuid
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timedelta
 from email.mime.text import MIMEText
+from pathlib import Path
 from typing import Any
 
 import httpx
 
+from openjarvis.core.config import DEFAULT_CONFIG_DIR
 from openjarvis.connectors.gcalendar import (
     _DEFAULT_CREDENTIALS_PATH as _GCALENDAR_CREDENTIALS_PATH,
 )
@@ -57,7 +59,8 @@ class ActionEntry:
 class ActionCenterManager:
     """Stage assistant actions and execute only trusted, low-risk paths."""
 
-    def __init__(self) -> None:
+    def __init__(self, *, owner_user_id: str = "") -> None:
+        self._owner_user_id = owner_user_id.strip()
         self._pending: PendingAction | None = None
         self._history: list[ActionEntry] = []
         self._capabilities_cache: dict[str, Any] | None = None
@@ -174,6 +177,14 @@ class ActionCenterManager:
         except Exception:
             return {}
 
+    def _scoped_credentials_path(self, connector_id: str, payload: dict[str, Any], default_path: str) -> str:
+        account_key = str(payload.get("account_key", "")).strip()
+        if not self._owner_user_id or not account_key:
+            return default_path
+        scoped_dir = DEFAULT_CONFIG_DIR / "connectors" / "accounts" / self._owner_user_id / account_key
+        scoped_dir.mkdir(parents=True, exist_ok=True)
+        return str(scoped_dir / f"{connector_id}.json")
+
     def stage_email_draft(
         self,
         *,
@@ -181,6 +192,7 @@ class ActionCenterManager:
         subject: str,
         body: str,
         provider: str = "gmail",
+        account_key: str = "",
     ) -> dict[str, Any]:
         recipient_clean = recipient.strip()
         subject_clean = subject.strip()
@@ -198,6 +210,7 @@ class ActionCenterManager:
                 "subject": subject_clean,
                 "body": body_clean,
                 "provider": provider.strip().lower() or "gmail",
+                "account_key": account_key.strip(),
             },
         )
         return self.status()
@@ -212,6 +225,7 @@ class ActionCenterManager:
         location: str = "",
         notes: str = "",
         provider: str = "",
+        account_key: str = "",
     ) -> dict[str, Any]:
         title_clean = title.strip()
         start_clean = start_at.strip()
@@ -231,6 +245,7 @@ class ActionCenterManager:
                 "location": location.strip(),
                 "notes": notes.strip(),
                 "provider": provider.strip().lower(),
+                "account_key": account_key.strip(),
             },
         )
         return self.status()
@@ -243,6 +258,7 @@ class ActionCenterManager:
         message_id: str,
         title: str,
         author: str,
+        account_key: str = "",
     ) -> dict[str, Any]:
         cleaned_kind = action_kind.strip().lower()
         if cleaned_kind not in {"archive", "star"}:
@@ -261,6 +277,7 @@ class ActionCenterManager:
                 "message_id": message_id.strip(),
                 "title": title.strip(),
                 "author": author.strip(),
+                "account_key": account_key.strip(),
             },
         )
         return self.status()
@@ -272,6 +289,7 @@ class ActionCenterManager:
         notes: str = "",
         due_at: str = "",
         provider: str = "",
+        account_key: str = "",
     ) -> dict[str, Any]:
         title_clean = title.strip()
         if not title_clean:
@@ -287,6 +305,7 @@ class ActionCenterManager:
                 "notes": notes.strip(),
                 "due_at": due_at.strip(),
                 "provider": provider.strip().lower(),
+                "account_key": account_key.strip(),
             },
         )
         return self.status()
@@ -360,7 +379,9 @@ class ActionCenterManager:
                 {"provider": "gmail_imap", "execution_mode": "manual_draft"},
             )
 
-        tokens_path = resolve_google_credentials(_GMAIL_CREDENTIALS_PATH)
+        tokens_path = resolve_google_credentials(
+            self._scoped_credentials_path("gmail", payload, _GMAIL_CREDENTIALS_PATH)
+        )
         tokens = load_tokens(tokens_path)
         if not tokens:
             return (
@@ -406,7 +427,9 @@ class ActionCenterManager:
 
     def _approve_calendar_brief(self, payload: dict[str, Any]) -> tuple[str, str, dict[str, Any]]:
         provider = str(payload.get("provider", "")).strip().lower()
-        tokens_path = resolve_google_credentials(_GCALENDAR_CREDENTIALS_PATH)
+        tokens_path = resolve_google_credentials(
+            self._scoped_credentials_path("gcalendar", payload, _GCALENDAR_CREDENTIALS_PATH)
+        )
         tokens = load_tokens(tokens_path)
         token = (tokens or {}).get("access_token") or (tokens or {}).get("token")
         start_at = str(payload["start_at"]).strip()
@@ -495,7 +518,9 @@ class ActionCenterManager:
                 {"source": source},
             )
 
-        tokens_path = resolve_google_credentials(_GMAIL_CREDENTIALS_PATH)
+        tokens_path = resolve_google_credentials(
+            self._scoped_credentials_path("gmail", payload, _GMAIL_CREDENTIALS_PATH)
+        )
         tokens = load_tokens(tokens_path)
         token = (tokens or {}).get("access_token") or (tokens or {}).get("token")
         if not token:
@@ -538,7 +563,9 @@ class ActionCenterManager:
                 "Task plan is ready for Outlook / Microsoft 365, but direct task creation is not supported yet.",
                 {"provider": "outlook", "execution_mode": "manual_plan"},
             )
-        tokens_path = resolve_google_credentials(_GTASKS_CREDENTIALS_PATH)
+        tokens_path = resolve_google_credentials(
+            self._scoped_credentials_path("google_tasks", payload, _GTASKS_CREDENTIALS_PATH)
+        )
         tokens = load_tokens(tokens_path)
         token = (tokens or {}).get("access_token") or (tokens or {}).get("token")
         if not token:

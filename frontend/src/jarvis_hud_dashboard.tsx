@@ -605,6 +605,7 @@ export default function JarvisHudDashboard({
   const [actionMode, setActionMode] = useState<'email' | 'calendar'>('email');
   const [actionBusy, setActionBusy] = useState<'stage' | 'approve' | 'hold' | null>(null);
   const [actionNotice, setActionNotice] = useState('');
+  const [actionAccountKey, setActionAccountKey] = useState('');
   const [emailRecipient, setEmailRecipient] = useState('');
   const [emailSubject, setEmailSubject] = useState('');
   const [emailBody, setEmailBody] = useState('');
@@ -5871,6 +5872,7 @@ export default function JarvisHudDashboard({
       .then(setDurableOperatorMemory)
       .catch(() => {});
     setActionMode('email');
+    setActionAccountKey(item.account_key || '');
     setEmailRecipient(item.author_email || '');
     setEmailSubject(item.title.toLowerCase().startsWith('re:') ? item.title : `Re: ${item.title}`);
     setEmailBody(
@@ -5905,6 +5907,7 @@ export default function JarvisHudDashboard({
       .then(setDurableOperatorMemory)
       .catch(() => {});
     setActionMode('email');
+    setActionAccountKey(item.account_key || '');
     setEmailRecipient(item.author_email || '');
     setEmailSubject(item.title.toLowerCase().startsWith('re:') ? item.title : `Re: ${item.title}`);
     setEmailBody(
@@ -5921,6 +5924,7 @@ export default function JarvisHudDashboard({
       .then(setDurableOperatorMemory)
       .catch(() => {});
     setActionMode('calendar');
+    setActionAccountKey(item.account_key || '');
     setCalendarTitle(`Follow-up: ${item.title}`);
     setCalendarAttendees(item.author_email || '');
     setCalendarLocation('');
@@ -5941,6 +5945,7 @@ export default function JarvisHudDashboard({
         message_id: messageId,
         title: item.title,
         author: item.author,
+        account_key: item.account_key || undefined,
       });
       setActionCenter(next);
       setActionNotice(`${actionKind === 'archive' ? 'Archive' : 'Star'} action staged for approval.`);
@@ -6875,6 +6880,7 @@ export default function JarvisHudDashboard({
           subject: emailSubject,
           body: emailBody,
           provider: actionCenterCapabilities?.email.preferred_provider || connectorSummary.emailProvider || 'gmail',
+          account_key: actionAccountKey || undefined,
         });
       } else {
         next = await stageCalendarBrief({
@@ -6885,10 +6891,12 @@ export default function JarvisHudDashboard({
           location: calendarLocation,
           notes: calendarNotes,
           provider: actionCenterCapabilities?.calendar.preferred_provider || connectorSummary.calendarProvider || '',
+          account_key: actionAccountKey || undefined,
         });
       }
       setActionCenter(next);
       setActionNotice(actionMode === 'email' ? 'Email draft staged for approval.' : 'Calendar plan staged for approval.');
+      setActionAccountKey('');
     } catch (error) {
       setActionNotice(error instanceof Error ? error.message : 'Unable to stage action.');
     } finally {
@@ -7728,7 +7736,10 @@ ${item.details}`,
                 <Suspense fallback={<DashboardSectionFallback label="Loading action center..." />}>
                   <ActionCenterPanel
                     actionMode={actionMode}
-                    onActionModeChange={setActionMode}
+                    onActionModeChange={(mode) => {
+                      setActionMode(mode);
+                      setActionAccountKey('');
+                    }}
                     emailRecipient={emailRecipient}
                     onEmailRecipientChange={setEmailRecipient}
                     emailSubject={emailSubject}

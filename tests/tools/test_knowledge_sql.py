@@ -83,6 +83,20 @@ def test_filter_by_source(store: KnowledgeStore) -> None:
     assert "Carol" in result.content
 
 
+def test_scoped_sql_limits_results_to_owner(tmp_path: Path) -> None:
+    from openjarvis.tools.knowledge_sql import KnowledgeSQLTool
+
+    store = KnowledgeStore(str(tmp_path / "scoped.db"))
+    store.store("Owner mail", source="gmail", doc_type="email", author="Owner", owner_user_id="owner-1")
+    store.store("Guest mail", source="gmail", doc_type="email", author="Guest", owner_user_id="guest-1")
+
+    tool = KnowledgeSQLTool(store=store, owner_user_id="owner-1")
+    result = tool.execute(query="SELECT author, COUNT(*) as n FROM knowledge_chunks GROUP BY author ORDER BY n DESC")
+    assert result.success
+    assert "Owner" in result.content
+    assert "Guest" not in result.content
+
+
 def test_registered() -> None:
     from openjarvis.tools.knowledge_sql import KnowledgeSQLTool
 

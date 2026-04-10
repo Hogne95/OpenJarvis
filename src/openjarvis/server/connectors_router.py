@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import inspect
 import logging
 import time
+from pathlib import Path
 from typing import Any, Dict, Optional
 
 logger = logging.getLogger(__name__)
@@ -31,6 +33,7 @@ def _ensure_connectors_registered() -> None:
     import sys
 
     from openjarvis.core.registry import ConnectorRegistry
+    from openjarvis.core.config import DEFAULT_CONFIG_DIR
 
     # First, try a normal import (works if modules haven't been imported yet).
     try:
@@ -114,6 +117,7 @@ def create_connectors_router():
     if ConnectRequest is None or ConnectorAccountCreateRequest is None or ConnectorAccountUpdateRequest is None:
         raise ImportError("pydantic is required for the connectors router")
 
+    from openjarvis.core.config import DEFAULT_CONFIG_DIR
     from openjarvis.core.registry import ConnectorRegistry
     from openjarvis.server.auth import require_current_user_if_bootstrapped, require_role_if_bootstrapped
 
@@ -123,21 +127,122 @@ def create_connectors_router():
     # Helpers
     # ------------------------------------------------------------------
 
-    def _get_or_create(connector_id: str) -> Any:
+    def _instance_cache_key(
+        connector_id: str,
+        *,
+        owner_user_id: str = "",
+        account_key: str = "",
+    ) -> str:
+        if owner_user_id and account_key:
+            return f"{connector_id}::user={owner_user_id}::account={account_key}"
+        return connector_id
+
+    def _account_credentials_path(owner_user_id: str, account_id: str, connector_id: str) -> str:
+        scoped_dir = (
+            DEFAULT_CONFIG_DIR
+            / "connectors"
+            / "accounts"
+            / owner_user_id
+            / account_id
+        )
+        scoped_dir.mkdir(parents=True, exist_ok=True)
+        return str(scoped_dir / f"{connector_id}.json")
+
+    def _resolve_account(
+        request: FastAPIRequest,
+        account_id: Optional[str],
+    ) -> Optional[Dict[str, Any]]:
+        if not account_id:
+            return None
+        user = require_current_user_if_bootstrapped(request)
+        if user is None:
+            raise HTTPException(status_code=401, detail="Authentication required")
+        store = getattr(request.app.state, "connector_account_store", None)
+        if store is None:
+            raise HTTPException(status_code=503, detail="Connector account store not configured")
+        account = store.get_account(account_id, owner_user_id=str(user["id"]))
+        if account is None:
+            raise HTTPException(status_code=404, detail="Connector account not found")
+        return account
+
+    def _instantiate_connector(
+        connector_id: str,
+        *,
+        owner_user_id: str = "",
+        account_key: str = "",
+    ) -> Any:
+        cls = ConnectorRegistry.get(connector_id)
+        kwargs: Dict[str, Any] = {}
+        if owner_user_id and account_key:
+            credentials_path = _account_credentials_path(owner_user_id, account_key, connector_id)
+            try:
+                params = inspect.signature(cls.__init__).parameters
+            except (TypeError, ValueError):
+                params = {}
+            if "credentials_path" in params:
+                kwargs["credentials_path"] = credentials_path
+            if "token_path" in params:
+                kwargs["token_path"] = credentials_path
+        return cls(**kwargs)
+
+    def _get_or_create(
+        connector_id: str,
+        *,
+        owner_user_id: str = "",
+        account_key: str = "",
+    ) -> Any:
         """Return a cached connector instance, creating it if needed."""
-        if connector_id not in _instances:
+        cache_key = _instance_cache_key(
+            connector_id,
+            owner_user_id=owner_user_id,
+            account_key=account_key,
+        )
+        if cache_key not in _instances:
             cls = ConnectorRegistry.get(connector_id)
             if cls is None:
                 raise KeyError(connector_id)
-            _instances[connector_id] = cls()
-        return _instances[connector_id]
+            _instances[cache_key] = _instantiate_connector(
+                connector_id,
+                owner_user_id=owner_user_id,
+                account_key=account_key,
+            )
+        return _instances[cache_key]
 
-    def _invalidate_connector_cache(connector_id: str) -> None:
-        _instances.pop(connector_id, None)
-        _chunk_count_cache.pop(connector_id, None)
-        _chunk_count_cache_at.pop(connector_id, None)
+    def _invalidate_connector_cache(
+        connector_id: str,
+        *,
+        owner_user_id: str = "",
+        account_key: str = "",
+    ) -> None:
+        cache_key = _instance_cache_key(
+            connector_id,
+            owner_user_id=owner_user_id,
+            account_key=account_key,
+        )
+        _instances.pop(cache_key, None)
+        _chunk_count_cache.pop(cache_key, None)
+        _chunk_count_cache_at.pop(cache_key, None)
 
-    def _chunk_count(connector_id: str) -> int:
+    def _invalidate_chunk_cache(
+        connector_id: str,
+        *,
+        owner_user_id: str = "",
+        account_key: str = "",
+    ) -> None:
+        cache_key = _instance_cache_key(
+            connector_id,
+            owner_user_id=owner_user_id,
+            account_key=account_key,
+        )
+        _chunk_count_cache.pop(cache_key, None)
+        _chunk_count_cache_at.pop(cache_key, None)
+
+    def _chunk_count(
+        connector_id: str,
+        *,
+        owner_user_id: str = "",
+        account_key: str = "",
+    ) -> int:
         """Return cached knowledge chunk counts for connector summaries.
 
         Root cause: the HUD polls connector status frequently, and opening the
@@ -145,39 +250,62 @@ def create_connectors_router():
         A short cache keeps the status card responsive without hiding real sync
         progress for long.
         """
+        cache_key = _instance_cache_key(
+            connector_id,
+            owner_user_id=owner_user_id,
+            account_key=account_key,
+        )
         now = time.monotonic()
-        cached_at = _chunk_count_cache_at.get(connector_id)
+        cached_at = _chunk_count_cache_at.get(cache_key)
         if (
             cached_at is not None
             and now - cached_at < _CHUNK_COUNT_CACHE_TTL_SECONDS
         ):
-            return _chunk_count_cache.get(connector_id, 0)
+            return _chunk_count_cache.get(cache_key, 0)
 
         chunks = 0
         try:
             from openjarvis.connectors.store import KnowledgeStore
 
             store = KnowledgeStore()
+            where = ["source = ?"]
+            params: list[Any] = [connector_id]
+            if owner_user_id:
+                where.append("owner_user_id = ?")
+                params.append(owner_user_id)
+            if account_key:
+                where.append("account_key = ?")
+                params.append(account_key)
             rows = store._conn.execute(
-                "SELECT COUNT(*) FROM knowledge_chunks WHERE source = ?",
-                (connector_id,),
+                f"SELECT COUNT(*) FROM knowledge_chunks WHERE {' AND '.join(where)}",
+                params,
             ).fetchone()
             chunks = rows[0] if rows else 0
         except Exception:
-            chunks = _chunk_count_cache.get(connector_id, 0)
+            chunks = _chunk_count_cache.get(cache_key, 0)
 
-        _chunk_count_cache[connector_id] = chunks
-        _chunk_count_cache_at[connector_id] = now
+        _chunk_count_cache[cache_key] = chunks
+        _chunk_count_cache_at[cache_key] = now
         return chunks
 
-    def _connector_summary(connector_id: str, instance: Any) -> Dict[str, Any]:
+    def _connector_summary(
+        connector_id: str,
+        instance: Any,
+        *,
+        owner_user_id: str = "",
+        account_key: str = "",
+    ) -> Dict[str, Any]:
         """Build the dict returned by GET /connectors."""
         return {
             "connector_id": connector_id,
             "display_name": getattr(instance, "display_name", connector_id),
             "auth_type": getattr(instance, "auth_type", "unknown"),
             "connected": instance.is_connected(),
-            "chunks": _chunk_count(connector_id),
+            "chunks": _chunk_count(
+                connector_id,
+                owner_user_id=owner_user_id,
+                account_key=account_key,
+            ),
         }
 
     # ------------------------------------------------------------------
@@ -257,15 +385,30 @@ def create_connectors_router():
         return {"deleted": True}
 
     @router.get("")
-    async def list_connectors(request: FastAPIRequest):
+    async def list_connectors(request: FastAPIRequest, account_id: Optional[str] = None):
         """List all registered connectors with their connection status."""
-        require_role_if_bootstrapped(request, "superadmin")
+        account = _resolve_account(request, account_id)
+        if account is None:
+            require_role_if_bootstrapped(request, "superadmin")
         _ensure_connectors_registered()
+        owner_user_id = str(account["owner_user_id"]) if account is not None else ""
+        account_key = str(account["id"]) if account is not None else ""
         results = []
         for key in sorted(ConnectorRegistry.keys()):
             try:
-                instance = _get_or_create(key)
-                results.append(_connector_summary(key, instance))
+                instance = _get_or_create(
+                    key,
+                    owner_user_id=owner_user_id,
+                    account_key=account_key,
+                )
+                results.append(
+                    _connector_summary(
+                        key,
+                        instance,
+                        owner_user_id=owner_user_id,
+                        account_key=account_key,
+                    )
+                )
             except Exception:
                 results.append(
                     {
@@ -278,16 +421,28 @@ def create_connectors_router():
         return {"connectors": results}
 
     @router.get("/{connector_id}")
-    async def connector_detail(connector_id: str, request: FastAPIRequest):
+    async def connector_detail(
+        connector_id: str,
+        request: FastAPIRequest,
+        account_id: Optional[str] = None,
+    ):
         """Return detail for a single connector."""
-        require_role_if_bootstrapped(request, "superadmin")
+        account = _resolve_account(request, account_id)
+        if account is None:
+            require_role_if_bootstrapped(request, "superadmin")
         _ensure_connectors_registered()
         if not ConnectorRegistry.contains(connector_id):
             raise HTTPException(
                 status_code=404,
                 detail=f"Connector '{connector_id}' not found",
             )
-        instance = _get_or_create(connector_id)
+        owner_user_id = str(account["owner_user_id"]) if account is not None else ""
+        account_key = str(account["id"]) if account is not None else ""
+        instance = _get_or_create(
+            connector_id,
+            owner_user_id=owner_user_id,
+            account_key=account_key,
+        )
 
         # Try to get an OAuth URL if applicable; ignore errors for non-OAuth
         # connectors.
@@ -335,16 +490,29 @@ def create_connectors_router():
         }
 
     @router.post("/{connector_id}/connect")
-    async def connect_connector(connector_id: str, req: ConnectRequest, request: FastAPIRequest):
+    async def connect_connector(
+        connector_id: str,
+        req: ConnectRequest,
+        request: FastAPIRequest,
+        account_id: Optional[str] = None,
+    ):
         """Connect a connector using the supplied credentials."""
-        require_role_if_bootstrapped(request, "superadmin")
+        account = _resolve_account(request, account_id)
+        if account is None:
+            require_role_if_bootstrapped(request, "superadmin")
         _ensure_connectors_registered()
         if not ConnectorRegistry.contains(connector_id):
             raise HTTPException(
                 status_code=404,
                 detail=f"Connector '{connector_id}' not found",
             )
-        instance = _get_or_create(connector_id)
+        owner_user_id = str(account["owner_user_id"]) if account is not None else ""
+        account_key = str(account["id"]) if account is not None else ""
+        instance = _get_or_create(
+            connector_id,
+            owner_user_id=owner_user_id,
+            account_key=account_key,
+        )
 
         try:
             auth_type = getattr(instance, "auth_type", "unknown")
@@ -391,15 +559,22 @@ def create_connectors_router():
                     from openjarvis.connectors.sync_engine import SyncEngine
 
                     store = KnowledgeStore()
-                    pipeline = IngestionPipeline(store)
+                    pipeline = IngestionPipeline(
+                        store,
+                        owner_user_id=owner_user_id,
+                        account_key=account_key,
+                    )
                     engine = SyncEngine(pipeline)
                     engine.sync(instance)
                     logger.info(
                         "Auto-ingested %s after connect",
                         connector_id,
                     )
-                    _chunk_count_cache.pop(connector_id, None)
-                    _chunk_count_cache_at.pop(connector_id, None)
+                    _invalidate_chunk_cache(
+                        connector_id,
+                        owner_user_id=owner_user_id,
+                        account_key=account_key,
+                    )
                 except Exception as exc:
                     logger.warning(
                         "Auto-ingest failed for %s: %s",
@@ -407,6 +582,15 @@ def create_connectors_router():
                         exc,
                     )
 
+            if account is not None:
+                try:
+                    request.app.state.connector_account_store.update_account(
+                        str(account["id"]),
+                        owner_user_id=owner_user_id,
+                        status="connected",
+                    )
+                except Exception:
+                    logger.debug("Connector account status update skipped", exc_info=True)
             threading.Thread(target=_ingest, daemon=True).start()
 
         return {
@@ -416,24 +600,48 @@ def create_connectors_router():
         }
 
     @router.post("/{connector_id}/disconnect")
-    async def disconnect_connector(connector_id: str, request: FastAPIRequest):
+    async def disconnect_connector(
+        connector_id: str,
+        request: FastAPIRequest,
+        account_id: Optional[str] = None,
+    ):
         """Disconnect a connector and clear its credentials."""
-        require_role_if_bootstrapped(request, "superadmin")
+        account = _resolve_account(request, account_id)
+        if account is None:
+            require_role_if_bootstrapped(request, "superadmin")
         _ensure_connectors_registered()
         if not ConnectorRegistry.contains(connector_id):
             raise HTTPException(
                 status_code=404,
                 detail=f"Connector '{connector_id}' not found",
             )
-        instance = _get_or_create(connector_id)
+        owner_user_id = str(account["owner_user_id"]) if account is not None else ""
+        account_key = str(account["id"]) if account is not None else ""
+        instance = _get_or_create(
+            connector_id,
+            owner_user_id=owner_user_id,
+            account_key=account_key,
+        )
         try:
             instance.disconnect()
         except Exception as exc:
             raise HTTPException(status_code=500, detail=str(exc))
         _sync_state.pop(connector_id, None)
         _sync_threads.pop(connector_id, None)
-        _chunk_count_cache.pop(connector_id, None)
-        _chunk_count_cache_at.pop(connector_id, None)
+        _invalidate_connector_cache(
+            connector_id,
+            owner_user_id=owner_user_id,
+            account_key=account_key,
+        )
+        if account is not None:
+            try:
+                request.app.state.connector_account_store.update_account(
+                    str(account["id"]),
+                    owner_user_id=owner_user_id,
+                    status="configured",
+                )
+            except Exception:
+                logger.debug("Connector account status reset skipped", exc_info=True)
         return {
             "connector_id": connector_id,
             "connected": False,
@@ -585,9 +793,15 @@ def create_connectors_router():
     _sync_state: Dict[str, Dict[str, Any]] = {}  # {connector_id: {state, error}}
 
     @router.post("/{connector_id}/sync")
-    def trigger_sync(connector_id: str, request: FastAPIRequest) -> Dict[str, Any]:
+    def trigger_sync(
+        connector_id: str,
+        request: FastAPIRequest,
+        account_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
         """Trigger a sync in the background and return immediately."""
-        require_role_if_bootstrapped(request, "superadmin")
+        account = _resolve_account(request, account_id)
+        if account is None:
+            require_role_if_bootstrapped(request, "superadmin")
         import threading
 
         _ensure_connectors_registered()
@@ -596,7 +810,13 @@ def create_connectors_router():
                 status_code=404,
                 detail=f"Connector '{connector_id}' not found",
             )
-        inst = _get_or_create(connector_id)
+        owner_user_id = str(account["owner_user_id"]) if account is not None else ""
+        account_key = str(account["id"]) if account is not None else ""
+        inst = _get_or_create(
+            connector_id,
+            owner_user_id=owner_user_id,
+            account_key=account_key,
+        )
         if not inst.is_connected():
             raise HTTPException(
                 status_code=400,
@@ -621,13 +841,20 @@ def create_connectors_router():
                 from openjarvis.connectors.sync_engine import SyncEngine
 
                 store = KnowledgeStore()
-                pipeline = IngestionPipeline(store=store)
+                pipeline = IngestionPipeline(
+                    store=store,
+                    owner_user_id=owner_user_id,
+                    account_key=account_key,
+                )
                 engine = SyncEngine(pipeline=pipeline)
                 engine.sync(inst)
                 logger.info("Sync completed for %s", connector_id)
                 _sync_state[connector_id] = {"state": "complete", "error": None}
-                _chunk_count_cache.pop(connector_id, None)
-                _chunk_count_cache_at.pop(connector_id, None)
+                _invalidate_chunk_cache(
+                    connector_id,
+                    owner_user_id=owner_user_id,
+                    account_key=account_key,
+                )
             except Exception as exc:
                 error_msg = str(exc)
                 if "401" in error_msg or "Unauthorized" in error_msg:
@@ -651,23 +878,43 @@ def create_connectors_router():
             return {
                 "connector_id": connector_id,
                 "status": "complete" if bg.get("state") == "complete" else bg.get("state", "started"),
-                "chunks_indexed": _chunk_count(connector_id),
+                "chunks_indexed": _chunk_count(
+                    connector_id,
+                    owner_user_id=owner_user_id,
+                    account_key=account_key,
+                ),
                 "error": bg.get("error"),
             }
 
         return {
             "connector_id": connector_id,
             "status": "started",
-            "chunks_indexed": _chunk_count(connector_id),
+            "chunks_indexed": _chunk_count(
+                connector_id,
+                owner_user_id=owner_user_id,
+                account_key=account_key,
+            ),
         }
 
     @router.get("/{connector_id}/sync")
-    async def sync_status(connector_id: str, request: FastAPIRequest):
+    async def sync_status(
+        connector_id: str,
+        request: FastAPIRequest,
+        account_id: Optional[str] = None,
+    ):
         """Return the current sync status for a connector."""
-        require_role_if_bootstrapped(request, "superadmin")
+        account = _resolve_account(request, account_id)
+        if account is None:
+            require_role_if_bootstrapped(request, "superadmin")
         _ensure_connectors_registered()
+        owner_user_id = str(account["owner_user_id"]) if account is not None else ""
+        account_key = str(account["id"]) if account is not None else ""
         try:
-            instance = _get_or_create(connector_id)
+            instance = _get_or_create(
+                connector_id,
+                owner_user_id=owner_user_id,
+                account_key=account_key,
+            )
         except Exception:
             raise HTTPException(
                 status_code=404,

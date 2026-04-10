@@ -122,6 +122,7 @@ function UploadForm({ onDone }: { onDone?: () => void }) {
     try {
       const res = await fetch(`${getBase()}/v1/connectors/upload/ingest`, {
         method: 'POST',
+        credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ title: title.trim(), content }),
       });
@@ -153,6 +154,7 @@ function UploadForm({ onDone }: { onDone?: () => void }) {
 
       const res = await fetch(`${getBase()}/v1/connectors/upload/ingest/files`, {
         method: 'POST',
+        credentials: 'include',
         body: formData,
       });
       if (!res.ok) {
@@ -306,12 +308,14 @@ function SyncStatusDisplay({
   sync,
   unitLabel,
   connectorId,
+  accountId,
   onSyncTriggered,
 }: {
   chunks: number;
   sync: SyncStatus | undefined;
   unitLabel: string;
   connectorId: string;
+  accountId?: string | null;
   onSyncTriggered: () => void;
 }) {
   const [syncing, setSyncing] = useState(false);
@@ -321,7 +325,7 @@ function SyncStatusDisplay({
     setSyncing(true);
     setSyncError('');
     try {
-      await triggerSync(connectorId);
+      await triggerSync(connectorId, accountId || undefined);
       onSyncTriggered();
     } catch (err: any) {
       setSyncError(err.message || 'Sync failed');
@@ -473,7 +477,17 @@ function SyncStatusDisplay({
   );
 }
 
-function ConnectorAccountsPanel({ currentUserRole }: { currentUserRole: string | undefined }) {
+function ConnectorAccountsPanel({
+  currentUserRole,
+  selectedAccountId,
+  onSelectAccount,
+  onAccountsChange,
+}: {
+  currentUserRole: string | undefined;
+  selectedAccountId?: string | null;
+  onSelectAccount?: (accountId: string | null) => void;
+  onAccountsChange?: (accounts: ConnectorAccount[]) => void;
+}) {
   const [accounts, setAccounts] = useState<ConnectorAccount[]>([]);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -488,14 +502,16 @@ function ConnectorAccountsPanel({ currentUserRole }: { currentUserRole: string |
   const loadAccounts = useCallback(async () => {
     setLoading(true);
     try {
-      setAccounts(await listConnectorAccounts());
+      const nextAccounts = await listConnectorAccounts();
+      setAccounts(nextAccounts);
+      onAccountsChange?.(nextAccounts);
       setError('');
     } catch (err: any) {
       setError(err.message || 'Failed to load accounts');
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [onAccountsChange]);
 
   useEffect(() => {
     void loadAccounts();
@@ -512,7 +528,12 @@ function ConnectorAccountsPanel({ currentUserRole }: { currentUserRole: string |
         external_identity: form.external_identity.trim(),
         metadata: { created_from: 'data_sources_page' },
       });
-      setAccounts((prev) => [created, ...prev]);
+      setAccounts((prev) => {
+        const nextAccounts = [created, ...prev];
+        onAccountsChange?.(nextAccounts);
+        if (!selectedAccountId) onSelectAccount?.(created.id);
+        return nextAccounts;
+      });
       setForm((prev) => ({ ...prev, label: '', external_identity: '' }));
       setError('');
     } catch (err: any) {
@@ -525,7 +546,14 @@ function ConnectorAccountsPanel({ currentUserRole }: { currentUserRole: string |
   const handleDelete = async (accountId: string) => {
     try {
       await deleteConnectorAccount(accountId);
-      setAccounts((prev) => prev.filter((account) => account.id !== accountId));
+      setAccounts((prev) => {
+        const nextAccounts = prev.filter((account) => account.id !== accountId);
+        onAccountsChange?.(nextAccounts);
+        if (selectedAccountId === accountId) {
+          onSelectAccount?.(nextAccounts[0]?.id || null);
+        }
+        return nextAccounts;
+      });
       setError('');
     } catch (err: any) {
       setError(err.message || 'Failed to delete account');
@@ -577,7 +605,7 @@ function ConnectorAccountsPanel({ currentUserRole }: { currentUserRole: string |
         Root cause: JARVIS used to treat connectors as one shared system surface. This account registry is the first privacy-safe layer, so each user can declare multiple inbox identities without exposing them to anyone else.
         {currentUserRole !== 'superadmin' && (
           <div style={{ marginTop: 6 }}>
-            Global connector setup is still limited to admins until per-user connector credential storage is finished, but your account labels are already private to your session.
+            Pick one of your accounts below, then connect data sources into that private account workspace. Other users cannot see or reuse those credentials.
           </div>
         )}
       </div>
@@ -637,6 +665,22 @@ function ConnectorAccountsPanel({ currentUserRole }: { currentUserRole: string |
         </div>
       ) : (
         <div style={{ display: 'grid', gap: 8 }}>
+          <div style={{ marginBottom: 4 }}>
+            <div style={{ fontSize: 11, color: 'var(--color-text-secondary)', marginBottom: 6 }}>
+              Active account
+            </div>
+            <select
+              value={selectedAccountId || ''}
+              onChange={(e) => onSelectAccount?.(e.target.value || null)}
+              style={{ ...inputStyle, maxWidth: 280 }}
+            >
+              {accounts.map((account) => (
+                <option key={account.id} value={account.id}>
+                  {account.label} ({account.provider})
+                </option>
+              ))}
+            </select>
+          </div>
           {accounts.map((account) => (
             <div
               key={account.id}
@@ -708,15 +752,43 @@ function ConnectorAccountsPanel({ currentUserRole }: { currentUserRole: string |
 
 function DataSourcesSection() {
   const currentUser = useAppStore((s) => s.currentUser);
+  const [accounts, setAccounts] = useState<ConnectorAccount[]>([]);
+  const [accountsLoading, setAccountsLoading] = useState(false);
   const [connectors, setConnectors] = useState<
     Array<{ connector_id: string; display_name: string; connected: boolean; chunks: number }>
   >([]);
   const [syncStatuses, setSyncStatuses] = useState<Record<string, SyncStatus>>({});
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [selectedAccountId, setSelectedAccountId] = useState<string | null>(null);
+
+  const isSuperadmin = currentUser?.role === 'superadmin';
+  const effectiveAccountId = isSuperadmin ? selectedAccountId : selectedAccountId || null;
+  const needsAccountSelection = !isSuperadmin && !effectiveAccountId;
+
+  const loadAccounts = useCallback(async () => {
+    setAccountsLoading(true);
+    try {
+      const nextAccounts = await listConnectorAccounts();
+      setAccounts(nextAccounts);
+      setSelectedAccountId((prev) => {
+        if (prev && nextAccounts.some((account) => account.id === prev)) return prev;
+        return nextAccounts[0]?.id || null;
+      });
+    } catch {
+      setAccounts([]);
+      setSelectedAccountId(null);
+    } finally {
+      setAccountsLoading(false);
+    }
+  }, []);
 
   const loadConnectors = useCallback(() => {
-    listConnectors()
+    if (needsAccountSelection) {
+      setConnectors([]);
+      return;
+    }
+    listConnectors(effectiveAccountId || undefined)
       .then((list) =>
         setConnectors(
           list.map((c) => ({
@@ -728,21 +800,29 @@ function DataSourcesSection() {
         ),
       )
       .catch(() => {});
-  }, []);
+  }, [effectiveAccountId, needsAccountSelection]);
 
   // Poll sync status for connected sources
   const loadSyncStatuses = useCallback(async () => {
+    if (needsAccountSelection) {
+      setSyncStatuses({});
+      return;
+    }
     const connected = connectors.filter((c) => c.connected);
     const statuses: Record<string, SyncStatus> = {};
     await Promise.all(
       connected.map(async (c) => {
         try {
-          statuses[c.connector_id] = await getSyncStatus(c.connector_id);
+          statuses[c.connector_id] = await getSyncStatus(c.connector_id, effectiveAccountId || undefined);
         } catch { /* */ }
       }),
     );
     setSyncStatuses((prev) => ({ ...prev, ...statuses }));
-  }, [connectors]);
+  }, [connectors, effectiveAccountId, needsAccountSelection]);
+
+  useEffect(() => {
+    void loadAccounts();
+  }, [loadAccounts]);
 
   useEffect(() => {
     loadConnectors();
@@ -769,18 +849,22 @@ function DataSourcesSection() {
   const [connectError, setConnectError] = useState<string>('');
 
   const handleConnect = async (id: string, req: ConnectRequest) => {
+    if (needsAccountSelection) {
+      setConnectError('Choose one of your accounts first so JARVIS knows which private connector space to use.');
+      return;
+    }
     setLoading(true);
     setConnectingId(id);
     setConnectStage('Connecting...');
     setConnectError('');
     try {
-      await connectSource(id, req);
+      await connectSource(id, req, effectiveAccountId || undefined);
       setConnectStage('Connected! Starting sync...');
 
       // Wait for connector to show as connected
       for (let i = 0; i < 20; i++) {
         await new Promise((r) => setTimeout(r, 2000));
-        const updated = await listConnectors();
+        const updated = await listConnectors(effectiveAccountId || undefined);
         const target = updated.find((c) => c.connector_id === id);
         if (target?.connected) {
           setConnectors(updated.map((c) => ({
@@ -797,7 +881,7 @@ function DataSourcesSection() {
       // Trigger sync
       setConnectStage('Syncing data...');
       try {
-        await triggerSync(id);
+        await triggerSync(id, effectiveAccountId || undefined);
       } catch { /* sync may already be running */ }
 
       // Close form after a brief moment
@@ -829,7 +913,66 @@ function DataSourcesSection() {
 
   return (
     <div>
-      <ConnectorAccountsPanel currentUserRole={currentUser?.role} />
+      <ConnectorAccountsPanel
+        currentUserRole={currentUser?.role}
+        selectedAccountId={selectedAccountId}
+        onSelectAccount={setSelectedAccountId}
+        onAccountsChange={setAccounts}
+      />
+
+      <div
+        style={{
+          background: 'var(--color-bg-secondary)',
+          border: '1px solid var(--color-border)',
+          borderRadius: 10,
+          padding: 12,
+          marginBottom: 14,
+          fontSize: 11,
+          color: 'var(--color-text-secondary)',
+        }}
+      >
+        Root cause: the connector runtime is now account-scoped, so the page needs an active account before it can safely connect or sync private inboxes.
+        <div style={{ marginTop: 6, display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+          {isSuperadmin && (
+            <>
+              <label htmlFor="connector-scope-select" style={{ fontWeight: 600, color: 'var(--color-text)' }}>
+                Connector scope
+              </label>
+              <select
+                id="connector-scope-select"
+                value={selectedAccountId || ''}
+                onChange={(e) => setSelectedAccountId(e.target.value || null)}
+                style={{
+                  padding: '6px 10px',
+                  background: 'var(--color-bg)',
+                  border: '1px solid var(--color-border)',
+                  borderRadius: 6,
+                  color: 'var(--color-text)',
+                  fontSize: 12,
+                }}
+              >
+                <option value="">System-wide connectors</option>
+                {accounts.map((account) => (
+                  <option key={account.id} value={account.id}>
+                    {account.label} ({account.provider})
+                  </option>
+                ))}
+              </select>
+            </>
+          )}
+          {!isSuperadmin && accountsLoading && <span>Loading your accounts...</span>}
+          {!isSuperadmin && needsAccountSelection && !accountsLoading && (
+            <span style={{ color: '#f59e0b' }}>
+              Add or choose a personal/work account above to unlock private connector setup.
+            </span>
+          )}
+          {!isSuperadmin && effectiveAccountId && (
+            <span style={{ color: '#4ade80' }}>
+              Connectors below are scoped to your selected account only.
+            </span>
+          )}
+        </div>
+      </div>
 
       {/* Connected sources grid */}
       {connected.length > 0 && (
@@ -869,6 +1012,7 @@ function DataSourcesSection() {
                       sync={sync}
                       unitLabel={unit}
                       connectorId={c.connector_id}
+                      accountId={effectiveAccountId}
                       onSyncTriggered={loadConnectors}
                     />
                   </div>
@@ -986,6 +1130,11 @@ function DataSourcesSection() {
 
                 {isExpanded && c.connector_id !== 'upload' && meta?.steps && (
                   <div style={{ borderTop: '1px solid var(--color-border)', padding: 12 }}>
+                    {needsAccountSelection && (
+                      <div style={{ fontSize: 12, color: '#f59e0b', marginBottom: 10 }}>
+                        Choose an account above first so this connector stays inside your private workspace.
+                      </div>
+                    )}
                     {meta.steps.map((step, i) => (
                       <div
                         key={i}

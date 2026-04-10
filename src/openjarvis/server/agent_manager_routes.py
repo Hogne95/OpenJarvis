@@ -403,6 +403,9 @@ def _build_deep_research_tools(
     engine: Any,
     model: str,
     knowledge_db_path: str = "",
+    *,
+    owner_user_id: str = "",
+    account_key: str = "",
 ) -> list:
     """Build the 4 DeepResearch tools from a KnowledgeStore.
 
@@ -428,9 +431,15 @@ def _build_deep_research_tools(
     store = KnowledgeStore(knowledge_db_path)
     retriever = TwoStageRetriever(store)
     return [
-        KnowledgeSearchTool(retriever=retriever),
-        KnowledgeSQLTool(store=store),
-        ScanChunksTool(store=store, engine=engine, model=model),
+        KnowledgeSearchTool(retriever=retriever, owner_user_id=owner_user_id, account_key=account_key),
+        KnowledgeSQLTool(store=store, owner_user_id=owner_user_id, account_key=account_key),
+        ScanChunksTool(
+            store=store,
+            engine=engine,
+            model=model,
+            owner_user_id=owner_user_id,
+            account_key=account_key,
+        ),
         ThinkTool(),
     ]
 
@@ -653,6 +662,7 @@ async def _stream_managed_agent(
         dr_tools = _build_deep_research_tools(
             engine=engine,
             model=model,
+            owner_user_id=str(agent_record.get("owner_user_id") or "").strip(),
         )
         # Store on app_state so streaming loop can access them
         if app_state is not None and dr_tools:

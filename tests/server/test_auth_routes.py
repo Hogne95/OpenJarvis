@@ -1,12 +1,17 @@
 from __future__ import annotations
 
 import subprocess
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import MagicMock
+from unittest.mock import patch
 
 from fastapi.testclient import TestClient
 
 from openjarvis.agents.manager import AgentManager
+from openjarvis.connectors.store import KnowledgeStore
+from openjarvis.core.registry import ConnectorRegistry
 from openjarvis.server.app import create_app
 from openjarvis.server.user_store import UserStore
 
@@ -600,7 +605,125 @@ def test_connector_backed_routes_require_superadmin_until_per_user_accounts_exis
     assert guest_capabilities.status_code == 403
 
     guest_inbox = guest.get("/v1/action-center/inbox-summary")
-    assert guest_inbox.status_code == 403
+    assert guest_inbox.status_code == 200
+
+
+def test_action_center_knowledge_summaries_are_scoped_per_authenticated_user(tmp_path: Path):
+    owner = _make_client(tmp_path)
+    app = owner.app
+    bootstrap = owner.post(
+        "/v1/auth/bootstrap",
+        json={
+            "username": "owner",
+            "password": "supersecret123",
+            "display_name": "Owner",
+        },
+    )
+    assert bootstrap.status_code == 200
+    guest_record = app.state.user_store.create_user(
+        username="guest",
+        password="guestsecret123",
+        display_name="Guest",
+        role="user",
+    )
+
+    owner_me = owner.get("/v1/auth/me")
+    assert owner_me.status_code == 200
+    owner_user_id = owner_me.json()["user"]["id"]
+
+    guest = TestClient(app)
+    login_guest = guest.post(
+        "/v1/auth/login",
+        json={"username": "guest", "password": "guestsecret123"},
+    )
+    assert login_guest.status_code == 200
+    now = datetime.now(timezone.utc)
+    upcoming_owner_event = (now + timedelta(hours=1)).isoformat()
+    upcoming_guest_event = (now + timedelta(hours=2)).isoformat()
+
+    knowledge_db = tmp_path / "knowledge-test.db"
+    ks = KnowledgeStore(db_path=knowledge_db)
+    ks.store(
+        content="Owner email body",
+        source="gmail",
+        doc_type="email",
+        title="Owner private email",
+        author="Owner Sender <owner@example.com>",
+        timestamp="2026-04-10T09:00:00+00:00",
+        owner_user_id=str(owner_user_id),
+        account_key="work-mail",
+    )
+    ks.store(
+        content="Guest email body",
+        source="gmail",
+        doc_type="email",
+        title="Guest private email",
+        author="Guest Sender <guest@example.com>",
+        timestamp="2026-04-10T10:00:00+00:00",
+        owner_user_id=str(guest_record["id"]),
+    )
+    ks.store(
+        content="Owner task notes",
+        source="google_tasks",
+        doc_type="task",
+        title="Owner follow-up",
+        metadata={"status": "needsAction", "due": "2026-04-10T12:00:00+00:00"},
+        timestamp="2026-04-10T08:30:00+00:00",
+        owner_user_id=str(owner_user_id),
+    )
+    ks.store(
+        content="Guest task notes",
+        source="google_tasks",
+        doc_type="task",
+        title="Guest follow-up",
+        metadata={"status": "needsAction", "due": "2026-04-10T13:00:00+00:00"},
+        timestamp="2026-04-10T08:45:00+00:00",
+        owner_user_id=str(guest_record["id"]),
+    )
+    ks.store(
+        content="Owner calendar details\nBring agenda",
+        source="gcalendar",
+        doc_type="event",
+        title="Owner meeting",
+        timestamp=upcoming_owner_event,
+        owner_user_id=str(owner_user_id),
+    )
+    ks.store(
+        content="Guest calendar details\nBring docs",
+        source="gcalendar",
+        doc_type="event",
+        title="Guest meeting",
+        timestamp=upcoming_guest_event,
+        owner_user_id=str(guest_record["id"]),
+    )
+
+    with patch("openjarvis.connectors.store.KnowledgeStore", side_effect=lambda: KnowledgeStore(db_path=knowledge_db)):
+        owner_inbox = owner.get("/v1/action-center/inbox-summary")
+        guest_inbox = guest.get("/v1/action-center/inbox-summary")
+        owner_tasks = owner.get("/v1/action-center/task-summary")
+        guest_tasks = guest.get("/v1/action-center/task-summary")
+        owner_reminders = owner.get("/v1/action-center/reminders")
+        guest_reminders = guest.get("/v1/action-center/reminders")
+
+    assert owner_inbox.status_code == 200
+    assert guest_inbox.status_code == 200
+    assert owner_inbox.json()["items"][0]["title"] == "Owner private email"
+    assert owner_inbox.json()["items"][0]["account_key"] == "work-mail"
+    assert guest_inbox.json()["items"][0]["title"] == "Guest private email"
+
+    assert owner_tasks.status_code == 200
+    assert guest_tasks.status_code == 200
+    assert owner_tasks.json()["items"][0]["title"] == "Owner follow-up"
+    assert guest_tasks.json()["items"][0]["title"] == "Guest follow-up"
+
+    owner_reminder_titles = {item["title"] for item in owner_reminders.json()["items"]}
+    guest_reminder_titles = {item["title"] for item in guest_reminders.json()["items"]}
+    assert "Owner meeting" in owner_reminder_titles
+    assert "Owner follow-up" in owner_reminder_titles
+    assert "Guest meeting" not in owner_reminder_titles
+    assert "Guest follow-up" not in owner_reminder_titles
+    assert "Guest meeting" in guest_reminder_titles
+    assert "Guest follow-up" in guest_reminder_titles
 
 
 def test_connector_accounts_are_isolated_per_authenticated_user(tmp_path: Path):
@@ -718,3 +841,175 @@ def test_connector_accounts_cannot_be_modified_across_users(tmp_path: Path):
     guest_list = guest.get("/v1/connectors/accounts")
     assert guest_list.status_code == 200
     assert [account["id"] for account in guest_list.json()["accounts"]] == [guest_account_id]
+
+
+def test_connector_runtime_is_scoped_per_account(tmp_path: Path):
+    import openjarvis.server.connectors_router as connectors_router
+
+    class AccountFakeConnector:
+        connector_id = "account_fake"
+        display_name = "Account Fake"
+        auth_type = "oauth"
+
+        def __init__(self, credentials_path: str = "") -> None:
+            self.credentials_path = credentials_path
+
+        def is_connected(self) -> bool:
+            return bool(self.credentials_path) and Path(self.credentials_path).exists()
+
+        def disconnect(self) -> None:
+            if self.credentials_path and Path(self.credentials_path).exists():
+                Path(self.credentials_path).unlink()
+
+        def auth_url(self) -> str:
+            return "https://example.test/oauth"
+
+        def handle_callback(self, code: str) -> None:
+            path = Path(self.credentials_path)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(code, encoding="utf-8")
+
+        def sync_status(self):
+            return SimpleNamespace(
+                state="idle",
+                items_synced=0,
+                items_total=0,
+                last_sync=None,
+                error=None,
+            )
+
+    if not ConnectorRegistry.contains("account_fake"):
+        ConnectorRegistry.register_value("account_fake", AccountFakeConnector)
+
+    owner = _make_client(tmp_path)
+    app = owner.app
+    bootstrap = owner.post(
+        "/v1/auth/bootstrap",
+        json={
+            "username": "owner",
+            "password": "supersecret123",
+            "display_name": "Owner",
+        },
+    )
+    assert bootstrap.status_code == 200
+    owner_user_id = bootstrap.json()["user"]["id"]
+    app.state.user_store.create_user(
+        username="guest",
+        password="guestsecret123",
+        display_name="Guest",
+        role="user",
+    )
+
+    guest = TestClient(app)
+    login_guest = guest.post(
+        "/v1/auth/login",
+        json={"username": "guest", "password": "guestsecret123"},
+    )
+    assert login_guest.status_code == 200
+    guest_user_id = guest.get("/v1/auth/me").json()["user"]["id"]
+
+    owner_account = owner.post(
+        "/v1/connectors/accounts",
+        json={"provider": "gmail", "label": "Owner Mail", "account_type": "email"},
+    ).json()
+    guest_account = guest.post(
+        "/v1/connectors/accounts",
+        json={"provider": "gmail", "label": "Guest Mail", "account_type": "email"},
+    ).json()
+
+    owner_connect = owner.post(
+        f"/v1/connectors/account_fake/connect?account_id={owner_account['id']}",
+        json={"code": "owner-token"},
+    )
+    guest_connect = guest.post(
+        f"/v1/connectors/account_fake/connect?account_id={guest_account['id']}",
+        json={"code": "guest-token"},
+    )
+    assert owner_connect.status_code == 200
+    assert guest_connect.status_code == 200
+
+    owner_detail = owner.get(f"/v1/connectors/account_fake?account_id={owner_account['id']}")
+    guest_detail = guest.get(f"/v1/connectors/account_fake?account_id={guest_account['id']}")
+    assert owner_detail.status_code == 200
+    assert guest_detail.status_code == 200
+    assert owner_detail.json()["connected"] is True
+    assert guest_detail.json()["connected"] is True
+
+    owner_cache_key = f"account_fake::user={owner_user_id}::account={owner_account['id']}"
+    guest_cache_key = f"account_fake::user={guest_user_id}::account={guest_account['id']}"
+    owner_instance = connectors_router._instances[owner_cache_key]
+    guest_instance = connectors_router._instances[guest_cache_key]
+    assert owner_instance.credentials_path != guest_instance.credentials_path
+    assert Path(owner_instance.credentials_path).read_text(encoding="utf-8") == "owner-token"
+    assert Path(guest_instance.credentials_path).read_text(encoding="utf-8") == "guest-token"
+
+
+def test_connector_account_runtime_denies_cross_user_access(tmp_path: Path):
+    import openjarvis.server.connectors_router as connectors_router
+
+    class AccountFakeConnector:
+        connector_id = "account_fake_secure"
+        display_name = "Account Fake Secure"
+        auth_type = "oauth"
+
+        def __init__(self, credentials_path: str = "") -> None:
+            self.credentials_path = credentials_path
+
+        def is_connected(self) -> bool:
+            return True
+
+        def disconnect(self) -> None:
+            return None
+
+        def auth_url(self) -> str:
+            return ""
+
+        def handle_callback(self, code: str) -> None:
+            return None
+
+        def sync_status(self):
+            return SimpleNamespace(
+                state="idle",
+                items_synced=0,
+                items_total=0,
+                last_sync=None,
+                error=None,
+            )
+
+    if not ConnectorRegistry.contains("account_fake_secure"):
+        ConnectorRegistry.register_value("account_fake_secure", AccountFakeConnector)
+
+    owner = _make_client(tmp_path)
+    app = owner.app
+    bootstrap = owner.post(
+        "/v1/auth/bootstrap",
+        json={
+            "username": "owner",
+            "password": "supersecret123",
+            "display_name": "Owner",
+        },
+    )
+    assert bootstrap.status_code == 200
+    app.state.user_store.create_user(
+        username="guest",
+        password="guestsecret123",
+        display_name="Guest",
+        role="user",
+    )
+
+    guest = TestClient(app)
+    login_guest = guest.post(
+        "/v1/auth/login",
+        json={"username": "guest", "password": "guestsecret123"},
+    )
+    assert login_guest.status_code == 200
+
+    guest_account = guest.post(
+        "/v1/connectors/accounts",
+        json={"provider": "gmail", "label": "Guest Mail", "account_type": "email"},
+    ).json()
+
+    cross_fetch = owner.get(
+        f"/v1/connectors/account_fake_secure?account_id={guest_account['id']}"
+    )
+    assert cross_fetch.status_code == 404

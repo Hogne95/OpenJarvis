@@ -25,21 +25,24 @@ export interface ConnectorAccount {
   updated_at: string;
 }
 
-export async function listConnectors(): Promise<ConnectorInfo[]> {
-  const res = await connectorFetch('/v1/connectors');
+export async function listConnectors(accountId?: string): Promise<ConnectorInfo[]> {
+  const suffix = accountId ? `?account_id=${encodeURIComponent(accountId)}` : '';
+  const res = await connectorFetch(`/v1/connectors${suffix}`);
   if (!res.ok) throw new Error(`Failed to list connectors: ${res.status}`);
   const data = await res.json();
   return data.connectors || [];
 }
 
-export async function getConnector(id: string): Promise<ConnectorInfo> {
-  const res = await connectorFetch(`/v1/connectors/${encodeURIComponent(id)}`);
+export async function getConnector(id: string, accountId?: string): Promise<ConnectorInfo> {
+  const suffix = accountId ? `?account_id=${encodeURIComponent(accountId)}` : '';
+  const res = await connectorFetch(`/v1/connectors/${encodeURIComponent(id)}${suffix}`);
   if (!res.ok) throw new Error(`Failed to get connector ${id}: ${res.status}`);
   return res.json();
 }
 
-export async function connectSource(id: string, req: ConnectRequest): Promise<ConnectorInfo> {
-  const res = await connectorFetch(`/v1/connectors/${encodeURIComponent(id)}/connect`, {
+export async function connectSource(id: string, req: ConnectRequest, accountId?: string): Promise<ConnectorInfo> {
+  const suffix = accountId ? `?account_id=${encodeURIComponent(accountId)}` : '';
+  const res = await connectorFetch(`/v1/connectors/${encodeURIComponent(id)}/connect${suffix}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(req),
@@ -48,21 +51,24 @@ export async function connectSource(id: string, req: ConnectRequest): Promise<Co
   return res.json();
 }
 
-export async function disconnectSource(id: string): Promise<void> {
-  const res = await connectorFetch(`/v1/connectors/${encodeURIComponent(id)}/disconnect`, {
+export async function disconnectSource(id: string, accountId?: string): Promise<void> {
+  const suffix = accountId ? `?account_id=${encodeURIComponent(accountId)}` : '';
+  const res = await connectorFetch(`/v1/connectors/${encodeURIComponent(id)}/disconnect${suffix}`, {
     method: 'POST',
   }, 7000);
   if (!res.ok) throw new Error(`Failed to disconnect ${id}: ${res.status}`);
 }
 
-export async function getSyncStatus(id: string): Promise<SyncStatus> {
-  const res = await connectorFetch(`/v1/connectors/${encodeURIComponent(id)}/sync`);
+export async function getSyncStatus(id: string, accountId?: string): Promise<SyncStatus> {
+  const suffix = accountId ? `?account_id=${encodeURIComponent(accountId)}` : '';
+  const res = await connectorFetch(`/v1/connectors/${encodeURIComponent(id)}/sync${suffix}`);
   if (!res.ok) throw new Error(`Failed to get sync status for ${id}: ${res.status}`);
   return res.json();
 }
 
-export async function triggerSync(id: string): Promise<{ connector_id: string; chunks_indexed: number; status: string }> {
-  const res = await connectorFetch(`/v1/connectors/${encodeURIComponent(id)}/sync`, {
+export async function triggerSync(id: string, accountId?: string): Promise<{ connector_id: string; chunks_indexed: number; status: string }> {
+  const suffix = accountId ? `?account_id=${encodeURIComponent(accountId)}` : '';
+  const res = await connectorFetch(`/v1/connectors/${encodeURIComponent(id)}/sync${suffix}`, {
     method: 'POST',
   }, 10000);
   if (!res.ok) {

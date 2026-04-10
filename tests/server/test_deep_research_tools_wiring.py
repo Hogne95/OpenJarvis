@@ -53,3 +53,26 @@ def test_deep_research_tools_returns_empty_when_no_db() -> None:
     )
 
     assert tools == []
+
+
+@pytest.mark.skipif(not HAS_FASTAPI, reason="fastapi not installed")
+def test_deep_research_tools_pass_owner_scope_to_knowledge_tools(tmp_path: Path) -> None:
+    db_path = tmp_path / "knowledge.db"
+    store = KnowledgeStore(str(db_path))
+    store.store("owner note", source="test", doc_type="note", owner_user_id="owner-1")
+    store.store("guest note", source="test", doc_type="note", owner_user_id="guest-1")
+
+    from openjarvis.server.agent_manager_routes import _build_deep_research_tools
+
+    tools = _build_deep_research_tools(
+        engine=MagicMock(),
+        model="test-model",
+        knowledge_db_path=str(db_path),
+        owner_user_id="owner-1",
+    )
+
+    by_id = {tool.tool_id: tool for tool in tools}
+    assert getattr(by_id["knowledge_search"], "_owner_user_id", "") == "owner-1"
+    assert getattr(by_id["knowledge_sql"], "_owner_user_id", "") == "owner-1"
+    assert getattr(by_id["scan_chunks"], "_owner_user_id", "") == "owner-1"
+    store.close()

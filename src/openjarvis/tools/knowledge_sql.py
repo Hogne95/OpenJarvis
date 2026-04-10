@@ -18,8 +18,8 @@ _MAX_ROWS = 50
 
 _SCHEMA_DESCRIPTION = (
     "Table: knowledge_chunks\n"
-    "Columns: id, content, source, doc_type, doc_id, title, author, "
-    "participants, timestamp, thread_id, url, metadata, chunk_index"
+    "Columns: id, owner_user_id, account_key, content, source, doc_type, doc_id, "
+    "title, author, participants, timestamp, thread_id, url, metadata, chunk_index"
 )
 
 
@@ -29,8 +29,16 @@ class KnowledgeSQLTool(BaseTool):
 
     tool_id = "knowledge_sql"
 
-    def __init__(self, store: Optional[KnowledgeStore] = None) -> None:
+    def __init__(
+        self,
+        store: Optional[KnowledgeStore] = None,
+        *,
+        owner_user_id: str = "",
+        account_key: str = "",
+    ) -> None:
         self._store = store
+        self._owner_user_id = owner_user_id.strip()
+        self._account_key = account_key.strip()
 
     @property
     def spec(self) -> ToolSpec:
@@ -39,7 +47,9 @@ class KnowledgeSQLTool(BaseTool):
             description=(
                 "Run a read-only SQL SELECT query against the knowledge_chunks table. "
                 "Use for counting, ranking, aggregation, and filtering. "
-                f"{_SCHEMA_DESCRIPTION}"
+                        f"{_SCHEMA_DESCRIPTION}. "
+                        "When a scoped workspace is active, queries are automatically limited "
+                        "to the current user's rows."
             ),
             parameters={
                 "type": "object",
@@ -96,8 +106,31 @@ class KnowledgeSQLTool(BaseTool):
                     success=False,
                 )
 
+        scoped_query = query
+        if self._owner_user_id or self._account_key:
+            scoped_query = scoped_query.replace("knowledge_chunks", "knowledge_chunks_scoped")
+            where: list[str] = []
+            params: list[Any] = []
+            if self._owner_user_id:
+                where.append("owner_user_id = ?")
+                params.append(self._owner_user_id)
+            if self._account_key:
+                where.append("account_key = ?")
+                params.append(self._account_key)
+            where_sql = " AND ".join(where) if where else "1=1"
+            self._store._conn.execute("DROP VIEW IF EXISTS temp.knowledge_chunks_scoped")
+            self._store._conn.execute("DROP TABLE IF EXISTS temp.knowledge_chunks_scoped")
+            self._store._conn.execute(
+                f"""
+                CREATE TEMP TABLE knowledge_chunks_scoped AS
+                SELECT *
+                FROM main.knowledge_chunks
+                WHERE {where_sql}
+                """,
+                params,
+            )
         try:
-            rows = self._store._conn.execute(query).fetchmany(_MAX_ROWS)
+            rows = self._store._conn.execute(scoped_query).fetchmany(_MAX_ROWS)
         except sqlite3.OperationalError as exc:
             return ToolResult(
                 tool_name="knowledge_sql",
