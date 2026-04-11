@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { useNavigate } from 'react-router';
 
 interface LoginPageProps {
   onSubmit: (payload: { username: string; password: string }) => Promise<void>;
@@ -34,6 +35,7 @@ const inputStyle: React.CSSProperties = {
 };
 
 export function LoginPage({ onSubmit }: LoginPageProps) {
+  const navigate = useNavigate();
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
@@ -81,7 +83,6 @@ export function LoginPage({ onSubmit }: LoginPageProps) {
         {error ? (
           <div style={{ marginTop: '1rem', color: '#fda4af', fontSize: '0.92rem' }}>{error}</div>
         ) : null}
-
         <button
           type="submit"
           disabled={submitting}
@@ -99,6 +100,38 @@ export function LoginPage({ onSubmit }: LoginPageProps) {
         >
           {submitting ? 'Signing in...' : 'Sign in'}
         </button>
+        <div style={{ marginTop: '1rem', display: 'flex', justifyContent: 'space-between', gap: '1rem', alignItems: 'center' }}>
+          <button
+            type="button"
+            onClick={() => navigate('/forgot-password')}
+            style={{
+              background: 'transparent',
+              color: 'var(--color-text-secondary)',
+              border: 'none',
+              padding: 0,
+              cursor: 'pointer',
+              fontSize: '0.9rem',
+              textDecoration: 'underline',
+              textUnderlineOffset: '0.18rem',
+            }}
+          >
+            Forgot password?
+          </button>
+          <button
+            type="button"
+            onClick={() => navigate('/reset-password')}
+            style={{
+              background: 'transparent',
+              color: 'var(--color-text-tertiary)',
+              border: 'none',
+              padding: 0,
+              cursor: 'pointer',
+              fontSize: '0.85rem',
+            }}
+          >
+            Have a reset token?
+          </button>
+        </div>
       </form>
     </div>
   );

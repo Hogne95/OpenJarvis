@@ -15,14 +15,18 @@ import {
   fetchSavings,
   fetchSpeechHealth,
   fetchVoiceLoopStatus,
+  forgotPasswordAuth,
   loginAuth,
+  resetPasswordAuth,
   submitSavings,
   isTauri,
   startVoiceLoop,
 } from './lib/api';
 import { OptInModal } from './components/OptInModal';
 import { BootstrapPage } from './pages/BootstrapPage';
+import { ForgotPasswordPage } from './pages/ForgotPasswordPage';
 import { LoginPage } from './pages/LoginPage';
+import { ResetPasswordPage } from './pages/ResetPasswordPage';
 
 const ChatPage = lazy(() => import('./pages/ChatPage').then((module) => ({ default: module.ChatPage })));
 const DashboardPage = lazy(() => import('./pages/DashboardPage').then((module) => ({ default: module.DashboardPage })));
@@ -81,6 +85,9 @@ export default function App() {
   const authBootstrapRequired = useAppStore((s) => s.authBootstrapRequired);
   const currentUser = useAppStore((s) => s.currentUser);
   const setAuthStatus = useAppStore((s) => s.setAuthStatus);
+  const resetTokenHint = typeof window !== 'undefined'
+    ? new URLSearchParams(window.location.search).get('token') || ''
+    : '';
 
   useEffect(() => {
     const root = document.documentElement;
@@ -332,16 +339,47 @@ export default function App() {
 
   if (!currentUser) {
     return (
-      <LoginPage
-        onSubmit={async (payload) => {
-          const result = await loginAuth(payload);
-          setAuthStatus({
-            resolved: true,
-            bootstrapRequired: false,
-            currentUser: result.user,
-          });
-        }}
-      />
+      <Suspense fallback={<RouteFallback />}>
+        <Routes>
+          <Route
+            path="/forgot-password"
+            element={(
+              <ForgotPasswordPage
+                onSubmit={async (email) => {
+                  const result = await forgotPasswordAuth(email);
+                  return result.detail;
+                }}
+              />
+            )}
+          />
+          <Route
+            path="/reset-password"
+            element={(
+              <ResetPasswordPage
+                tokenHint={resetTokenHint}
+                onSubmit={async (payload) => {
+                  await resetPasswordAuth(payload);
+                }}
+              />
+            )}
+          />
+          <Route
+            path="*"
+            element={(
+              <LoginPage
+                onSubmit={async (payload) => {
+                  const result = await loginAuth(payload);
+                  setAuthStatus({
+                    resolved: true,
+                    bootstrapRequired: false,
+                    currentUser: result.user,
+                  });
+                }}
+              />
+            )}
+          />
+        </Routes>
+      </Suspense>
     );
   }
 

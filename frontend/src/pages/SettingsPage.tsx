@@ -121,6 +121,7 @@ function UserManagementSection({ currentUser }: { currentUser: AuthUser | null }
   const [form, setForm] = useState({
     username: '',
     display_name: '',
+    email: '',
     password: '',
     role: 'user',
   });
@@ -153,11 +154,12 @@ function UserManagementSection({ currentUser }: { currentUser: AuthUser | null }
       const created = await createUserAdmin({
         username: form.username.trim(),
         display_name: form.display_name.trim(),
+        email: form.email.trim(),
         password: form.password,
         role: form.role,
       });
       setUsers((prev) => [...prev, created]);
-      setForm({ username: '', display_name: '', password: '', role: 'user' });
+      setForm({ username: '', display_name: '', email: '', password: '', role: 'user' });
       setError('');
     } catch (err: any) {
       setError(err.message || 'Failed to create user');
@@ -204,7 +206,7 @@ function UserManagementSection({ currentUser }: { currentUser: AuthUser | null }
         Root cause: login alone is not enough for safe household or friend access. JARVIS now has server-side admin controls so you can create users, restrict roles, disable accounts, and reset passwords without crossing privacy boundaries.
       </div>
 
-      <div className="grid gap-2 mb-4" style={{ gridTemplateColumns: '1fr 1fr 1fr auto' }}>
+      <div className="grid gap-2 mb-4" style={{ gridTemplateColumns: '1fr 1fr 1fr 1fr auto' }}>
         <input
           value={form.username}
           onChange={(e) => setForm((prev) => ({ ...prev, username: e.target.value }))}
@@ -215,6 +217,12 @@ function UserManagementSection({ currentUser }: { currentUser: AuthUser | null }
           value={form.display_name}
           onChange={(e) => setForm((prev) => ({ ...prev, display_name: e.target.value }))}
           placeholder="display name"
+          style={inputStyle}
+        />
+        <input
+          value={form.email}
+          onChange={(e) => setForm((prev) => ({ ...prev, email: e.target.value }))}
+          placeholder="recovery email"
           style={inputStyle}
         />
         <input
@@ -300,26 +308,40 @@ function UserManagementSection({ currentUser }: { currentUser: AuthUser | null }
                   </div>
                 </div>
                 {!isSelf && (!isElevated || canEditElevated) && (
-                  <div className="flex items-center gap-2 mt-3">
+                  <div className="grid gap-2 mt-3">
                     <input
-                      type="password"
-                      value={passwordDrafts[user.id] || ''}
-                      onChange={(e) => setPasswordDrafts((prev) => ({ ...prev, [user.id]: e.target.value }))}
-                      placeholder="new password"
+                      type="email"
+                      defaultValue={user.email || ''}
+                      onBlur={(e) => {
+                        const nextEmail = e.target.value.trim();
+                        if (nextEmail !== (user.email || '')) {
+                          void patchUser(user.id, { email: nextEmail });
+                        }
+                      }}
+                      placeholder="recovery email"
                       style={{ ...inputStyle, flex: 1 }}
                     />
-                    <button
-                      onClick={() => void resetPassword(user.id)}
-                      disabled={!passwordDrafts[user.id]?.trim()}
-                      className="px-3 py-2 rounded-lg text-xs font-medium cursor-pointer"
-                      style={{
-                        background: !passwordDrafts[user.id]?.trim() ? '#444' : 'var(--color-accent)',
-                        color: 'white',
-                        border: 'none',
-                      }}
-                    >
-                      Reset password
-                    </button>
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="password"
+                        value={passwordDrafts[user.id] || ''}
+                        onChange={(e) => setPasswordDrafts((prev) => ({ ...prev, [user.id]: e.target.value }))}
+                        placeholder="new password"
+                        style={{ ...inputStyle, flex: 1 }}
+                      />
+                      <button
+                        onClick={() => void resetPassword(user.id)}
+                        disabled={!passwordDrafts[user.id]?.trim()}
+                        className="px-3 py-2 rounded-lg text-xs font-medium cursor-pointer"
+                        style={{
+                          background: !passwordDrafts[user.id]?.trim() ? '#444' : 'var(--color-accent)',
+                          color: 'white',
+                          border: 'none',
+                        }}
+                      >
+                        Reset password
+                      </button>
+                    </div>
                   </div>
                 )}
               </div>

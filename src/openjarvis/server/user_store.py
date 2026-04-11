@@ -40,6 +40,7 @@ class UserStore:
             CREATE TABLE IF NOT EXISTS users (
                 id              TEXT PRIMARY KEY,
                 username        TEXT NOT NULL UNIQUE,
+                email           TEXT,
                 display_name    TEXT NOT NULL DEFAULT '',
                 password_hash   TEXT NOT NULL,
                 role            TEXT NOT NULL DEFAULT 'user',
@@ -63,6 +64,29 @@ class UserStore:
                 ON web_sessions (user_id);
             CREATE INDEX IF NOT EXISTS idx_web_sessions_expiry
                 ON web_sessions (expires_at);
+
+            CREATE TABLE IF NOT EXISTS password_reset_tokens (
+                id          TEXT PRIMARY KEY,
+                user_id     TEXT NOT NULL,
+                token_hash  TEXT NOT NULL UNIQUE,
+                expires_at  TEXT NOT NULL,
+                created_at  TEXT NOT NULL DEFAULT ({_now_sql()}),
+                used_at     TEXT,
+                FOREIGN KEY(user_id) REFERENCES users(id)
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_password_reset_tokens_user
+                ON password_reset_tokens (user_id);
+            CREATE INDEX IF NOT EXISTS idx_password_reset_tokens_expiry
+                ON password_reset_tokens (expires_at);
+            """
+        )
+        self._ensure_column("users", "email", "TEXT")
+        self._db.execute(
+            """
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_users_email_unique
+            ON users(email)
+            WHERE email IS NOT NULL AND email != ''
             """
         )
         self._db.commit()
@@ -112,6 +136,7 @@ class UserStore:
             username=username,
             password=password,
             display_name=display_name or username,
+            email="",
             role="superadmin",
         )
 
@@ -121,9 +146,12 @@ class UserStore:
         username: str,
         password: str,
         display_name: str = "",
+        email: str = "",
         role: str = "user",
     ) -> Dict[str, Any]:
         cleaned_username = username.strip().lower()
+        inferred_email = cleaned_username if "@" in cleaned_username and not email.strip() else email
+        cleaned_email = _normalize_optional_email(inferred_email)
         if not cleaned_username:
             raise ValueError("Username is required.")
         if len(password) < 8:
@@ -131,12 +159,13 @@ class UserStore:
         user_id = secrets.token_hex(16)
         self._db.execute(
             """
-            INSERT INTO users (id, username, display_name, password_hash, role, status)
-            VALUES (?, ?, ?, ?, ?, 'active')
+            INSERT INTO users (id, username, email, display_name, password_hash, role, status)
+            VALUES (?, ?, ?, ?, ?, ?, 'active')
             """,
             (
                 user_id,
                 cleaned_username,
+                cleaned_email,
                 (display_name or cleaned_username).strip(),
                 self.hash_password(password),
                 role.strip() or "user",
@@ -152,6 +181,16 @@ class UserStore:
         row = self._db.execute(
             "SELECT * FROM users WHERE username = ?",
             (username.strip().lower(),),
+        ).fetchone()
+        return self._row_to_user(row)
+
+    def get_user_by_email(self, email: str) -> Optional[Dict[str, Any]]:
+        cleaned_email = _normalize_optional_email(email)
+        if not cleaned_email:
+            return None
+        row = self._db.execute(
+            "SELECT * FROM users WHERE email = ?",
+            (cleaned_email,),
         ).fetchone()
         return self._row_to_user(row)
 
@@ -244,6 +283,7 @@ class UserStore:
         user_id: str,
         *,
         display_name: Optional[str] = None,
+        email: Optional[str] = None,
         role: Optional[str] = None,
         status: Optional[str] = None,
     ) -> Dict[str, Any]:
@@ -255,6 +295,11 @@ class UserStore:
             display_name.strip()
             if display_name is not None
             else str(current["display_name"])
+        )
+        next_email = (
+            _normalize_optional_email(email)
+            if email is not None
+            else _normalize_optional_email(str(current.get("email") or ""))
         )
         next_role = (role or str(current["role"])).strip().lower() or "user"
         next_status = (status or str(current["status"])).strip().lower() or "active"
@@ -269,12 +314,13 @@ class UserStore:
             """
             UPDATE users
             SET display_name = ?,
+                email = ?,
                 role = ?,
                 status = ?,
                 updated_at = datetime('now')
             WHERE id = ?
             """,
-            (next_display_name, next_role, next_status, user_id),
+            (next_display_name, next_email, next_role, next_status, user_id),
         )
         self._db.commit()
         if next_status != "active":
@@ -306,12 +352,60 @@ class UserStore:
             raise ValueError("User not found.")
         return updated
 
+    def create_password_reset_token(self, user_id: str, *, ttl_minutes: int = 30) -> str:
+        current = self.get_user_by_id(user_id)
+        if current is None:
+            raise ValueError("User not found.")
+        token = secrets.token_urlsafe(32)
+        token_hash = hashlib.sha256(token.encode("utf-8")).hexdigest()
+        token_id = secrets.token_hex(16)
+        self._db.execute("DELETE FROM password_reset_tokens WHERE user_id = ?", (user_id,))
+        self._db.execute(
+            """
+            INSERT INTO password_reset_tokens (id, user_id, token_hash, expires_at)
+            VALUES (?, ?, ?, datetime('now', ?))
+            """,
+            (token_id, user_id, token_hash, f"+{ttl_minutes} minutes"),
+        )
+        self._db.commit()
+        return token
+
+    def consume_password_reset_token(self, token: str, password: str) -> Dict[str, Any]:
+        if len(password) < 8:
+            raise ValueError("Password must be at least 8 characters.")
+        token_hash = hashlib.sha256((token or "").encode("utf-8")).hexdigest()
+        row = self._db.execute(
+            """
+            SELECT user_id
+            FROM password_reset_tokens
+            WHERE token_hash = ?
+              AND used_at IS NULL
+              AND expires_at > datetime('now')
+            """,
+            (token_hash,),
+        ).fetchone()
+        if row is None:
+            raise ValueError("Password reset token is invalid or expired.")
+        user_id = str(row["user_id"])
+        user = self.set_password(user_id, password)
+        self._db.execute(
+            """
+            UPDATE password_reset_tokens
+            SET used_at = datetime('now')
+            WHERE token_hash = ?
+            """,
+            (token_hash,),
+        )
+        self._db.commit()
+        return user
+
     def _row_to_user(self, row: sqlite3.Row | None) -> Optional[Dict[str, Any]]:
         if row is None:
             return None
         return {
             "id": str(row["id"]),
             "username": str(row["username"]),
+            "email": str(row["email"] or ""),
             "display_name": str(row["display_name"] or row["username"]),
             "role": str(row["role"]),
             "status": str(row["status"]),
@@ -337,6 +431,13 @@ class UserStore:
         ).fetchone()
         return row is not None
 
+    def _ensure_column(self, table: str, column: str, definition: str) -> None:
+        rows = self._db.execute(f"PRAGMA table_info({table})").fetchall()
+        existing = {str(row["name"]) for row in rows}
+        if column in existing:
+            return
+        self._db.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
+
 
 def _env_int(name: str, default: int) -> int:
     raw = (os.environ.get(name, "") or "").strip()
@@ -347,6 +448,15 @@ def _env_int(name: str, default: int) -> int:
     except ValueError:
         return default
     return value if value > 0 else default
+
+
+def _normalize_optional_email(email: str) -> str:
+    cleaned = (email or "").strip().lower()
+    if not cleaned:
+        return ""
+    if "@" not in cleaned or cleaned.startswith("@") or cleaned.endswith("@"):
+        raise ValueError("A valid email address is required.")
+    return cleaned
 
 
 __all__ = ["UserStore"]

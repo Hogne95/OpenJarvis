@@ -133,6 +133,7 @@ export interface RuntimeReadiness {
 export interface AuthUser {
   id: string;
   username: string;
+  email: string;
   display_name: string;
   role: string;
   status: string;
@@ -313,6 +314,7 @@ export async function bootstrapAuth(payload: {
   username: string;
   password: string;
   display_name?: string;
+  email?: string;
 }): Promise<{ user: AuthUser }> {
   const res = await authFetch('/v1/auth/bootstrap', {
     method: 'POST',
@@ -371,6 +373,7 @@ export async function createUserAdmin(payload: {
   username: string;
   password: string;
   display_name?: string;
+  email?: string;
   role?: string;
 }): Promise<AuthUser> {
   const res = await authFetch('/v1/auth/users', {
@@ -390,6 +393,7 @@ export async function updateUserAdmin(
   userId: string,
   payload: Partial<{
     display_name: string;
+    email: string;
     role: string;
     status: string;
   }>,
@@ -419,6 +423,35 @@ export async function resetUserPasswordAdmin(userId: string, password: string): 
   }
   const data = await res.json();
   return data.user;
+}
+
+export async function forgotPasswordAuth(email: string): Promise<{ ok: boolean; detail: string }> {
+  const res = await authFetch('/v1/auth/forgot-password', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email }),
+  });
+  if (!res.ok) {
+    const data = await res.json().catch(() => null);
+    throw new Error(data?.detail || `Forgot password failed: ${res.status}`);
+  }
+  return res.json();
+}
+
+export async function resetPasswordAuth(payload: {
+  token: string;
+  password: string;
+}): Promise<{ user: AuthUser }> {
+  const res = await authFetch('/v1/auth/reset-password', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) {
+    const data = await res.json().catch(() => null);
+    throw new Error(data?.detail || `Reset password failed: ${res.status}`);
+  }
+  return res.json();
 }
 
 export async function getDesktopRuntimeStatus(): Promise<DesktopRuntimeStatus | null> {

@@ -7,6 +7,7 @@ import sqlite3
 from fastapi import APIRouter, HTTPException, Request, Response
 from pydantic import BaseModel
 
+from openjarvis.server.auth_mail import send_password_reset_email
 from openjarvis.server.auth import (
     SESSION_COOKIE_NAME,
     get_current_user,
@@ -19,6 +20,7 @@ class BootstrapRequest(BaseModel):
     username: str
     password: str
     display_name: str = ""
+    email: str = ""
 
 
 class LoginRequest(BaseModel):
@@ -30,16 +32,27 @@ class AdminCreateUserRequest(BaseModel):
     username: str
     password: str
     display_name: str = ""
+    email: str = ""
     role: str = "user"
 
 
 class AdminUpdateUserRequest(BaseModel):
     display_name: str | None = None
+    email: str | None = None
     role: str | None = None
     status: str | None = None
 
 
 class AdminResetPasswordRequest(BaseModel):
+    password: str
+
+
+class ForgotPasswordRequest(BaseModel):
+    email: str
+
+
+class ResetPasswordRequest(BaseModel):
+    token: str
     password: str
 
 
@@ -64,6 +77,16 @@ def create_auth_router() -> APIRouter:
         client_host = forwarded_for or (request.client.host if request.client else "unknown")
         username = req_username.strip().lower()
         return f"{request.url.path}:{client_host}:{username}"
+
+    def _request_origin(request: Request) -> str:
+        public_origin = (request.headers.get("origin", "") or "").strip()
+        if public_origin:
+            return public_origin.rstrip("/")
+        referer = (request.headers.get("referer", "") or "").strip()
+        if referer:
+            head = referer.split("/reset-password", 1)[0].split("/login", 1)[0]
+            return head.rstrip("/")
+        return str(request.base_url).rstrip("/")
 
     def _check_auth_rate_limit(request: Request, req_username: str = "") -> str:
         limiter = getattr(request.app.state, "auth_rate_limiter", None)
@@ -103,6 +126,8 @@ def create_auth_router() -> APIRouter:
                 password=req.password,
                 display_name=req.display_name,
             )
+            if req.email.strip():
+                user = store.update_user(user["id"], email=req.email)
         except ValueError as exc:
             limiter = getattr(request.app.state, "auth_rate_limiter", None)
             if limiter is not None:
@@ -180,10 +205,12 @@ def create_auth_router() -> APIRouter:
                 username=req.username,
                 password=req.password,
                 display_name=req.display_name,
+                email=req.email,
                 role=requested_role,
             )
         except sqlite3.IntegrityError as exc:
-            raise HTTPException(status_code=409, detail="Username already exists") from exc
+            detail = "Recovery email already exists" if "email" in str(exc).lower() else "Username already exists"
+            raise HTTPException(status_code=409, detail=detail) from exc
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         return {"user": user}
@@ -208,9 +235,13 @@ def create_auth_router() -> APIRouter:
             user = store.update_user(
                 user_id,
                 display_name=req.display_name,
+                email=req.email,
                 role=req.role,
                 status=req.status,
             )
+        except sqlite3.IntegrityError as exc:
+            detail = "Recovery email already exists" if "email" in str(exc).lower() else "User update conflict"
+            raise HTTPException(status_code=409, detail=detail) from exc
         except ValueError as exc:
             detail = str(exc)
             code = 404 if "not found" in detail.lower() else 400
@@ -236,6 +267,38 @@ def create_auth_router() -> APIRouter:
             detail = str(exc)
             code = 404 if "not found" in detail.lower() else 400
             raise HTTPException(status_code=code, detail=detail) from exc
+        return {"user": user}
+
+    @router.post("/forgot-password")
+    async def forgot_password(req: ForgotPasswordRequest, request: Request):
+        store = getattr(request.app.state, "user_store", None)
+        if store is None:
+            raise HTTPException(status_code=503, detail="User store is unavailable")
+        limit_key = _check_auth_rate_limit(request, req.email)
+        try:
+            user = store.get_user_by_email(req.email)
+            if user is not None and user.get("status") == "active":
+                token = store.create_password_reset_token(user["id"])
+                send_password_reset_email(request.app.state, _request_origin(request), user, token)
+        except ValueError:
+            pass
+        limiter = getattr(request.app.state, "auth_rate_limiter", None)
+        if limiter is not None:
+            limiter.reset(limit_key)
+        return {
+            "ok": True,
+            "detail": "If that email exists in JARVIS, a password reset link has been sent.",
+        }
+
+    @router.post("/reset-password")
+    async def reset_password(req: ResetPasswordRequest, request: Request):
+        store = getattr(request.app.state, "user_store", None)
+        if store is None:
+            raise HTTPException(status_code=503, detail="User store is unavailable")
+        try:
+            user = store.consume_password_reset_token(req.token, req.password)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
         return {"user": user}
 
     return router

@@ -194,6 +194,112 @@ def test_login_logout_and_me_round_trip(tmp_path: Path):
     assert after_logout.status_code == 401
 
 
+def test_forgot_password_returns_generic_success_and_sends_email_for_known_user(tmp_path: Path):
+    client = _make_client(tmp_path)
+    bootstrap = client.post(
+        "/v1/auth/bootstrap",
+        json={
+            "username": "owner",
+            "password": "supersecret123",
+            "display_name": "Owner",
+            "email": "owner@example.com",
+        },
+    )
+    assert bootstrap.status_code == 200
+
+    with patch("openjarvis.server.auth_routes.send_password_reset_email", return_value=True) as send_mock:
+        response = client.post(
+            "/v1/auth/forgot-password",
+            json={"email": "owner@example.com"},
+        )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["ok"] is True
+    assert "if that email exists" in payload["detail"].lower()
+    send_mock.assert_called_once()
+
+
+def test_forgot_password_does_not_enumerate_unknown_email(tmp_path: Path):
+    client = _make_client(tmp_path)
+    bootstrap = client.post(
+        "/v1/auth/bootstrap",
+        json={
+            "username": "owner",
+            "password": "supersecret123",
+            "display_name": "Owner",
+            "email": "owner@example.com",
+        },
+    )
+    assert bootstrap.status_code == 200
+
+    with patch("openjarvis.server.auth_routes.send_password_reset_email", return_value=True) as send_mock:
+        response = client.post(
+            "/v1/auth/forgot-password",
+            json={"email": "missing@example.com"},
+        )
+
+    assert response.status_code == 200
+    assert response.json()["ok"] is True
+    send_mock.assert_not_called()
+
+
+def test_reset_password_consumes_token_and_revokes_existing_session(tmp_path: Path):
+    client = _make_client(tmp_path)
+    bootstrap = client.post(
+        "/v1/auth/bootstrap",
+        json={
+            "username": "owner",
+            "password": "supersecret123",
+            "display_name": "Owner",
+            "email": "owner@example.com",
+        },
+    )
+    assert bootstrap.status_code == 200
+    session_cookie = bootstrap.cookies.get("openjarvis_session")
+    assert session_cookie
+
+    token = client.app.state.user_store.create_password_reset_token(
+        client.app.state.user_store.get_user_by_username("owner")["id"]
+    )
+    reset = client.post(
+        "/v1/auth/reset-password",
+        json={"token": token, "password": "brandnewsecret123"},
+    )
+    assert reset.status_code == 200
+
+    client.cookies.set("openjarvis_session", session_cookie)
+    me = client.get("/v1/auth/me")
+    assert me.status_code == 401
+
+    relogin = client.post(
+        "/v1/auth/login",
+        json={"username": "owner", "password": "brandnewsecret123"},
+    )
+    assert relogin.status_code == 200
+
+
+def test_reset_password_rejects_invalid_or_expired_token(tmp_path: Path):
+    client = _make_client(tmp_path)
+    bootstrap = client.post(
+        "/v1/auth/bootstrap",
+        json={
+            "username": "owner",
+            "password": "supersecret123",
+            "display_name": "Owner",
+            "email": "owner@example.com",
+        },
+    )
+    assert bootstrap.status_code == 200
+
+    reset = client.post(
+        "/v1/auth/reset-password",
+        json={"token": "bad-token", "password": "brandnewsecret123"},
+    )
+    assert reset.status_code == 400
+    assert "invalid or expired" in reset.json()["detail"].lower()
+
+
 def test_session_idle_timeout_expires_inactive_browser_session(tmp_path: Path):
     previous = os.environ.get("OPENJARVIS_SESSION_IDLE_MINUTES")
     os.environ["OPENJARVIS_SESSION_IDLE_MINUTES"] = "1"
