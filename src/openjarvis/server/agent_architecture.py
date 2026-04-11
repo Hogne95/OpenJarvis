@@ -437,7 +437,13 @@ def _coding_live_profile(
     }
 
 
-def _coding_workflow_payload(metadata: dict[str, Any], progress: dict[str, Any], *, outcome: str) -> dict[str, Any]:
+def _coding_workflow_payload(
+    metadata: dict[str, Any],
+    progress: dict[str, Any],
+    *,
+    outcome: str,
+    artifacts: list[str] | None = None,
+) -> dict[str, Any]:
     workflow_mode = str(metadata.get("workflow_mode") or "").strip()
     repo_name = str(metadata.get("repo_name") or "").strip()
     repo_root = str(metadata.get("repo_root") or "").strip()
@@ -475,6 +481,12 @@ def _coding_workflow_payload(metadata: dict[str, Any], progress: dict[str, Any],
             "latest_step": progress.get("current_step") or "",
             "latest_detail": progress.get("current_detail") or "",
             "latest_result": progress.get("result_summary") or "",
+            "report_lines": _build_coding_report_lines(
+                metadata,
+                progress,
+                outcome=outcome,
+                artifacts=artifacts,
+            ),
         },
     }
 
@@ -501,6 +513,43 @@ def _task_artifacts(task: dict[str, Any] | None) -> list[str]:
         if len(artifacts) >= 5:
             break
     return artifacts
+
+
+def _build_coding_report_lines(
+    metadata: dict[str, Any],
+    progress: dict[str, Any],
+    *,
+    outcome: str,
+    artifacts: list[str] | None = None,
+) -> list[str]:
+    workflow_mode = str(metadata.get("workflow_mode") or "coding").strip().replace("-", " ")
+    repo_name = str(metadata.get("repo_name") or "active repo").strip() or "active repo"
+    latest_step = str(progress.get("current_step") or "").strip()
+    latest_detail = str(progress.get("current_detail") or "").strip()
+    latest_result = str(progress.get("result_summary") or "").strip()
+    preferred_checks = [
+        str(item).strip()
+        for item in (metadata.get("preferred_checks") if isinstance(metadata.get("preferred_checks"), list) else [])
+        if str(item).strip()
+    ]
+    report_lines = [
+        f"Mode: {workflow_mode}",
+        f"Repo: {repo_name}",
+        f"Outcome: {outcome}",
+    ]
+    if latest_step:
+        report_lines.append(f"Latest step: {latest_step}")
+    if latest_detail:
+        report_lines.append(f"Detail: {latest_detail}")
+    if latest_result:
+        report_lines.append(f"Result: {latest_result}")
+    if preferred_checks:
+        report_lines.append(f"Verification: {preferred_checks[0]}")
+    for artifact in (artifacts or [])[:2]:
+        cleaned = str(artifact).strip()
+        if cleaned:
+            report_lines.append(f"Artifact: {cleaned}")
+    return report_lines
 
 
 def _coding_outcome_profile(
@@ -711,6 +760,7 @@ def build_architecture_status(app_state: Any, *, owner_user_id: str | None = Non
         detail_override = active_progress["current_detail"]
         result_override = active_progress["result_summary"]
         if failed_task is not None:
+            failed_artifacts = _task_artifacts(failed_task)
             failed_outcome = _coding_outcome_profile(
                 mission_profile,
                 mission_metadata,
@@ -718,8 +768,12 @@ def build_architecture_status(app_state: Any, *, owner_user_id: str | None = Non
                 task=failed_task,
             )
             failed_progress = _task_progress_snapshot(failed_task)
-            failed_workflow = _coding_workflow_payload(mission_metadata, failed_progress, outcome="blocked")
-            failed_artifacts = _task_artifacts(failed_task)
+            failed_workflow = _coding_workflow_payload(
+                mission_metadata,
+                failed_progress,
+                outcome="blocked",
+                artifacts=failed_artifacts,
+            )
             mission_snapshot = _upsert_architecture_mission(
                 app_state,
                 mission_id="planner-executor",
@@ -764,6 +818,7 @@ def build_architecture_status(app_state: Any, *, owner_user_id: str | None = Non
                     planner_mission,
                 )
         elif completed_task is not None:
+            completed_artifacts = _task_artifacts(completed_task)
             completed_outcome = _coding_outcome_profile(
                 mission_profile,
                 mission_metadata,
@@ -771,8 +826,12 @@ def build_architecture_status(app_state: Any, *, owner_user_id: str | None = Non
                 task=completed_task,
             )
             completed_progress = _task_progress_snapshot(completed_task)
-            completed_workflow = _coding_workflow_payload(mission_metadata, completed_progress, outcome="complete")
-            completed_artifacts = _task_artifacts(completed_task)
+            completed_workflow = _coding_workflow_payload(
+                mission_metadata,
+                completed_progress,
+                outcome="complete",
+                artifacts=completed_artifacts,
+            )
             mission_snapshot = _upsert_architecture_mission(
                 app_state,
                 mission_id="planner-executor",
@@ -817,13 +876,18 @@ def build_architecture_status(app_state: Any, *, owner_user_id: str | None = Non
                     planner_mission,
                 )
         elif active_task is not None:
+            active_artifacts = _task_artifacts(active_task)
             active_outcome = _coding_live_profile(
                 mission_profile,
                 mission_metadata,
                 task=active_task,
             )
-            active_workflow = _coding_workflow_payload(mission_metadata, active_progress, outcome="active")
-            active_artifacts = _task_artifacts(active_task)
+            active_workflow = _coding_workflow_payload(
+                mission_metadata,
+                active_progress,
+                outcome="active",
+                artifacts=active_artifacts,
+            )
             mission_snapshot = _upsert_architecture_mission(
                 app_state,
                 mission_id="planner-executor",

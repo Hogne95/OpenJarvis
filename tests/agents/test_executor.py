@@ -159,6 +159,39 @@ class TestExecutorBasic:
         assert any(step["phase"] == "report" and step["status"] == "success" for step in recorded_steps)
         assert any(event.data.get("phase") == "report" for event in steps)
 
+    def test_execute_tick_records_authored_report_finding_on_success(self, executor, manager):
+        agent = manager.create_agent(name="test", agent_type="monitor_operative")
+        manager.create_task(agent["id"], "Do the thing", status="pending")
+
+        rv = AgentResult(
+            content="Recovered the failing auth route and verified the focused target.\nNext: review adjacent auth tests.",
+            metadata={"verification_summary": "pytest tests/server/test_auth_routes.py -q passed"},
+        )
+        with patch.object(executor, "_invoke_agent", return_value=rv):
+            executor.execute_tick(agent["id"])
+
+        updated_task = manager.list_tasks(agent["id"])[0]
+        findings = updated_task["findings"]
+        assert findings
+        assert findings[0]["label"] == "Agent report"
+        assert "Recovered the failing auth route" in findings[0]["detail"]
+        assert findings[1]["label"] == "Verification summary"
+
+    def test_execute_tick_records_error_finding_on_failure(self, executor, manager):
+        agent = manager.create_agent(name="test", agent_type="monitor_operative")
+        manager.create_task(agent["id"], "Do the thing", status="pending")
+
+        with patch.object(
+            executor, "_invoke_agent", side_effect=FatalError("bad config")
+        ):
+            executor.execute_tick(agent["id"])
+
+        updated_task = manager.list_tasks(agent["id"])[0]
+        findings = updated_task["findings"]
+        assert findings
+        assert findings[0]["label"] == "Execution error"
+        assert "bad config" in findings[0]["detail"]
+
     def test_execute_tick_marks_task_failed_on_error(self, executor, manager):
         agent = manager.create_agent(name="test", agent_type="monitor_operative")
         manager.create_task(agent["id"], "Do the thing", status="pending")

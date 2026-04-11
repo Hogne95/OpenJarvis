@@ -1719,6 +1719,8 @@ def test_coding_handoff_status_formats_blocked_outcome_for_workflow_mode(tmp_pat
     assert mission["result_data"]["workflow"]["closure"]["primary_exit_criterion"] == "The release check path has been run or explicitly marked blocked."
     assert mission["result_data"]["artifacts"][0] == "Packaging build log captured for the release path."
     assert "Blocked file: frontend/package.json version mismatch" in mission["result_data"]["artifacts"]
+    assert "Mode: release" in mission["result_data"]["workflow"]["closure"]["report_lines"]
+    assert "Outcome: blocked" in mission["result_data"]["workflow"]["closure"]["report_lines"]
     assert mission["next_action"]["label"] == "Coding Workflow Retry"
 
 
@@ -1780,4 +1782,6 @@ def test_coding_handoff_status_formats_completed_outcome_for_workflow_mode(tmp_p
     assert mission["result_data"]["workflow"]["closure"]["primary_deliverable"] == "A failing-test recovery summary for the target repo."
     assert mission["result_data"]["artifacts"][0] == "Auth route regression target passed cleanly."
     assert "Verified command: pytest tests/server/test_auth_routes.py -q" in mission["result_data"]["artifacts"]
+    assert "Mode: failing tests" in mission["result_data"]["workflow"]["closure"]["report_lines"]
+    assert "Outcome: complete" in mission["result_data"]["workflow"]["closure"]["report_lines"]
     assert mission["next_action"]["label"] == "Coding Workflow Outcome"

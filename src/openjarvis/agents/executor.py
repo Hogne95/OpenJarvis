@@ -207,6 +207,45 @@ class AgentExecutor:
         except Exception:
             pass
 
+    def _record_task_findings(
+        self,
+        agent_id: str,
+        *,
+        result: AgentResult | None = None,
+        error: Exception | None = None,
+    ) -> None:
+        """Persist compact authored artifacts for the current visible task.
+
+        Root cause: coding missions were already preserving task findings, but the
+        executor rarely wrote any. Recording a small authored report artifact at
+        tick finalization makes the final coding closure feel like it came from
+        the run itself instead of only being reconstructed from task metadata.
+        """
+        task = self._primary_task(agent_id)
+        if task is None:
+            return
+
+        findings: list[dict[str, str]] = []
+        if result is not None:
+            content = (result.content or "").strip()
+            if content:
+                first_line = next((line.strip("-* \t") for line in content.splitlines() if line.strip()), "")
+                if first_line:
+                    findings.append({"label": "Agent report", "detail": first_line[:240]})
+            metadata = result.metadata or {}
+            verification = str(metadata.get("verification_summary") or "").strip()
+            if verification:
+                findings.append({"label": "Verification summary", "detail": verification[:240]})
+        if error is not None:
+            findings.append({"label": "Execution error", "detail": str(error).strip()[:240]})
+
+        if not findings:
+            return
+        try:
+            self._manager.update_task(str(task.get("id")), findings=findings)
+        except Exception:
+            pass
+
     def _inject_tool_deps(self, tool: Any) -> None:
         """Inject runtime dependencies into a tool instance.
 
@@ -810,6 +849,7 @@ class AgentExecutor:
                 result_summary=(result.content or "").strip()[:240] if result else "",
                 task_status="completed",
             )
+            self._record_task_findings(agent_id, result=result)
             self._bus.publish(
                 EventType.AGENT_TICK_END,
                 {
@@ -835,6 +875,7 @@ class AgentExecutor:
                 result_summary=str(error)[:240],
                 task_status="failed",
             )
+            self._record_task_findings(agent_id, error=error)
             self._bus.publish(
                 EventType.AGENT_TICK_ERROR,
                 {
@@ -866,6 +907,7 @@ class AgentExecutor:
                 result_summary=error_msg[:240],
                 task_status="failed",
             )
+            self._record_task_findings(agent_id, error=error)
             self._bus.publish(
                 EventType.AGENT_TICK_ERROR,
                 {

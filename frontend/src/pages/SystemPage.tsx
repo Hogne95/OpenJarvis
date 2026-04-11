@@ -640,6 +640,7 @@ export function SystemPage() {
                               typeof closure.primary_deliverable === 'string' ? closure.primary_deliverable : '';
                             const primaryExit =
                               typeof closure.primary_exit_criterion === 'string' ? closure.primary_exit_criterion : '';
+                            const reportLines = Array.isArray(closure.report_lines) ? closure.report_lines : [];
                             const reportTemplate =
                               typeof workflow.report_template === 'string' ? workflow.report_template : '';
                             return (
@@ -648,6 +649,9 @@ export function SystemPage() {
                                 {primaryDeliverable ? <div>Deliverable: {primaryDeliverable}</div> : null}
                                 {primaryExit ? <div>Exit: {primaryExit}</div> : null}
                                 {reportTemplate ? <div>Report: {reportTemplate}</div> : null}
+                                {reportLines.slice(0, 4).map((line, index) => (
+                                  <div key={`${index}-${String(line)}`}>Report line: {String(line)}</div>
+                                ))}
                               </div>
                             );
                           })()}
