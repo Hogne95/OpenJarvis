@@ -544,6 +544,10 @@ export default function JarvisHudDashboard({
   const needsArchitectureTaskPolling = isDashboardView || isWorkspaceView || isOperationsView;
   const needsWorkspaceStatusPolling = isDashboardView || isWorkspaceView || isOperationsView;
   const needsExtendedIntelBriefs = isDashboardView || isWorkspaceView || isOperationsView;
+  const needsOperatorMemoryBundle = isDashboardView || isOperationsView || isBriefingsView;
+  const needsInboxBundle = isDashboardView || isOperationsView || isBriefingsView;
+  const needsDigestBundle = isDashboardView;
+  const needsCommanderBundle = isDashboardView || isOperationsView;
   const needsVoiceStatusPolling = isDashboardView || isOperationsView || isBriefingsView;
   const needsActionCenterPolling = isDashboardView || isOperationsView || isBriefingsView;
   const needsAutomationPolling = isDashboardView || isOperationsView;
@@ -863,17 +867,17 @@ export default function JarvisHudDashboard({
           desktop,
           architecture,
         ] = await Promise.allSettled([
-          includeExtended ? fetchAutomationLogs() : Promise.resolve({ items: [] }),
-          includeExtended ? fetchDailyDigest() : Promise.resolve<DailyDigest | null>(null),
-          includeExtended ? fetchDigestSchedule() : Promise.resolve<DigestSchedule | null>(null),
-          includeExtended ? fetchOperatorMemory() : Promise.resolve<DurableOperatorMemory | null>(null),
-          includeExtended ? fetchInboxSummary() : Promise.resolve<InboxSummaryItem[]>([]),
-          includeExtended ? fetchTaskSummary() : Promise.resolve<TaskSummaryItem[]>([]),
-          includeExtended ? fetchReminders() : Promise.resolve<ReminderItem[]>([]),
+          includeExtended && needsAutomationPolling ? fetchAutomationLogs() : Promise.resolve({ items: [] }),
+          includeExtended && needsDigestBundle ? fetchDailyDigest() : Promise.resolve<DailyDigest | null>(null),
+          includeExtended && needsDigestBundle ? fetchDigestSchedule() : Promise.resolve<DigestSchedule | null>(null),
+          includeExtended && needsOperatorMemoryBundle ? fetchOperatorMemory() : Promise.resolve<DurableOperatorMemory | null>(null),
+          includeExtended && needsInboxBundle ? fetchInboxSummary() : Promise.resolve<InboxSummaryItem[]>([]),
+          includeExtended && needsInboxBundle ? fetchTaskSummary() : Promise.resolve<TaskSummaryItem[]>([]),
+          includeExtended && needsInboxBundle ? fetchReminders() : Promise.resolve<ReminderItem[]>([]),
           needsAgentPresencePolling ? fetchManagedAgents({ compact: true }) : Promise.resolve([] as typeof managedAgents),
           listConnectors(),
           includeExtended && needsVoiceStatusPolling ? fetchSpeechProfile() : Promise.resolve<SpeechProfile | null>(null),
-          includeExtended && needsExtendedIntelBriefs ? fetchOperatorCommanderBrief() : Promise.resolve<OperatorCommanderBriefResponse | null>(null),
+          includeExtended && needsCommanderBundle ? fetchOperatorCommanderBrief() : Promise.resolve<OperatorCommanderBriefResponse | null>(null),
           includeExtended && needsWorkspaceStatusPolling ? fetchWorkspaceSummary() : Promise.resolve<WorkspaceSummary | null>(null),
           includeExtended && needsWorkspaceStatusPolling ? fetchWorkspaceRepos() : Promise.resolve<WorkspaceRepoCatalog | null>(null),
           includeExtended && needsWorkspaceStatusPolling ? fetchWorkspaceChecks() : Promise.resolve<WorkspaceChecks | null>(null),
@@ -935,7 +939,16 @@ export default function JarvisHudDashboard({
       window.clearInterval(fastInterval);
       window.clearInterval(slowInterval);
     };
-  }, [needsArchitectureTaskPolling, needsWorkspaceStatusPolling, setManagedAgents]);
+  }, [
+    needsArchitectureTaskPolling,
+    needsAutomationPolling,
+    needsCommanderBundle,
+    needsDigestBundle,
+    needsInboxBundle,
+    needsOperatorMemoryBundle,
+    needsWorkspaceStatusPolling,
+    setManagedAgents,
+  ]);
 
   useEffect(() => {
     if (typeof document !== 'undefined' && document.hidden) return undefined;

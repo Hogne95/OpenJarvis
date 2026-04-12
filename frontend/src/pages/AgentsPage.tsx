@@ -205,6 +205,53 @@ function describeManagedAgent(agent: ManagedAgent): string {
   return compact.length > 120 ? `${compact.slice(0, 117)}...` : compact;
 }
 
+function describeTemplate(tpl: AgentTemplate | null): string {
+  if (!tpl) {
+    return 'Build a custom specialist with your own instruction, tools, and schedule.';
+  }
+  return tpl.description || setupHeadlineForTemplate(tpl);
+}
+
+function humanizeAgentType(agentType?: string | null): string {
+  if (!agentType) return 'General specialist';
+  return agentType
+    .replace(/[_-]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .replace(/\b\w/g, (char) => char.toUpperCase());
+}
+
+function statusGuidance(agent: ManagedAgent): string {
+  if (agent.status === 'running') return agent.current_activity || 'This agent is actively working through its current job.';
+  if (agent.status === 'paused') return 'Paused for safety. Resume it when you want it to continue.';
+  if (agent.status === 'error' || agent.status === 'stalled' || agent.status === 'needs_attention') {
+    return 'Something interrupted this agent. Review the timeline or use recovery to get it back into a safe state.';
+  }
+  if (agent.status === 'idle') return 'Ready to chat, run on demand, or wait for its next schedule.';
+  return 'Available and ready for the next step.';
+}
+
+function recommendedNextSteps(agent: ManagedAgent): string[] {
+  const steps: string[] = [];
+  if (!agent.summary_memory) {
+    steps.push('Run it once so JARVIS can learn what useful output looks like for this role.');
+  }
+  if (agent.schedule_type === 'manual') {
+    steps.push('Keep it manual until the first run feels right, then add a schedule.');
+  }
+  if (!agent.config?.instruction) {
+    steps.push('Add one clear sentence describing the job you want this agent to handle.');
+  }
+  if ((agent.status === 'error' || agent.status === 'stalled' || agent.status === 'needs_attention') && !steps.length) {
+    steps.push('Open the timeline, check the latest blocker, then recover the agent when you are ready.');
+  }
+  if (!steps.length) {
+    steps.push('Use Chat for quick guidance, or Run Agent when you want a fresh execution.');
+    steps.push('Open Connected Apps if you want this agent to work with more real-world context.');
+  }
+  return steps.slice(0, 3);
+}
+
 function dedupeTemplatesList(items: AgentTemplate[]): AgentTemplate[] {
   const byKey = new Map<string, AgentTemplate>();
   for (const item of items) {
@@ -328,6 +375,97 @@ const TEMPLATE_INSTRUCTIONS: Record<string, string> = {
   'inbox_triager': 'Check my recent emails and messages. Categorize them by priority (urgent, important, FYI, spam). Summarize the top items I should act on.',
 };
 
+function humanizeTemplateName(value: string): string {
+  return value
+    .replace(/[_-]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .replace(/\b\w/g, (char) => char.toUpperCase());
+}
+
+function defaultAgentNameForTemplate(tpl: AgentTemplate | null): string {
+  if (!tpl) return 'Custom Agent';
+  return tpl.name?.trim() || humanizeTemplateName(tpl.id || 'Agent');
+}
+
+function setupHeadlineForTemplate(tpl: AgentTemplate | null): string {
+  if (!tpl) return 'Start with one clear responsibility. You can add more behavior after the first successful run.';
+  const normalized = (tpl.id || tpl.name || '').toLowerCase();
+  if (normalized.includes('planner')) return 'Good for planning, triage, and deciding what JARVIS should do next.';
+  if (normalized.includes('executor')) return 'Good for carrying out bounded work once the objective is clear.';
+  if (normalized.includes('vision')) return 'Good for screenshots, interface interpretation, and visual context.';
+  if (normalized.includes('meeting')) return 'Good for preparing context, talking points, and likely follow-ups.';
+  if (normalized.includes('inbox')) return 'Good for reducing inbox pressure and surfacing what matters first.';
+  if (normalized.includes('research')) return 'Good for recurring monitoring, summaries, and signal detection.';
+  if (normalized.includes('code')) return 'Good for repo reviews, bug-checking, and coding follow-up.';
+  return tpl.description || 'Choose this when you want a focused specialist with strong starter defaults.';
+}
+
+function setupChecklistForTemplate(tpl: AgentTemplate | null): string[] {
+  if (!tpl) {
+    return [
+      'Give the agent a short name you will recognize later.',
+      'Write one sentence about the exact job you want done.',
+      'Leave advanced settings alone unless you already know you need them.',
+    ];
+  }
+  const normalized = (tpl.id || tpl.name || '').toLowerCase();
+  if (normalized.includes('meeting')) {
+    return [
+      'Connect calendar and inbox sources if you want the strongest prep.',
+      'Keep the instruction specific about which meetings or people matter.',
+      'Start manual first, then schedule it once the output feels right.',
+    ];
+  }
+  if (normalized.includes('inbox')) {
+    return [
+      'Connect email or messaging sources before relying on the summaries.',
+      'Define what “urgent” means for you in the instruction.',
+      'Start manual first, then move to daily or hourly.',
+    ];
+  }
+  if (normalized.includes('code')) {
+    return [
+      'Point it at a review or repo goal, not a vague coding request.',
+      'Use the recommended model unless you know a better local model already.',
+      'Keep advanced settings collapsed for the first run.',
+    ];
+  }
+  return [
+    'Start with the template defaults.',
+    'Keep the first instruction narrow and concrete.',
+    'You can fine-tune later once the first run is useful.',
+  ];
+}
+
+const AGENTS_LIST_DESCRIPTION =
+  'Agents are focused specialists that help JARVIS plan, execute, triage, or prepare work without turning every task into one giant chat.';
+const AGENTS_LIST_GUIDANCE_ACTIVE =
+  'Pick an agent card to chat with it, inspect its setup, or run it again.';
+const AGENTS_LIST_GUIDANCE_EMPTY =
+  'Start with one recommended role first. You can always add more specialists after the first one proves useful.';
+const AGENTS_LIST_NEXT_STEPS_ACTIVE: string[] = [
+  'Open any agent to review its setup and current status.',
+  'Use Chat when you want direct back-and-forth with one specialist.',
+  'Use Run Agent when you want a fresh execution without opening chat first.',
+];
+const AGENTS_LIST_NEXT_STEPS_EMPTY: string[] = [
+  'Start with a recommended role instead of building everything from scratch.',
+  'Keep the first agent manual until you like the results.',
+  'Add connected apps later, once the first role is clearly useful.',
+];
+
+function isRecommendedTemplate(tpl: AgentTemplate): boolean {
+  const normalized = (tpl.id || tpl.name || '').toLowerCase();
+  return (
+    normalized.includes('planner') ||
+    normalized.includes('executor') ||
+    normalized.includes('vision') ||
+    normalized.includes('inbox') ||
+    normalized.includes('meeting')
+  );
+}
+
 function Tooltip({ text }: { text: string }) {
   return <span className="inline-block ml-1 cursor-help" style={{ color: 'var(--color-text-tertiary)', fontSize: 10 }} title={text}>(?)</span>;
 }
@@ -344,6 +482,8 @@ function LaunchWizard({
   onLaunched: () => void;
 }) {
   const visibleTemplates = dedupeTemplatesList(templates);
+  const recommendedTemplates = visibleTemplates.filter(isRecommendedTemplate);
+  const additionalTemplates = visibleTemplates.filter((tpl) => !isRecommendedTemplate(tpl));
   const UNIVERSAL_DEFAULTS = {
     memoryExtraction: 'structured_json',
     observationCompression: 'summarize',
@@ -370,6 +510,8 @@ function LaunchWizard({
   const [launching, setLaunching] = useState(false);
   const [recommendedModel, setRecommendedModel] = useState('');
   const models = useAppStore((s) => s.models);
+  const setupHeadline = setupHeadlineForTemplate(wizard.templateData);
+  const setupChecklist = setupChecklistForTemplate(wizard.templateData);
 
   useEffect(() => {
     fetchRecommendedModel().then((r) => {
@@ -395,7 +537,7 @@ function LaunchWizard({
         step: 2,
         templateId: tpl.id,
         templateData: tpl,
-        name: '',
+        name: defaultAgentNameForTemplate(tpl),
         instruction: (tpl as any).instruction || TEMPLATE_INSTRUCTIONS[tpl.id] || '',
         model: recommendedModel || w.model,
         scheduleType: (tpl as any).schedule_type || 'manual',
@@ -414,7 +556,7 @@ function LaunchWizard({
         step: 2,
         templateId: '',
         templateData: null,
-        name: '',
+        name: defaultAgentNameForTemplate(null),
         instruction: '',
         model: recommendedModel || w.model,
         scheduleType: 'manual',
@@ -487,13 +629,81 @@ function LaunchWizard({
   if (wizard.step === 1) {
     return (
       <div className="fixed inset-0 z-50 flex items-center justify-center" style={{ background: 'rgba(0,0,0,0.6)' }}>
-        <div className="rounded-xl p-6 w-full max-w-lg" style={{ background: 'var(--color-bg)', border: '1px solid var(--color-border)' }}>
+        <div className="rounded-xl p-6 w-full max-w-4xl max-h-[88vh] overflow-y-auto" style={{ background: 'var(--color-bg)', border: '1px solid var(--color-border)' }}>
           <div className="flex justify-between items-center mb-4">
-            <h2 className="text-lg font-semibold" style={{ color: 'var(--color-text)' }}>New Agent — Choose Template</h2>
+            <div>
+              <h2 className="text-lg font-semibold" style={{ color: 'var(--color-text)' }}>Choose an Agent Type</h2>
+              <div className="text-sm mt-1" style={{ color: 'var(--color-text-secondary)' }}>
+                Start with a role that matches the job. You can customize it after the first run.
+              </div>
+            </div>
             <button onClick={onClose} className="p-1 rounded hover:bg-opacity-10" style={{ color: 'var(--color-text-tertiary)' }}><X size={18} /></button>
           </div>
-          <div className="grid grid-cols-2 gap-3">
-            {visibleTemplates.map((tpl) => (
+          <div
+            className="rounded-lg p-4 mb-4"
+            style={{
+              background: 'linear-gradient(135deg, rgba(124,58,237,0.12), rgba(15,23,42,0.18))',
+              border: '1px solid var(--color-border)',
+            }}
+          >
+            <div className="text-xs font-semibold uppercase tracking-[0.28em] mb-2" style={{ color: 'var(--color-text-tertiary)' }}>
+              Fastest Path
+            </div>
+            <div className="grid gap-2 md:grid-cols-3 text-xs" style={{ color: 'var(--color-text-secondary)' }}>
+              <div>1. Choose the role that matches the job.</div>
+              <div>2. Confirm the default instruction, model, and schedule.</div>
+              <div>3. Launch first and only open Advanced if you actually need it.</div>
+            </div>
+          </div>
+          {recommendedTemplates.length > 0 && (
+            <>
+              <div className="text-xs font-semibold uppercase tracking-[0.28em] mb-3" style={{ color: 'var(--color-text-tertiary)' }}>
+                Recommended Starters
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-4">
+                {recommendedTemplates.map((tpl) => (
+                  <button
+                    key={tpl.id}
+                    onClick={() => selectTemplate(tpl)}
+                    className="text-left p-4 rounded-lg transition-all items-start"
+                    style={{ border: '1px solid var(--color-border)', background: 'var(--color-bg-secondary)' }}
+                    onMouseEnter={(e) => { e.currentTarget.style.borderColor = 'var(--color-accent)'; e.currentTarget.style.background = 'rgba(124,58,237,0.06)'; }}
+                    onMouseLeave={(e) => { e.currentTarget.style.borderColor = 'var(--color-border)'; e.currentTarget.style.background = 'var(--color-bg-secondary)'; }}
+                  >
+                    <div className="flex items-center justify-between gap-2 mb-1">
+                      <div className="flex items-center gap-2 min-w-0">
+                        <span className="text-lg">{(tpl as any).icon || '🤖'}</span>
+                        <span className="font-semibold text-sm" style={{ color: 'var(--color-text)' }}>{tpl.name}</span>
+                      </div>
+                      <span className="text-[10px] px-2 py-0.5 rounded-full" style={{ background: 'rgba(34,197,94,0.14)', color: '#4ade80' }}>
+                        Recommended
+                      </span>
+                    </div>
+                    <div className="text-xs mt-1" style={{ color: 'var(--color-text-tertiary)', textAlign: 'left' }}>{describeTemplate(tpl)}</div>
+                    <div className="text-[11px] mt-2 leading-5" style={{ color: 'var(--color-text-secondary)', textAlign: 'left' }}>
+                      {setupHeadlineForTemplate(tpl)}
+                    </div>
+                    {(tpl as any).tools && (
+                      <div className="flex flex-wrap gap-1 mt-2">
+                        {((tpl as any).tools as string[]).slice(0, 4).map((t: string) => (
+                          <span key={t} className="text-xs px-1.5 py-0.5 rounded" style={{ background: 'rgba(124,58,237,0.12)', color: '#a78bfa' }}>{t}</span>
+                        ))}
+                        {((tpl as any).tools as string[]).length > 4 && (
+                          <span className="text-xs px-1.5 py-0.5 rounded" style={{ color: 'var(--color-text-tertiary)' }}>+{((tpl as any).tools as string[]).length - 4}</span>
+                        )}
+                      </div>
+                    )}
+                  </button>
+                ))}
+              </div>
+            </>
+          )}
+
+          <div className="text-xs font-semibold uppercase tracking-[0.28em] mb-3" style={{ color: 'var(--color-text-tertiary)' }}>
+            More Options
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            {additionalTemplates.map((tpl) => (
               <button
                 key={tpl.id}
                 onClick={() => selectTemplate(tpl)}
@@ -506,7 +716,10 @@ function LaunchWizard({
                   <span className="text-lg">{(tpl as any).icon || '🤖'}</span>
                   <span className="font-semibold text-sm" style={{ color: 'var(--color-text)' }}>{tpl.name}</span>
                 </div>
-                <div className="text-xs mt-1" style={{ color: 'var(--color-text-tertiary)', textAlign: 'left' }}>{tpl.description}</div>
+                <div className="text-xs mt-1" style={{ color: 'var(--color-text-tertiary)', textAlign: 'left' }}>{describeTemplate(tpl)}</div>
+                <div className="text-[11px] mt-2 leading-5" style={{ color: 'var(--color-text-secondary)', textAlign: 'left' }}>
+                  {setupHeadlineForTemplate(tpl)}
+                </div>
                 {(tpl as any).tools && (
                   <div className="flex flex-wrap gap-1 mt-2">
                     {((tpl as any).tools as string[]).slice(0, 4).map((t: string) => (
@@ -531,6 +744,9 @@ function LaunchWizard({
                 <span className="font-semibold text-sm" style={{ color: 'var(--color-text)' }}>Custom Agent</span>
               </div>
               <div className="text-xs mt-1" style={{ color: 'var(--color-text-tertiary)', textAlign: 'left' }}>Start from scratch. Pick your own tools, schedule, and behavior.</div>
+              <div className="text-[11px] mt-2 leading-5" style={{ color: 'var(--color-text-secondary)', textAlign: 'left' }}>
+                Best when you already know the exact behavior you want and do not need a starter role.
+              </div>
             </button>
           </div>
         </div>
@@ -541,7 +757,7 @@ function LaunchWizard({
   // ── Step 2: Configuration ──
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center" style={{ background: 'rgba(0,0,0,0.6)' }}>
-      <div className="rounded-xl p-6 w-full max-w-lg max-h-[85vh] overflow-y-auto" style={{ background: 'var(--color-bg)', border: '1px solid var(--color-border)' }}>
+      <div className="rounded-xl p-6 w-full max-w-5xl max-h-[88vh] overflow-y-auto" style={{ background: 'var(--color-bg)', border: '1px solid var(--color-border)' }}>
         <div className="flex justify-between items-center mb-4">
           <div className="flex items-center gap-2">
             <button onClick={() => setWizard((w) => ({ ...w, step: 1 }))} className="p-1 rounded" style={{ color: 'var(--color-text-tertiary)' }}><ChevronLeft size={18} /></button>
@@ -552,6 +768,30 @@ function LaunchWizard({
           <button onClick={onClose} className="p-1 rounded" style={{ color: 'var(--color-text-tertiary)' }}><X size={18} /></button>
         </div>
 
+        <div
+          className="rounded-lg p-4 mb-4"
+          style={{
+            background: 'linear-gradient(135deg, rgba(124,58,237,0.12), rgba(15,23,42,0.18))',
+            border: '1px solid var(--color-border)',
+          }}
+        >
+          <div className="text-xs font-semibold uppercase tracking-[0.28em] mb-2" style={{ color: 'var(--color-text-tertiary)' }}>
+            Setup Brief
+          </div>
+          <div className="text-sm font-semibold mb-2" style={{ color: 'var(--color-text)' }}>
+            {setupHeadline}
+          </div>
+          <div className="space-y-2">
+            {setupChecklist.map((item) => (
+              <div key={item} className="flex gap-2 text-xs" style={{ color: 'var(--color-text-secondary)' }}>
+                <span style={{ color: 'var(--color-accent)' }}>•</span>
+                <span>{item}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <div className="grid gap-6 lg:grid-cols-[1.15fr_0.85fr]">
         <div className="space-y-4">
           {/* Name */}
           <div>
@@ -559,10 +799,13 @@ function LaunchWizard({
             <input
               value={wizard.name}
               onChange={(e) => setWizard((w) => ({ ...w, name: e.target.value }))}
-              placeholder="e.g. AI Research Tracker"
+              placeholder={defaultAgentNameForTemplate(wizard.templateData)}
               className="w-full px-3 py-2 rounded-lg text-sm bg-transparent"
               style={{ border: '1px solid var(--color-border)', color: 'var(--color-text)' }}
             />
+            <p className="text-[11px] mt-1" style={{ color: 'var(--color-text-tertiary)' }}>
+              Keep it short and role-based so it is easy to spot later.
+            </p>
           </div>
 
           {/* Instruction */}
@@ -719,9 +962,13 @@ function LaunchWizard({
           {/* Advanced Settings */}
           <details className="rounded-lg" style={{ border: '1px solid var(--color-border)' }}>
             <summary className="px-3 py-2 cursor-pointer text-sm font-medium" style={{ color: 'var(--color-text-tertiary)' }}>
-              Advanced Settings <span className="text-xs font-normal">(optional)</span>
+              Advanced Settings <span className="text-xs font-normal">(optional, usually not needed for the first run)</span>
             </summary>
             <div className="px-3 pb-3 pt-1 space-y-3" style={{ borderTop: '1px solid var(--color-border)' }}>
+              <div className="text-xs" style={{ color: 'var(--color-text-secondary)' }}>
+                Root cause: first-time setup felt too technical because the wizard exposed deep runtime controls too early.
+                These defaults are already tuned well enough for a strong first launch, so only open this if you know what you want to change.
+              </div>
               <div className="grid grid-cols-2 gap-3 text-sm">
                 <div>
                   <label className="block text-xs mb-1" style={{ color: 'var(--color-text-tertiary)' }}>Memory Extraction<Tooltip text="How the agent remembers context between runs" /></label>
@@ -807,6 +1054,39 @@ function LaunchWizard({
               Cancel
             </button>
           </div>
+        </div>
+
+        <div className="space-y-4">
+          <div
+            className="rounded-lg p-4"
+            style={{ background: 'var(--color-bg-secondary)', border: '1px solid var(--color-border)' }}
+          >
+            <div className="text-xs font-semibold uppercase tracking-[0.28em] mb-2" style={{ color: 'var(--color-text-tertiary)' }}>
+              Current Setup
+            </div>
+            <div className="space-y-2 text-xs" style={{ color: 'var(--color-text-secondary)' }}>
+              <div><strong style={{ color: 'var(--color-text)' }}>Name:</strong> {wizard.name || defaultAgentNameForTemplate(wizard.templateData)}</div>
+              <div><strong style={{ color: 'var(--color-text)' }}>Model:</strong> {wizard.model || 'Pick a model'}</div>
+              <div><strong style={{ color: 'var(--color-text)' }}>Schedule:</strong> {formatScheduleLabel(wizard.scheduleType, wizard.scheduleValue)}</div>
+              <div><strong style={{ color: 'var(--color-text)' }}>Tools:</strong> {wizard.selectedTools.length ? `${wizard.selectedTools.length} selected` : 'Custom / none yet'}</div>
+              <div><strong style={{ color: 'var(--color-text)' }}>Advanced:</strong> safe to leave at defaults for the first run</div>
+            </div>
+          </div>
+
+          <div
+            className="rounded-lg p-4"
+            style={{ background: 'var(--color-bg-secondary)', border: '1px solid var(--color-border)' }}
+          >
+            <div className="text-xs font-semibold uppercase tracking-[0.28em] mb-2" style={{ color: 'var(--color-text-tertiary)' }}>
+              What Happens Next
+            </div>
+            <div className="space-y-2 text-xs" style={{ color: 'var(--color-text-secondary)' }}>
+              <div>The agent is created with the selected model, schedule, and template defaults.</div>
+              <div>You can edit the instruction, tools, and runtime behavior after launch.</div>
+              <div>Manual is the safest starting schedule if you are still learning what you want.</div>
+            </div>
+          </div>
+        </div>
         </div>
       </div>
     </div>
@@ -1021,7 +1301,7 @@ function AgentCard({
             style={{ background: '#ef444420', color: '#ef4444' }}
             title="Recover agent"
           >
-            <AlertTriangle size={11} /> Recover
+            <AlertTriangle size={11} /> Reset & Recover
           </button>
         )}
         <div className="ml-auto">
@@ -3107,6 +3387,8 @@ export function AgentsPage() {
   const [pendingTemplateId, setPendingTemplateId] = useState<string | null>(null);
   const visibleAgents = dedupeVisibleAgents(managedAgents);
   const visibleTemplates = dedupeTemplatesList(templates);
+  const recommendedStarterTemplates = visibleTemplates.filter(isRecommendedTemplate);
+  const additionalStarterTemplates = visibleTemplates.filter((tpl) => !isRecommendedTemplate(tpl));
   const [detailTab, setDetailTab] = useState<'overview' | 'interact' | 'channels' | 'messaging' | 'tasks' | 'memory' | 'learning' | 'logs'>('interact');
 
   const refresh = useCallback(async () => {
@@ -3268,16 +3550,19 @@ export function AgentsPage() {
       tasks.length > 0
         ? Math.round((tasks.filter((t) => t.status === 'completed').length / tasks.length) * 100)
         : null;
+    const selectedAgentDescription = describeManagedAgent(selectedAgent);
+    const selectedAgentGuidance = statusGuidance(selectedAgent);
+    const selectedAgentNextSteps = recommendedNextSteps(selectedAgent);
 
     const DETAIL_TABS = [
-      { id: 'interact', label: 'Interact', icon: MessageSquare },
+      { id: 'interact', label: 'Chat', icon: MessageSquare },
       { id: 'overview', label: 'Overview', icon: Activity },
-      { id: 'channels', label: 'Data Sources', icon: Database },
-      { id: 'messaging', label: 'Messaging Channels', icon: Wifi },
-      { id: 'tasks', label: 'Tasks', icon: ListTodo },
+      { id: 'channels', label: 'Connected Apps', icon: Database },
+      { id: 'messaging', label: 'External Chat', icon: Wifi },
+      { id: 'tasks', label: 'Runs', icon: ListTodo },
       { id: 'memory', label: 'Memory', icon: Brain },
-      { id: 'learning', label: 'Learning', icon: Settings },
-      { id: 'logs', label: 'Logs', icon: FileText },
+      { id: 'learning', label: 'Improvements', icon: Settings },
+      { id: 'logs', label: 'Timeline', icon: FileText },
     ] as const;
 
     return (
@@ -3292,8 +3577,8 @@ export function AgentsPage() {
         </button>
 
         {/* Header */}
-        <div className="flex items-start justify-between mb-6">
-          <div className="flex items-center gap-3">
+        <div className="flex items-start justify-between mb-6 gap-6">
+          <div className="flex items-start gap-3">
             <Bot size={24} style={{ color: 'var(--color-accent)' }} />
             <div>
               <h1 className="text-xl font-semibold" style={{ color: 'var(--color-text)' }}>
@@ -3302,13 +3587,19 @@ export function AgentsPage() {
               <div className="flex items-center gap-2 mt-1">
                 <StatusBadge status={selectedAgent.status} />
                 <span className="text-xs" style={{ color: 'var(--color-text-tertiary)' }}>
-                  {selectedAgent.agent_type}
+                  {humanizeAgentType(selectedAgent.agent_type)}
                 </span>
               </div>
+              <p className="text-sm mt-3 max-w-2xl" style={{ color: 'var(--color-text-secondary)' }}>
+                {selectedAgentDescription}
+              </p>
+              <p className="text-xs mt-2 max-w-2xl" style={{ color: 'var(--color-text-tertiary)' }}>
+                {selectedAgentGuidance}
+              </p>
             </div>
           </div>
           {/* Header actions */}
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-wrap justify-end">
             {detailTab === 'interact' ? (
               <span
                 className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs"
@@ -3317,13 +3608,13 @@ export function AgentsPage() {
                 <MessageSquare size={13} /> Chat ready — just type below
               </span>
             ) : (
-              <button
-                onClick={() => handleRun(selectedAgent.id)}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm cursor-pointer font-medium"
-                style={{ background: 'var(--color-accent)', color: '#fff' }}
-              >
-                <Zap size={13} /> Run Now
-              </button>
+                <button
+                  onClick={() => handleRun(selectedAgent.id)}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm cursor-pointer font-medium"
+                  style={{ background: 'var(--color-accent)', color: '#fff' }}
+                >
+                <Zap size={13} /> Run Agent
+                </button>
             )}
             {(selectedAgent.status === 'running' || selectedAgent.status === 'idle') && (
               <button
@@ -3349,7 +3640,7 @@ export function AgentsPage() {
                 className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm cursor-pointer"
                 style={{ background: '#ef444420', color: '#ef4444', border: '1px solid #ef444440' }}
               >
-                <AlertTriangle size={13} /> Recover
+                <AlertTriangle size={13} /> Reset & Recover
               </button>
             )}
             <button
@@ -3402,6 +3693,9 @@ export function AgentsPage() {
               <h3 className="text-sm font-semibold mb-2" style={{ color: 'var(--color-text)' }}>
                 Configuration
               </h3>
+              <p className="text-xs mb-3" style={{ color: 'var(--color-text-secondary)' }}>
+                These are the main operating settings for this agent. You usually only need to change them after you have seen a real run.
+              </p>
               <AgentConfigGrid agent={selectedAgent} onAgentUpdated={refresh} />
               <div className="mt-2 pt-2" style={{ borderTop: '1px solid var(--color-border)' }}>
                 <span className="text-xs font-mono" style={{ color: 'var(--color-text-tertiary)' }}>
@@ -3426,13 +3720,13 @@ export function AgentsPage() {
                     onClick={() => setDetailTab('channels')}
                     className="cursor-pointer underline"
                     style={{ color: 'var(--color-accent)', background: 'none', border: 'none', padding: 0, font: 'inherit' }}
-                  >Data Sources</button>{' '}
+                  >Connected Apps</button>{' '}
                   tab, then set up{' '}
                   <button
                     onClick={() => setDetailTab('messaging')}
                     className="cursor-pointer underline"
                     style={{ color: 'var(--color-accent)', background: 'none', border: 'none', padding: 0, font: 'inherit' }}
-                  >Messaging Channels</button>{' '}
+                  >External Chat</button>{' '}
                   to talk to this agent from your phone.
                 </div>
               </div>
@@ -3521,7 +3815,7 @@ export function AgentsPage() {
                 style={{ background: 'var(--color-bg-secondary)', border: '1px solid var(--color-border)' }}
               >
                 <h3 className="text-sm font-medium mb-2" style={{ color: 'var(--color-text-secondary)' }}>
-                  Messaging Channels
+                  External Chat
                 </h3>
                 {channels.map((b) => (
                   <div key={b.id} className="text-sm py-1" style={{ color: 'var(--color-text)' }}>
@@ -3573,7 +3867,7 @@ export function AgentsPage() {
             ))}
             {tasks.length === 0 && (
               <div className="text-sm py-8 text-center" style={{ color: 'var(--color-text-tertiary)' }}>
-                No tasks assigned.
+                No recent runs yet. Start the agent once and its activity will show up here.
               </div>
             )}
           </div>
@@ -3589,7 +3883,7 @@ export function AgentsPage() {
               <Brain size={14} /> Summary Memory
             </h3>
             <p className="whitespace-pre-wrap text-sm" style={{ color: 'var(--color-text)' }}>
-              {selectedAgent.summary_memory || 'Agent has no stored memory yet.'}
+              {selectedAgent.summary_memory || 'No stored memory yet. Once the agent runs, JARVIS will keep a compact summary here.'}
             </p>
           </div>
         )}
@@ -3629,9 +3923,46 @@ export function AgentsPage() {
       )}
 
       <div className="flex justify-between items-center mb-6">
-        <h1 className="text-xl font-semibold" style={{ color: 'var(--color-text)' }}>
-          Agents
-        </h1>
+        <div>
+          <h1 className="text-xl font-semibold" style={{ color: 'var(--color-text)' }}>
+            Agents
+          </h1>
+          <div className="text-sm mt-1" style={{ color: 'var(--color-text-secondary)' }}>
+            Create focused specialists that plan, execute, triage, or prepare work for you.
+          </div>
+        </div>
+
+        <div className="grid gap-3 mb-6 md:grid-cols-3">
+          <div className="rounded-lg p-4" style={{ background: 'var(--color-bg-secondary)', border: '1px solid var(--color-border)' }}>
+            <div className="text-[11px] font-semibold uppercase tracking-[0.24em] mb-2" style={{ color: 'var(--color-text-tertiary)' }}>
+              Best Used For
+            </div>
+            <div className="text-sm" style={{ color: 'var(--color-text-secondary)' }}>
+              {AGENTS_LIST_DESCRIPTION}
+            </div>
+          </div>
+          <div className="rounded-lg p-4" style={{ background: 'var(--color-bg-secondary)', border: '1px solid var(--color-border)' }}>
+            <div className="text-[11px] font-semibold uppercase tracking-[0.24em] mb-2" style={{ color: 'var(--color-text-tertiary)' }}>
+              Current State
+            </div>
+            <div className="text-sm" style={{ color: 'var(--color-text-secondary)' }}>
+              {visibleAgents.length > 0 ? AGENTS_LIST_GUIDANCE_ACTIVE : AGENTS_LIST_GUIDANCE_EMPTY}
+            </div>
+          </div>
+          <div className="rounded-lg p-4" style={{ background: 'var(--color-bg-secondary)', border: '1px solid var(--color-border)' }}>
+            <div className="text-[11px] font-semibold uppercase tracking-[0.24em] mb-2" style={{ color: 'var(--color-text-tertiary)' }}>
+              Recommended Next
+            </div>
+            <div className="space-y-2">
+              {(visibleAgents.length > 0 ? AGENTS_LIST_NEXT_STEPS_ACTIVE : AGENTS_LIST_NEXT_STEPS_EMPTY).map((step: string) => (
+                <div key={step} className="flex gap-2 text-sm" style={{ color: 'var(--color-text-secondary)' }}>
+                  <span style={{ color: 'var(--color-accent)' }}>•</span>
+                  <span>{step}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
         <button
           onClick={() => {
             if (!agentManagerAvailable) return;
@@ -3645,7 +3976,7 @@ export function AgentsPage() {
             color: agentManagerAvailable === false ? 'var(--color-text-tertiary)' : '#fff',
           }}
         >
-          <Plus size={15} /> New Agent
+          <Plus size={15} /> Create Agent
         </button>
       </div>
 
@@ -3691,14 +4022,130 @@ export function AgentsPage() {
       </div>
 
       {visibleAgents.length === 0 && (
-        <div className="text-center py-16" style={{ color: 'var(--color-text-tertiary)' }}>
-          <Bot size={48} className="mx-auto mb-4 opacity-30" />
-          <p className="mb-2 font-medium" style={{ color: 'var(--color-text-secondary)' }}>
-            No agents yet
-          </p>
-          <p className="text-sm mb-6">Create your first agent to get started with autonomous task management.</p>
+        <div className="py-12" style={{ color: 'var(--color-text-tertiary)' }}>
+          <div
+            className="mx-auto max-w-5xl rounded-2xl p-6"
+            style={{
+              background: 'linear-gradient(135deg, rgba(15,23,42,0.94), rgba(76,29,149,0.16))',
+              border: '1px solid var(--color-border)',
+            }}
+          >
+            <div className="text-center mb-8">
+              <Bot size={48} className="mx-auto mb-4 opacity-30" />
+              <p className="mb-2 font-medium text-lg" style={{ color: 'var(--color-text)' }}>
+                No agents yet
+              </p>
+              <p className="text-sm max-w-2xl mx-auto" style={{ color: 'var(--color-text-secondary)' }}>
+                Start with a recommended role below. You do not need to configure everything perfectly up front. The best first step is to launch one focused agent and see how it behaves.
+              </p>
+            </div>
+
+            {recommendedStarterTemplates.length > 0 ? (
+              <>
+                <div className="text-xs font-semibold uppercase tracking-[0.28em] mb-3" style={{ color: 'var(--color-text-tertiary)' }}>
+                  Recommended Starters
+                </div>
+                <div className="mx-auto mb-6 grid gap-3 text-left" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))' }}>
+                  {recommendedStarterTemplates.slice(0, 6).map((tpl) => (
+                    <button
+                      key={tpl.id}
+                      onClick={() => {
+                        if (!agentManagerAvailable) return;
+                        setPendingTemplateId(tpl.id);
+                        setShowWizard(true);
+                      }}
+                      disabled={agentManagerAvailable === false}
+                      className="rounded-lg p-4 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                      style={{ background: 'var(--color-bg-secondary)', border: '1px solid var(--color-border)' }}
+                    >
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="flex items-center gap-2">
+                          <span className="text-lg">{(tpl as any).icon || '🤖'}</span>
+                          <span className="text-sm font-semibold" style={{ color: 'var(--color-text)' }}>{tpl.name}</span>
+                        </div>
+                        <span className="text-[10px] px-2 py-0.5 rounded-full" style={{ background: 'rgba(34,197,94,0.14)', color: '#4ade80' }}>
+                          Recommended
+                        </span>
+                      </div>
+                      <div className="mt-2 text-xs leading-5" style={{ color: 'var(--color-text-secondary)' }}>
+                        {setupHeadlineForTemplate(tpl)}
+                      </div>
+                      <div className="mt-3 text-[10px] uppercase tracking-[0.22em]" style={{ color: 'var(--color-accent)' }}>
+                        Configure Agent
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              </>
+            ) : null}
+
+            {additionalStarterTemplates.length > 0 ? (
+              <>
+                <div className="text-xs font-semibold uppercase tracking-[0.28em] mb-3" style={{ color: 'var(--color-text-tertiary)' }}>
+                  More Agent Types
+                </div>
+                <div className="mx-auto mb-6 grid gap-3 text-left" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))' }}>
+                  {additionalStarterTemplates.slice(0, 4).map((tpl) => (
+                    <button
+                      key={tpl.id}
+                      onClick={() => {
+                        if (!agentManagerAvailable) return;
+                        setPendingTemplateId(tpl.id);
+                        setShowWizard(true);
+                      }}
+                      disabled={agentManagerAvailable === false}
+                      className="rounded-lg p-4 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                      style={{ background: 'var(--color-bg-secondary)', border: '1px solid var(--color-border)' }}
+                    >
+                      <div className="flex items-center gap-2">
+                        <span className="text-lg">{(tpl as any).icon || '🤖'}</span>
+                        <span className="text-sm font-semibold" style={{ color: 'var(--color-text)' }}>{tpl.name}</span>
+                      </div>
+                      <div className="mt-2 text-xs leading-5" style={{ color: 'var(--color-text-secondary)' }}>
+                        {tpl.description}
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              </>
+            ) : null}
+
+            <div className="flex flex-wrap items-center justify-center gap-3">
+              <button
+                onClick={() => {
+                  if (!agentManagerAvailable) return;
+                  setPendingTemplateId(recommendedStarterTemplates[0]?.id || null);
+                  setShowWizard(true);
+                }}
+                disabled={agentManagerAvailable === false}
+                className="inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+                style={{
+                  background: agentManagerAvailable === false ? 'var(--color-bg-tertiary)' : 'var(--color-accent)',
+                  color: agentManagerAvailable === false ? 'var(--color-text-tertiary)' : '#fff',
+                }}
+              >
+                <Plus size={15} /> Start with a Recommended Agent
+              </button>
+              <button
+                onClick={() => {
+                  if (!agentManagerAvailable) return;
+                  setPendingTemplateId(null);
+                  setShowWizard(true);
+                }}
+                disabled={agentManagerAvailable === false}
+                className="inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+                style={{
+                  background: 'transparent',
+                  border: '1px solid var(--color-border)',
+                  color: agentManagerAvailable === false ? 'var(--color-text-tertiary)' : 'var(--color-text)',
+                }}
+              >
+                <Plus size={15} /> Build a Custom Agent
+              </button>
+            </div>
+          </div>
           {visibleTemplates.length > 0 ? (
-            <div className="mx-auto mb-6 grid max-w-4xl gap-3 text-left" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))' }}>
+            <div className="hidden">
               {visibleTemplates.slice(0, 6).map((tpl) => (
                 <button
                   key={tpl.id}
@@ -3725,21 +4172,6 @@ export function AgentsPage() {
               ))}
             </div>
           ) : null}
-          <button
-            onClick={() => {
-              if (!agentManagerAvailable) return;
-              setPendingTemplateId(null);
-              setShowWizard(true);
-            }}
-            disabled={agentManagerAvailable === false}
-            className="inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
-            style={{
-              background: agentManagerAvailable === false ? 'var(--color-bg-tertiary)' : 'var(--color-accent)',
-              color: agentManagerAvailable === false ? 'var(--color-text-tertiary)' : '#fff',
-            }}
-          >
-            <Plus size={15} /> Launch your first agent
-          </button>
         </div>
       )}
     </div>
