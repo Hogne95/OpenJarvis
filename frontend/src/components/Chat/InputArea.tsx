@@ -329,9 +329,19 @@ export function InputArea() {
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
-      sendMessage();
+      if (!modelsLoading && selectedModel) {
+        void sendMessage();
+      }
     }
   };
+
+  const inputPlaceholder = streamState.isStreaming
+    ? 'JARVIS is responding...'
+    : modelsLoading
+      ? 'Models are loading... you can type while JARVIS gets ready'
+      : !selectedModel
+        ? 'Select a model to send your message'
+        : 'Message OpenJarvis...';
 
   return (
     <div className="px-4 pb-4 pt-2" style={{ maxWidth: 'var(--chat-max-width)', margin: '0 auto', width: '100%' }}>
@@ -348,11 +358,11 @@ export function InputArea() {
           value={input}
           onChange={(e) => setInput(e.target.value)}
           onKeyDown={handleKeyDown}
-          placeholder="Message OpenJarvis..."
+          placeholder={inputPlaceholder}
           rows={1}
           className="flex-1 bg-transparent outline-none resize-none text-sm leading-relaxed"
           style={{ color: 'var(--color-text)', maxHeight: '200px' }}
-          disabled={streamState.isStreaming || modelsLoading || !selectedModel}
+          disabled={streamState.isStreaming}
         />
         {streamState.isStreaming ? (
           <button
