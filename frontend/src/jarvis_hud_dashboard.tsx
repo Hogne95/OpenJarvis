@@ -553,6 +553,9 @@ export default function JarvisHudDashboard({
   const needsAutomationPolling = isDashboardView || isOperationsView;
   const needsAgentPresencePolling = isDashboardView || isOperationsView;
   const needsLearningPolling = isDashboardView || isWorkspaceView;
+  const needsCodingFastPolling = isDashboardView || isWorkspaceView;
+  const needsWorkbenchFastPolling = isDashboardView || isWorkspaceView;
+  const needsConnectorSummary = isDashboardView || isWorkspaceView || isOperationsView || isBriefingsView;
   const messages = useAppStore((s) => s.messages);
   const streamState = useAppStore((s) => s.streamState);
   const selectedModel = useAppStore((s) => s.selectedModel);
@@ -801,22 +804,23 @@ export default function JarvisHudDashboard({
         const [action, automation, coding, health, speech, loop, wb] = await Promise.allSettled([
           needsActionCenterPolling ? fetchActionCenterStatus() : Promise.resolve<ActionCenterStatus | null>(null),
           needsAutomationPolling ? fetchAutomationStatus() : Promise.resolve<AutomationStatus | null>(null),
-          fetchCodingStatus(),
+          needsCodingFastPolling ? fetchCodingStatus() : Promise.resolve<CodingWorkspaceStatus | null>(null),
           checkHealth(),
           needsVoiceStatusPolling ? fetchSpeechHealth() : Promise.resolve(null),
           needsVoiceStatusPolling ? fetchVoiceLoopStatus() : Promise.resolve<VoiceLoopStatus | null>(null),
-          fetchWorkbenchStatus(),
+          needsWorkbenchFastPolling ? fetchWorkbenchStatus() : Promise.resolve<WorkbenchStatus | null>(null),
         ]);
 
         if (cancelled) return;
 
         if (action.status === 'fulfilled' && action.value) setActionCenter(action.value);
         if (automation.status === 'fulfilled' && automation.value) setAutomationStatus(automation.value);
-        if (coding.status === 'fulfilled') setCodingWorkspace(coding.value);
+        if (coding.status === 'fulfilled' && coding.value) setCodingWorkspace(coding.value);
         if (loop.status === 'fulfilled' && loop.value) setVoiceLoop(loop.value);
-        if (wb.status === 'fulfilled') {
-          setWorkbench(wb.value);
-          setWorkbenchDirectory((current) => current || wb.value.default_working_dir);
+        if (wb.status === 'fulfilled' && wb.value) {
+          const workbenchValue = wb.value;
+          setWorkbench(workbenchValue);
+          setWorkbenchDirectory((current) => current || workbenchValue.default_working_dir);
         }
         if (health.status === 'fulfilled') setApiReachable(health.value);
         if (health.status === 'rejected') setApiReachable(false);
@@ -874,8 +878,8 @@ export default function JarvisHudDashboard({
           includeExtended && needsInboxBundle ? fetchInboxSummary() : Promise.resolve<InboxSummaryItem[]>([]),
           includeExtended && needsInboxBundle ? fetchTaskSummary() : Promise.resolve<TaskSummaryItem[]>([]),
           includeExtended && needsInboxBundle ? fetchReminders() : Promise.resolve<ReminderItem[]>([]),
-          needsAgentPresencePolling ? fetchManagedAgents({ compact: true }) : Promise.resolve([] as typeof managedAgents),
-          listConnectors(),
+          includeExtended && needsAgentPresencePolling ? fetchManagedAgents({ compact: true }) : Promise.resolve([] as typeof managedAgents),
+          includeExtended && needsConnectorSummary ? listConnectors() : Promise.resolve([]),
           includeExtended && needsVoiceStatusPolling ? fetchSpeechProfile() : Promise.resolve<SpeechProfile | null>(null),
           includeExtended && needsCommanderBundle ? fetchOperatorCommanderBrief() : Promise.resolve<OperatorCommanderBriefResponse | null>(null),
           includeExtended && needsWorkspaceStatusPolling ? fetchWorkspaceSummary() : Promise.resolve<WorkspaceSummary | null>(null),
@@ -901,9 +905,9 @@ export default function JarvisHudDashboard({
         if (desktop.status === 'fulfilled' && desktop.value) setDesktopState(desktop.value);
         if (architecture.status === 'fulfilled' && architecture.value) setAgentArchitecture(architecture.value);
         if (profile.status === 'fulfilled') setSpeechProfile(profile.value);
-        if (agents.status === 'fulfilled' && needsAgentPresencePolling) setManagedAgents(agents.value);
+        if (agents.status === 'fulfilled' && includeExtended && needsAgentPresencePolling) setManagedAgents(agents.value);
 
-        if (connectors.status === 'fulfilled') {
+        if (connectors.status === 'fulfilled' && includeExtended && needsConnectorSummary) {
           const connected = connectors.value.filter((connector) => connector.connected);
           const ids = new Set(connected.map((connector) => connector.connector_id));
           setConnectedConnectorIds(Array.from(ids));
@@ -926,7 +930,7 @@ export default function JarvisHudDashboard({
     void refreshSlowStatus('light');
     const deferredSlowRefresh = window.setTimeout(() => {
       void refreshSlowStatus('full');
-    }, 1800);
+    }, isWorkspaceView ? 2200 : isOperationsView ? 2600 : 2400);
     const fastInterval = window.setInterval(() => {
       void refreshFastStatus();
     }, 8000);
@@ -940,13 +944,18 @@ export default function JarvisHudDashboard({
       window.clearInterval(slowInterval);
     };
   }, [
+    needsCodingFastPolling,
     needsArchitectureTaskPolling,
     needsAutomationPolling,
     needsCommanderBundle,
+    needsConnectorSummary,
     needsDigestBundle,
     needsInboxBundle,
     needsOperatorMemoryBundle,
+    needsWorkbenchFastPolling,
     needsWorkspaceStatusPolling,
+    isOperationsView,
+    isWorkspaceView,
     setManagedAgents,
   ]);
 
@@ -1019,7 +1028,7 @@ export default function JarvisHudDashboard({
     };
     const initialDelay = window.setTimeout(() => {
       void loadRoleTasks();
-    }, 2600);
+    }, 4200);
     const timer = window.setInterval(loadRoleTasks, 20000);
     return () => {
       cancelled = true;
