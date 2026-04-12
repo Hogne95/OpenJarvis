@@ -478,18 +478,20 @@ function SyncStatusDisplay({
 }
 
 function ConnectorAccountsPanel({
+  accounts,
+  loading,
   currentUserRole,
   selectedAccountId,
   onSelectAccount,
   onAccountsChange,
 }: {
+  accounts: ConnectorAccount[];
+  loading: boolean;
   currentUserRole: string | undefined;
   selectedAccountId?: string | null;
   onSelectAccount?: (accountId: string | null) => void;
   onAccountsChange?: (accounts: ConnectorAccount[]) => void;
 }) {
-  const [accounts, setAccounts] = useState<ConnectorAccount[]>([]);
-  const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const [form, setForm] = useState({
@@ -498,24 +500,6 @@ function ConnectorAccountsPanel({
     account_type: 'email',
     external_identity: '',
   });
-
-  const loadAccounts = useCallback(async () => {
-    setLoading(true);
-    try {
-      const nextAccounts = await listConnectorAccounts();
-      setAccounts(nextAccounts);
-      onAccountsChange?.(nextAccounts);
-      setError('');
-    } catch (err: any) {
-      setError(err.message || 'Failed to load accounts');
-    } finally {
-      setLoading(false);
-    }
-  }, [onAccountsChange]);
-
-  useEffect(() => {
-    void loadAccounts();
-  }, [loadAccounts]);
 
   const handleCreate = async () => {
     if (!form.label.trim()) return;
@@ -528,12 +512,9 @@ function ConnectorAccountsPanel({
         external_identity: form.external_identity.trim(),
         metadata: { created_from: 'data_sources_page' },
       });
-      setAccounts((prev) => {
-        const nextAccounts = [created, ...prev];
-        onAccountsChange?.(nextAccounts);
-        if (!selectedAccountId) onSelectAccount?.(created.id);
-        return nextAccounts;
-      });
+      const nextAccounts = [created, ...accounts];
+      onAccountsChange?.(nextAccounts);
+      if (!selectedAccountId) onSelectAccount?.(created.id);
       setForm((prev) => ({ ...prev, label: '', external_identity: '' }));
       setError('');
     } catch (err: any) {
@@ -546,14 +527,11 @@ function ConnectorAccountsPanel({
   const handleDelete = async (accountId: string) => {
     try {
       await deleteConnectorAccount(accountId);
-      setAccounts((prev) => {
-        const nextAccounts = prev.filter((account) => account.id !== accountId);
-        onAccountsChange?.(nextAccounts);
-        if (selectedAccountId === accountId) {
-          onSelectAccount?.(nextAccounts[0]?.id || null);
-        }
-        return nextAccounts;
-      });
+      const nextAccounts = accounts.filter((account) => account.id !== accountId);
+      onAccountsChange?.(nextAccounts);
+      if (selectedAccountId === accountId) {
+        onSelectAccount?.(nextAccounts[0]?.id || null);
+      }
       setError('');
     } catch (err: any) {
       setError(err.message || 'Failed to delete account');
@@ -754,6 +732,7 @@ function DataSourcesSection() {
   const currentUser = useAppStore((s) => s.currentUser);
   const [accounts, setAccounts] = useState<ConnectorAccount[]>([]);
   const [accountsLoading, setAccountsLoading] = useState(false);
+  const [accountsHydrated, setAccountsHydrated] = useState(false);
   const [connectors, setConnectors] = useState<
     Array<{ connector_id: string; display_name: string; connected: boolean; chunks: number }>
   >([]);
@@ -780,6 +759,7 @@ function DataSourcesSection() {
       setSelectedAccountId(null);
     } finally {
       setAccountsLoading(false);
+      setAccountsHydrated(true);
     }
   }, []);
 
@@ -825,24 +805,35 @@ function DataSourcesSection() {
   }, [loadAccounts]);
 
   useEffect(() => {
-    loadConnectors();
+    if (!accountsHydrated) return;
+    const timer = window.setTimeout(() => {
+      void loadConnectors();
+    }, 80);
     const interval = setInterval(() => {
       if (isDocumentHidden()) return;
       void loadConnectors();
-    }, 10000);
-    return () => clearInterval(interval);
-  }, [loadConnectors]);
+    }, 15000);
+    return () => {
+      window.clearTimeout(timer);
+      clearInterval(interval);
+    };
+  }, [accountsHydrated, loadConnectors]);
 
   useEffect(() => {
-    if (connectors.some((c) => c.connected)) {
-      loadSyncStatuses();
+    if (accountsHydrated && connectors.some((c) => c.connected)) {
+      const timer = window.setTimeout(() => {
+        void loadSyncStatuses();
+      }, 250);
       const interval = setInterval(() => {
         if (isDocumentHidden()) return;
         void loadSyncStatuses();
-      }, 5000);
-      return () => clearInterval(interval);
+      }, 10000);
+      return () => {
+        window.clearTimeout(timer);
+        clearInterval(interval);
+      };
     }
-  }, [connectors, loadSyncStatuses]);
+  }, [accountsHydrated, connectors, loadSyncStatuses]);
 
   const [connectingId, setConnectingId] = useState<string | null>(null);
   const [connectStage, setConnectStage] = useState<string>('');
@@ -914,6 +905,8 @@ function DataSourcesSection() {
   return (
     <div>
       <ConnectorAccountsPanel
+        accounts={accounts}
+        loading={accountsLoading}
         currentUserRole={currentUser?.role}
         selectedAccountId={selectedAccountId}
         onSelectAccount={setSelectedAccountId}
@@ -1821,12 +1814,19 @@ export function DataSourcesPage() {
   const [agents, setAgents] = useState<ManagedAgent[]>([]);
   const [activeTab, setActiveTab] = useState<'sources' | 'messaging'>('sources');
   const [creatingAgent, setCreatingAgent] = useState(false);
+  const [agentsHydrated, setAgentsHydrated] = useState(false);
 
   const loadAgents = useCallback(() => {
-    fetchManagedAgents().then(setAgents).catch(() => {});
+    fetchManagedAgents({ compact: true })
+      .then(setAgents)
+      .catch(() => {})
+      .finally(() => setAgentsHydrated(true));
   }, []);
 
-  useEffect(() => { loadAgents(); }, [loadAgents]);
+  useEffect(() => {
+    if (activeTab !== 'messaging' || agentsHydrated) return;
+    void loadAgents();
+  }, [activeTab, agentsHydrated, loadAgents]);
 
   // Pick the first agent for messaging channel bindings.
   // If none exists and user opens Messaging tab, auto-create a default one.
@@ -1848,13 +1848,6 @@ export function DataSourcesPage() {
       setCreatingAgent(false);
     }
   }, [firstAgent]);
-
-  // Auto-create agent when switching to messaging tab
-  useEffect(() => {
-    if (activeTab === 'messaging' && !firstAgent && !creatingAgent) {
-      ensureAgent();
-    }
-  }, [activeTab, firstAgent, creatingAgent, ensureAgent]);
 
   const tabs = [
     { id: 'sources' as const, label: 'Data Sources', icon: Database },
@@ -1904,7 +1897,44 @@ export function DataSourcesPage() {
               <Loader2 size={16} className="animate-spin" style={{ color: 'var(--color-accent)' }} />
               Setting up your assistant...
             </div>
-          ) : null
+          ) : (
+            <div
+              style={{
+                background: 'var(--color-bg-secondary)',
+                border: '1px solid var(--color-border)',
+                borderRadius: 12,
+                padding: 18,
+                maxWidth: 520,
+              }}
+            >
+              <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 6 }}>
+                Launch your first agent
+              </div>
+              <div style={{ fontSize: 12, color: 'var(--color-text-secondary)', marginBottom: 14 }}>
+                Root cause: we were auto-creating an agent the moment this tab opened, which made the page feel frozen before you even chose anything. Messaging setup now stays lightweight until you explicitly start it.
+              </div>
+              <button
+                onClick={() => { void ensureAgent(); }}
+                disabled={creatingAgent}
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: 8,
+                  padding: '9px 14px',
+                  background: creatingAgent ? '#444' : '#7c3aed',
+                  color: 'white',
+                  border: 'none',
+                  borderRadius: 8,
+                  fontSize: 12,
+                  fontWeight: 600,
+                  cursor: creatingAgent ? 'default' : 'pointer',
+                }}
+              >
+                <Plus size={14} />
+                {creatingAgent ? 'Creating agent...' : 'Launch your first agent'}
+              </button>
+            </div>
+          )
         )}
       </div>
     </div>

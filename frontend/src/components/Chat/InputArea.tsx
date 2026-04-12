@@ -2,7 +2,7 @@ import { useState, useRef, useCallback, useEffect } from 'react';
 import { Send, Square, Paperclip } from 'lucide-react';
 import { useAppStore, generateId } from '../../lib/store';
 import { streamChat } from '../../lib/sse';
-import { fetchSavings, getBase } from '../../lib/api';
+import { fetchSavings } from '../../lib/api';
 import { MicButton } from './MicButton';
 import { useSpeech } from '../../hooks/useSpeech';
 import type { ChatMessage, ToolCallInfo, TokenUsage, MessageTelemetry } from '../../types';
@@ -257,27 +257,13 @@ export function InputArea() {
         complexity_tier: complexity?.tier,
         suggested_max_tokens: complexity?.suggested_max_tokens,
       };
-      // Check if the response has digest audio available
-      let audioMeta: { url: string } | undefined;
-      try {
-        const digestRes = await fetch(`${getBase()}/api/digest`, { credentials: 'include' });
-        if (digestRes.ok) {
-          const digest = await digestRes.json();
-          if (digest.audio_available) {
-            audioMeta = { url: `${getBase()}/api/digest/audio` };
-          }
-        }
-      } catch {
-        // Not a digest response or server unavailable — skip
-      }
-
       updateLastAssistant(
         convId,
         accumulatedContent,
         toolCalls.length > 0 ? toolCalls : undefined,
         usage,
         telemetry,
-        audioMeta,
+        undefined,
       );
       if (timerRef.current) {
         clearInterval(timerRef.current);
@@ -290,9 +276,11 @@ export function InputArea() {
       });
       abortRef.current = null;
 
-      fetchSavings()
-        .then((data) => useAppStore.getState().setSavings(data))
-        .catch(() => {});
+      window.setTimeout(() => {
+        fetchSavings()
+          .then((data) => useAppStore.getState().setSavings(data))
+          .catch(() => {});
+      }, 250);
     }
   }, [
     input,

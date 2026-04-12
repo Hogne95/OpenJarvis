@@ -816,13 +816,14 @@ export default function JarvisHudDashboard({
       }
     };
 
-    const refreshSlowStatus = async () => {
+    const refreshSlowStatus = async (mode: 'light' | 'full' = 'full') => {
       if (typeof document !== 'undefined' && document.hidden) return;
       if (slowRefreshInFlightRef.current) return;
       slowRefreshInFlightRef.current = true;
       try {
+        const includeExtended = mode === 'full';
         const desktopStateRequest =
-          !needsWorkspaceStatusPolling || desktopStateCooldownUntilRef.current > Date.now()
+          !includeExtended || !needsWorkspaceStatusPolling || desktopStateCooldownUntilRef.current > Date.now()
             ? Promise.resolve<DesktopState | null>(null)
             : fetchDesktopState()
                 .then((value) => {
@@ -856,22 +857,22 @@ export default function JarvisHudDashboard({
           desktop,
           architecture,
         ] = await Promise.allSettled([
-          fetchAutomationLogs(),
-          fetchDailyDigest(),
-          fetchDigestSchedule(),
-          fetchOperatorMemory(),
-          fetchInboxSummary(),
-          fetchTaskSummary(),
-          fetchReminders(),
+          includeExtended ? fetchAutomationLogs() : Promise.resolve({ items: [] }),
+          includeExtended ? fetchDailyDigest() : Promise.resolve<DailyDigest | null>(null),
+          includeExtended ? fetchDigestSchedule() : Promise.resolve<DigestSchedule | null>(null),
+          includeExtended ? fetchOperatorMemory() : Promise.resolve<DurableOperatorMemory | null>(null),
+          includeExtended ? fetchInboxSummary() : Promise.resolve<InboxSummaryItem[]>([]),
+          includeExtended ? fetchTaskSummary() : Promise.resolve<TaskSummaryItem[]>([]),
+          includeExtended ? fetchReminders() : Promise.resolve<ReminderItem[]>([]),
           fetchManagedAgents({ compact: true }),
           listConnectors(),
-          fetchSpeechProfile(),
-          needsExtendedIntelBriefs ? fetchOperatorCommanderBrief() : Promise.resolve<OperatorCommanderBriefResponse | null>(null),
-          needsWorkspaceStatusPolling ? fetchWorkspaceSummary() : Promise.resolve<WorkspaceSummary | null>(null),
-          needsWorkspaceStatusPolling ? fetchWorkspaceRepos() : Promise.resolve<WorkspaceRepoCatalog | null>(null),
-          needsWorkspaceStatusPolling ? fetchWorkspaceChecks() : Promise.resolve<WorkspaceChecks | null>(null),
+          includeExtended ? fetchSpeechProfile() : Promise.resolve<SpeechProfile | null>(null),
+          includeExtended && needsExtendedIntelBriefs ? fetchOperatorCommanderBrief() : Promise.resolve<OperatorCommanderBriefResponse | null>(null),
+          includeExtended && needsWorkspaceStatusPolling ? fetchWorkspaceSummary() : Promise.resolve<WorkspaceSummary | null>(null),
+          includeExtended && needsWorkspaceStatusPolling ? fetchWorkspaceRepos() : Promise.resolve<WorkspaceRepoCatalog | null>(null),
+          includeExtended && needsWorkspaceStatusPolling ? fetchWorkspaceChecks() : Promise.resolve<WorkspaceChecks | null>(null),
           desktopStateRequest,
-          needsArchitectureTaskPolling ? fetchAgentArchitectureStatus() : Promise.resolve<AgentArchitectureStatus | null>(null),
+          includeExtended && needsArchitectureTaskPolling ? fetchAgentArchitectureStatus() : Promise.resolve<AgentArchitectureStatus | null>(null),
         ]);
 
         if (cancelled) return;
@@ -912,15 +913,19 @@ export default function JarvisHudDashboard({
     };
 
     void refreshFastStatus();
-    void refreshSlowStatus();
+    void refreshSlowStatus('light');
+    const deferredSlowRefresh = window.setTimeout(() => {
+      void refreshSlowStatus('full');
+    }, 900);
     const fastInterval = window.setInterval(() => {
       void refreshFastStatus();
     }, 5000);
     const slowInterval = window.setInterval(() => {
-      void refreshSlowStatus();
+      void refreshSlowStatus('full');
     }, 20000);
     return () => {
       cancelled = true;
+      window.clearTimeout(deferredSlowRefresh);
       window.clearInterval(fastInterval);
       window.clearInterval(slowInterval);
     };
@@ -993,10 +998,13 @@ export default function JarvisHudDashboard({
       if (cancelled) return;
       setAgentRoleTasks(Object.fromEntries(pairs));
     };
-    loadRoleTasks();
+    const initialDelay = window.setTimeout(() => {
+      void loadRoleTasks();
+    }, 1400);
     const timer = window.setInterval(loadRoleTasks, 12000);
     return () => {
       cancelled = true;
+      window.clearTimeout(initialDelay);
       window.clearInterval(timer);
     };
   }, [agentArchitecture, needsArchitectureTaskPolling]);
@@ -1097,10 +1105,14 @@ export default function JarvisHudDashboard({
   useEffect(() => {
     if (hasAutoRequestedDigestRef.current) return;
     if (digestBusy) return;
+    if (!isDashboardView) return;
     if (dailyDigest || apiReachable === false) return;
-    hasAutoRequestedDigestRef.current = true;
-    handleGenerateDigest().catch(() => {});
-  }, [apiReachable, dailyDigest, digestBusy]);
+    const timer = window.setTimeout(() => {
+      hasAutoRequestedDigestRef.current = true;
+      handleGenerateDigest().catch(() => {});
+    }, 2200);
+    return () => window.clearTimeout(timer);
+  }, [apiReachable, dailyDigest, digestBusy, isDashboardView]);
 
   useEffect(() => {
     if (!dailyDigest?.text || !canAutoSpeak) return;

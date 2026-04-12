@@ -269,42 +269,78 @@ def build_assistant_system_context(
 
     profile = identity or get_default_identity()
     decision = analyze_decision_request(query)
+    default_interaction = UserInteractionProfile()
+    default_temperament = UserTemperamentProfile()
+    compact_chat = surface == "chat" and not decision.is_decision
 
-    parts = [
-        f"You are {profile.assistant_name}, the user's strategic local AI assistant.",
-        f"Tone: {profile.tone}.",
-        f"Communication style: {profile.communication_style}",
-        f"Decision philosophy: {profile.decision_philosophy}",
-        f"Memory policy: {profile.memory_policy}",
-        "Core priorities:",
-    ]
-    parts.extend(f"- {priority}" for priority in profile.priorities)
+    if compact_chat:
+        parts = [
+            f"You are {profile.assistant_name}, the user's strategic local AI assistant.",
+            "Be direct, calm, and useful.",
+            "Prefer concise answers unless the user clearly needs more detail.",
+            "Use memory only when it materially improves the answer.",
+            "Recommend a next step when it helps.",
+            f"Core priorities: {'; '.join(profile.priorities[:3])}.",
+        ]
+    else:
+        parts = [
+            f"You are {profile.assistant_name}, the user's strategic local AI assistant.",
+            f"Tone: {profile.tone}.",
+            f"Communication style: {profile.communication_style}",
+            f"Decision philosophy: {profile.decision_philosophy}",
+            f"Memory policy: {profile.memory_policy}",
+        ]
+        parts.append("Core priorities:")
+        parts.extend(f"- {priority}" for priority in profile.priorities)
     parts.append(f"Current surface: {surface}.")
     if user_interaction is not None:
-        parts.extend(
-            [
-                "",
-                "User interaction profile:",
-                f"- Response depth: {user_interaction.response_depth}",
-                f"- Pace: {user_interaction.pace}",
-                f"- Decision handling: {user_interaction.decisiveness}",
-                f"- Autonomy preference: {user_interaction.autonomy}",
-                f"- Technical level: {user_interaction.technical_depth}",
-                f"- Collaboration style: {user_interaction.collaboration_style}",
-            ]
+        interaction_changed = any(
+            getattr(user_interaction, field_name) != getattr(default_interaction, field_name)
+            for field_name in (
+                "response_depth",
+                "pace",
+                "decisiveness",
+                "autonomy",
+                "technical_depth",
+                "collaboration_style",
+            )
         )
+        if not compact_chat or interaction_changed:
+            parts.extend(
+                [
+                    "",
+                    "User interaction profile:",
+                    f"- Response depth: {user_interaction.response_depth}",
+                    f"- Pace: {user_interaction.pace}",
+                    f"- Decision handling: {user_interaction.decisiveness}",
+                    f"- Autonomy preference: {user_interaction.autonomy}",
+                    f"- Technical level: {user_interaction.technical_depth}",
+                    f"- Collaboration style: {user_interaction.collaboration_style}",
+                ]
+            )
     if user_temperament is not None:
-        parts.extend(
-            [
-                "",
-                "User operating temperament:",
-                f"- Summary: {user_temperament.summary}",
-                f"- Risk posture: {user_temperament.risk_posture}",
-                f"- Execution tempo: {user_temperament.execution_tempo}",
-                f"- Briefing style: {user_temperament.briefing_style}",
-                f"- Support level: {user_temperament.support_level}",
-            ]
+        temperament_changed = any(
+            getattr(user_temperament, field_name) != getattr(default_temperament, field_name)
+            for field_name in (
+                "summary",
+                "risk_posture",
+                "execution_tempo",
+                "briefing_style",
+                "support_level",
+            )
         )
+        if not compact_chat or temperament_changed:
+            parts.extend(
+                [
+                    "",
+                    "User operating temperament:",
+                    f"- Summary: {user_temperament.summary}",
+                    f"- Risk posture: {user_temperament.risk_posture}",
+                    f"- Execution tempo: {user_temperament.execution_tempo}",
+                    f"- Briefing style: {user_temperament.briefing_style}",
+                    f"- Support level: {user_temperament.support_level}",
+                ]
+            )
 
     if decision.is_decision:
         parts.extend(

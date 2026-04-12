@@ -3043,12 +3043,13 @@ export function AgentsPage() {
   const [tasks, setTasks] = useState<AgentTask[]>([]);
   const [channels, setChannels] = useState<ChannelBinding[]>([]);
   const [templates, setTemplates] = useState<AgentTemplate[]>([]);
+  const [templatesLoaded, setTemplatesLoaded] = useState(false);
   const [showWizard, setShowWizard] = useState(false);
   const [detailTab, setDetailTab] = useState<'overview' | 'interact' | 'channels' | 'messaging' | 'tasks' | 'memory' | 'learning' | 'logs'>('interact');
 
   const refresh = useCallback(async () => {
     try {
-      const agents = await fetchManagedAgents();
+      const agents = await fetchManagedAgents({ compact: !selectedAgentId });
       setManagedAgents(agents);
       setAgentManagerAvailable(true);
     } catch (err: any) {
@@ -3059,12 +3060,19 @@ export function AgentsPage() {
     } finally {
       setLoading(false);
     }
-  }, [setManagedAgents]);
+  }, [selectedAgentId, setManagedAgents]);
 
   useEffect(() => {
-    refresh();
-    fetchTemplates().then(setTemplates).catch(() => {});
+    void refresh();
   }, [refresh]);
+
+  useEffect(() => {
+    if (!showWizard || templatesLoaded) return;
+    fetchTemplates()
+      .then(setTemplates)
+      .catch(() => {})
+      .finally(() => setTemplatesLoaded(true));
+  }, [showWizard, templatesLoaded]);
 
   useEffect(() => {
     const interval = setInterval(() => {

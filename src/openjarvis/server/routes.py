@@ -51,11 +51,11 @@ def _to_messages(chat_messages) -> list[Message]:
 def _inject_jarvis_identity_context(
     request_body: ChatCompletionRequest,
     request: Request,
-) -> None:
+) -> bool:
     """Prepend a stable JARVIS identity + relevant operator memory context."""
 
     if not request_body.messages:
-        return
+        return False
 
     query_text = ""
     for message in reversed(request_body.messages):
@@ -63,15 +63,18 @@ def _inject_jarvis_identity_context(
             query_text = message.content
             break
     if not query_text.strip():
-        return
+        return False
 
     memory_items: list[dict[str, Any]] = []
     memory_layers = None
     stored_profile: dict[str, Any] = {}
     try:
         operator_memory = get_operator_memory_manager(request)
-        memory_layers = operator_memory.layered_relevant_context(query_text, limit=5)
-        memory_items = memory_layers.flattened(limit=5)
+        # Root cause: short chat turns were still dragging a large amount of
+        # memory context into the prompt. Keeping the retrieval narrow makes
+        # quick conversational turns cheaper while preserving relevant context.
+        memory_layers = operator_memory.layered_relevant_context(query_text, limit=3)
+        memory_items = memory_layers.flattened(limit=3)
         stored_profile = operator_memory.snapshot().get("profile", {}) or {}
     except Exception:
         logging.getLogger("openjarvis.server").debug(
@@ -102,12 +105,13 @@ def _inject_jarvis_identity_context(
         user_temperament=user_temperament,
     )
     if not assistant_system.strip():
-        return
+        return False
 
     request_body.messages = [
         ChatMessage(role="system", content=assistant_system),
         *request_body.messages,
     ]
+    return True
 
 
 @router.post("/v1/chat/completions")
@@ -117,7 +121,11 @@ async def chat_completions(request_body: ChatCompletionRequest, request: Request
     agent = getattr(request.app.state, "agent", None)
     model = request_body.model
 
-    _inject_jarvis_identity_context(request_body, request)
+    # Root cause: chat was paying for two separate memory/context passes on
+    # every request. Once the JARVIS identity layer has already assembled
+    # layered operator memory into the system prompt, the older generic
+    # memory injection path mostly duplicates that work and adds latency.
+    jarvis_context_injected = _inject_jarvis_identity_context(request_body, request)
 
     # Inject memory context into messages before dispatching
     config = getattr(request.app.state, "config", None)
@@ -127,6 +135,7 @@ async def chat_completions(request_body: ChatCompletionRequest, request: Request
         and memory_backend is not None
         and config.agent.context_from_memory
         and request_body.messages
+        and not jarvis_context_injected
     ):
         try:
             from openjarvis.tools.storage.context import ContextConfig, inject_context
