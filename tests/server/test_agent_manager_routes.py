@@ -144,6 +144,28 @@ class TestAgentManagerRoutes:
         templates = resp.json()["templates"]
         assert any(t["id"] == "research_monitor" for t in templates)
 
+    def test_templates_deduplicate_same_id(self, monkeypatch, tmp_path):
+        user_templates = tmp_path / ".openjarvis" / "templates"
+        user_templates.mkdir(parents=True)
+        (user_templates / "inbox_triager.toml").write_text(
+            """
+[template]
+id = "inbox_triager"
+name = "Inbox Triager"
+description = "User override"
+agent_type = "monitor_operative"
+""".strip(),
+            encoding="utf-8",
+        )
+        monkeypatch.setenv("HOME", str(tmp_path))
+        monkeypatch.setenv("USERPROFILE", str(tmp_path))
+
+        templates = AgentManager.list_templates()
+        inbox_templates = [t for t in templates if t["id"] == "inbox_triager"]
+
+        assert len(inbox_templates) == 1
+        assert inbox_templates[0]["description"] == "User override"
+
     def test_recover_agent(self, manager, client):
         # Create agent, save checkpoint, set error status
         agent = manager.create_agent(name="err", agent_type="simple")

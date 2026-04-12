@@ -182,6 +182,49 @@ function formatSchedule(type?: string, value?: string): string {
   return type || 'Manual';
 }
 
+const AGENT_DESCRIPTION_CATALOG: Record<string, string> = {
+  'jarvis planner': 'Turns requests into safe plans, priorities, and next steps.',
+  'jarvis executor': 'Carries out approved work across tools, coding, and operations.',
+  'jarvis vision specialist': 'Interprets screenshots, HUD context, and visual targets.',
+  'jarvis inbox triager': 'Sorts inbox pressure, flags urgent items, and suggests next actions.',
+  'jarvis meeting prep': 'Builds concise meeting briefings from calendar, inbox, and memory context.',
+};
+
+const DEDUPED_SYSTEM_AGENT_NAMES = new Set(Object.keys(AGENT_DESCRIPTION_CATALOG));
+
+function normalizeAgentName(value: string): string {
+  return value.trim().toLowerCase().replace(/\s+/g, ' ');
+}
+
+function describeManagedAgent(agent: ManagedAgent): string {
+  const known = AGENT_DESCRIPTION_CATALOG[normalizeAgentName(agent.name)];
+  if (known) return known;
+  const instruction = String(agent.config?.instruction || '').trim();
+  if (!instruction) return 'Custom agent with its own tools, schedule, and operating instructions.';
+  const compact = instruction.replace(/\s+/g, ' ');
+  return compact.length > 120 ? `${compact.slice(0, 117)}...` : compact;
+}
+
+function dedupeTemplatesList(items: AgentTemplate[]): AgentTemplate[] {
+  const byKey = new Map<string, AgentTemplate>();
+  for (const item of items) {
+    const key = item.id?.trim().toLowerCase() || normalizeAgentName(item.name || '');
+    byKey.set(key, item);
+  }
+  return Array.from(byKey.values());
+}
+
+function dedupeVisibleAgents(items: ManagedAgent[]): ManagedAgent[] {
+  const seen = new Set<string>();
+  return items.filter((agent) => {
+    const normalized = normalizeAgentName(agent.name);
+    if (!DEDUPED_SYSTEM_AGENT_NAMES.has(normalized)) return true;
+    if (seen.has(normalized)) return false;
+    seen.add(normalized);
+    return true;
+  });
+}
+
 // ---------------------------------------------------------------------------
 // Launch Wizard
 // ---------------------------------------------------------------------------
@@ -298,6 +341,7 @@ function LaunchWizard({
   onClose: () => void;
   onLaunched: () => void;
 }) {
+  const visibleTemplates = dedupeTemplatesList(templates);
   const UNIVERSAL_DEFAULTS = {
     memoryExtraction: 'structured_json',
     observationCompression: 'summarize',
@@ -439,7 +483,7 @@ function LaunchWizard({
             <button onClick={onClose} className="p-1 rounded hover:bg-opacity-10" style={{ color: 'var(--color-text-tertiary)' }}><X size={18} /></button>
           </div>
           <div className="grid grid-cols-2 gap-3">
-            {templates.map((tpl) => (
+            {visibleTemplates.map((tpl) => (
               <button
                 key={tpl.id}
                 onClick={() => selectTemplate(tpl)}
@@ -844,6 +888,7 @@ function AgentCard({
   const canPause = agent.status === 'running' || agent.status === 'idle';
   const canResume = agent.status === 'paused';
   const canRecover = agent.status === 'error' || agent.status === 'stalled' || agent.status === 'needs_attention';
+  const description = describeManagedAgent(agent);
 
   return (
     <div
@@ -862,6 +907,10 @@ function AgentCard({
           </span>
         </div>
         <StatusDot status={agent.status} />
+      </div>
+
+      <div className="text-xs mb-2 leading-5" style={{ color: 'var(--color-text-secondary)' }}>
+        {description}
       </div>
 
       {/* Row 2: Schedule + last run */}
@@ -3045,6 +3094,7 @@ export function AgentsPage() {
   const [templates, setTemplates] = useState<AgentTemplate[]>([]);
   const [templatesLoaded, setTemplatesLoaded] = useState(false);
   const [showWizard, setShowWizard] = useState(false);
+  const visibleAgents = dedupeVisibleAgents(managedAgents);
   const [detailTab, setDetailTab] = useState<'overview' | 'interact' | 'channels' | 'messaging' | 'tasks' | 'memory' | 'learning' | 'logs'>('interact');
 
   const refresh = useCallback(async () => {
@@ -3600,7 +3650,7 @@ export function AgentsPage() {
 
       {/* Agent cards grid */}
       <div className="grid gap-3" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))' }}>
-        {managedAgents.map((a) => (
+        {visibleAgents.map((a) => (
           <AgentCard
             key={a.id}
             agent={a}
@@ -3625,7 +3675,7 @@ export function AgentsPage() {
         ))}
       </div>
 
-      {managedAgents.length === 0 && (
+      {visibleAgents.length === 0 && (
         <div className="text-center py-16" style={{ color: 'var(--color-text-tertiary)' }}>
           <Bot size={48} className="mx-auto mb-4 opacity-30" />
           <p className="mb-2 font-medium" style={{ color: 'var(--color-text-secondary)' }}>

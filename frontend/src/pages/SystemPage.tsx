@@ -4,6 +4,7 @@ import { useNavigate } from 'react-router';
 import {
   ensureCoreAgentArchitecture,
   fetchAgentArchitectureStatus,
+  getDesktopRuntimeStatus,
   fetchOperatorMemoryContext,
   fetchOperatorMemoryAnalytics,
   fetchOperatorCommanderBrief,
@@ -13,9 +14,14 @@ import {
   fetchRuntimeReadiness,
   fetchSpeechHealth,
   fetchVoiceLoopStatus,
+  isTauri,
+  restartDesktopRuntime,
+  startDesktopRuntime,
   startVoiceLoop,
+  stopDesktopRuntime,
   stopVoiceLoop,
   type AgentArchitectureStatus,
+  type DesktopRuntimeStatus,
   type OperatorMemoryContextResponse,
   type OperatorMemoryAnalyticsResponse,
   type OperatorCommanderBriefResponse,
@@ -26,16 +32,28 @@ import {
 } from '../lib/api';
 import { buildSystemAwarenessCards, buildSystemAwarenessHeadline } from '../lib/systemAwareness';
 
-type RefreshState = 'idle' | 'refreshing' | 'starting-voice' | 'stopping-voice' | 'ensuring-agents' | 'routing-commander' | 'routing-coding';
+type RefreshState =
+  | 'idle'
+  | 'refreshing'
+  | 'starting-voice'
+  | 'stopping-voice'
+  | 'ensuring-agents'
+  | 'routing-commander'
+  | 'routing-coding'
+  | 'starting-runtime'
+  | 'stopping-runtime'
+  | 'restarting-runtime';
 type MemoryLayerCard = [string, OperatorMemoryContextResponse['identity']];
 
 export function SystemPage() {
   const navigate = useNavigate();
+  const desktopMode = isTauri();
   const [codingObjective, setCodingObjective] = useState<'default' | 'release' | 'failing-tests' | 'diff-review'>('default');
   const [readiness, setReadiness] = useState<RuntimeReadiness | null>(null);
   const [speech, setSpeech] = useState<SpeechHealth | null>(null);
   const [voiceLoop, setVoiceLoop] = useState<VoiceLoopStatus | null>(null);
   const [architecture, setArchitecture] = useState<AgentArchitectureStatus | null>(null);
+  const [desktopRuntime, setDesktopRuntime] = useState<DesktopRuntimeStatus | null>(null);
   const [memoryContext, setMemoryContext] = useState<OperatorMemoryContextResponse | null>(null);
   const [memoryAnalytics, setMemoryAnalytics] = useState<OperatorMemoryAnalyticsResponse | null>(null);
   const [commanderBrief, setCommanderBrief] = useState<OperatorCommanderBriefResponse | null>(null);
@@ -61,10 +79,14 @@ export function SystemPage() {
         fetchVoiceLoopStatus().catch(() => null),
         fetchAgentArchitectureStatus().catch(() => null),
       ]);
+      const nextDesktopRuntime = desktopMode
+        ? await getDesktopRuntimeStatus().catch(() => null)
+        : null;
       setReadiness(nextReadiness);
       setSpeech(nextSpeech);
       setVoiceLoop(nextVoice);
       setArchitecture(nextArchitecture);
+      setDesktopRuntime(nextDesktopRuntime);
       setMemoryContext(
         await fetchOperatorMemoryContext({
           query: 'What should JARVIS focus on next for this operator?',
@@ -79,7 +101,7 @@ export function SystemPage() {
     } finally {
       setBusy('idle');
     }
-  }, [codingObjective]);
+  }, [codingObjective, desktopMode]);
 
   useEffect(() => {
     void refresh();
@@ -193,6 +215,41 @@ export function SystemPage() {
     }
   }
 
+  async function handleDesktopRuntimeAction(
+    action: 'start' | 'stop' | 'restart',
+  ) {
+    setBusy(
+      action === 'start'
+        ? 'starting-runtime'
+        : action === 'stop'
+          ? 'stopping-runtime'
+          : 'restarting-runtime',
+    );
+    setNotice('');
+    try {
+      if (action === 'start') {
+        await startDesktopRuntime();
+      } else if (action === 'stop') {
+        await stopDesktopRuntime();
+      } else {
+        await restartDesktopRuntime();
+      }
+      await new Promise((resolve) => window.setTimeout(resolve, action === 'restart' ? 1200 : 700));
+      await refresh();
+      setNotice(
+        action === 'start'
+          ? 'JARVIS runtime start requested.'
+          : action === 'stop'
+            ? 'JARVIS runtime stop requested.'
+            : 'JARVIS runtime restart requested.',
+      );
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : `Unable to ${action} JARVIS runtime.`);
+    } finally {
+      setBusy('idle');
+    }
+  }
+
   return (
     <div className="min-h-full overflow-y-auto bg-[radial-gradient(circle_at_top,rgba(8,47,73,0.35),rgba(2,6,23,0.96)_48%)] px-6 py-8 text-cyan-50">
       <div className="mx-auto max-w-6xl space-y-6">
@@ -236,6 +293,75 @@ export function SystemPage() {
 
         <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_360px]">
           <div className="space-y-4">
+            {desktopMode ? (
+              <div className="rounded-[1.5rem] border border-cyan-400/12 bg-slate-950/55 p-5">
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <div className="text-[10px] uppercase tracking-[0.3em] text-cyan-300/55">Desktop Runtime Control</div>
+                    <div className="mt-2 text-lg uppercase tracking-[0.18em] text-cyan-50/92">
+                      {desktopRuntime?.setup?.phase || 'Runtime control'}
+                    </div>
+                  </div>
+                  <div
+                    className={`rounded-full px-3 py-1 text-[10px] uppercase tracking-[0.22em] ${
+                      desktopRuntime?.setup?.error
+                        ? 'bg-rose-300/10 text-rose-200'
+                        : desktopRuntime?.setup?.server_ready
+                          ? 'bg-emerald-300/10 text-emerald-200'
+                          : 'bg-amber-300/10 text-amber-200'
+                    }`}
+                  >
+                    {desktopRuntime?.setup?.server_ready ? 'running' : 'stopped'}
+                  </div>
+                </div>
+                <div className="mt-3 text-sm leading-7 text-slate-200/76">
+                  Root cause of slower local testing is that start, stop, and restart already exist but live outside the normal
+                  JARVIS control surface. This panel brings runtime control into System so you can cycle the stack without
+                  leaving the app.
+                </div>
+                <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                  <div className="rounded-[1rem] border border-cyan-400/10 bg-black/20 px-4 py-3">
+                    <div className="text-xs uppercase tracking-[0.22em] text-cyan-300/55">API Base</div>
+                    <div className="mt-2 break-all text-sm text-cyan-50/92">
+                      {desktopRuntime?.api_base || 'Unavailable'}
+                    </div>
+                  </div>
+                  <div className="rounded-[1rem] border border-cyan-400/10 bg-black/20 px-4 py-3">
+                    <div className="text-xs uppercase tracking-[0.22em] text-cyan-300/55">Preferred Model</div>
+                    <div className="mt-2 text-sm text-cyan-50/92">
+                      {desktopRuntime?.preferred_model || 'Unavailable'}
+                    </div>
+                  </div>
+                </div>
+                <div className="mt-4 rounded-[1rem] border border-cyan-400/10 bg-black/20 px-4 py-3 text-xs leading-6 text-slate-200/72">
+                  {desktopRuntime?.setup?.detail || 'Desktop runtime status is not available yet.'}
+                </div>
+                <div className="mt-4 flex flex-wrap gap-3">
+                  <button
+                    onClick={() => void handleDesktopRuntimeAction('start')}
+                    disabled={busy !== 'idle'}
+                    className="rounded-[1rem] border border-emerald-300/15 bg-emerald-400/[0.08] px-4 py-3 text-xs uppercase tracking-[0.24em] text-emerald-100 transition hover:bg-emerald-400/[0.14] disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    {busy === 'starting-runtime' ? 'Starting' : 'Start Runtime'}
+                  </button>
+                  <button
+                    onClick={() => void handleDesktopRuntimeAction('restart')}
+                    disabled={busy !== 'idle'}
+                    className="rounded-[1rem] border border-cyan-400/15 bg-cyan-400/[0.08] px-4 py-3 text-xs uppercase tracking-[0.24em] text-cyan-100 transition hover:bg-cyan-400/[0.14] disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    {busy === 'restarting-runtime' ? 'Restarting' : 'Restart Runtime'}
+                  </button>
+                  <button
+                    onClick={() => void handleDesktopRuntimeAction('stop')}
+                    disabled={busy !== 'idle'}
+                    className="rounded-[1rem] border border-rose-300/15 bg-rose-400/[0.08] px-4 py-3 text-xs uppercase tracking-[0.24em] text-rose-100 transition hover:bg-rose-400/[0.14] disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    {busy === 'stopping-runtime' ? 'Stopping' : 'Stop Runtime'}
+                  </button>
+                </div>
+              </div>
+            ) : null}
+
             <div className="rounded-[1.5rem] border border-cyan-400/12 bg-slate-950/55 p-5">
               <div className="text-[10px] uppercase tracking-[0.3em] text-cyan-300/55">Runtime Readiness</div>
               <div className="mt-4 grid gap-3">

@@ -525,6 +525,14 @@ class AgentManager:
             import tomli as tomllib  # type: ignore[no-redef]
 
         templates: List[Dict[str, Any]] = []
+        deduped: dict[str, Dict[str, Any]] = {}
+
+        def _template_key(template: Dict[str, Any]) -> str:
+            template_id = str(template.get("id") or "").strip().lower()
+            if template_id:
+                return f"id:{template_id}"
+            name = " ".join(str(template.get("name") or "").strip().lower().split())
+            return f"name:{name}"
 
         # Built-in templates
         try:
@@ -550,7 +558,9 @@ class AgentManager:
                 except Exception:
                     pass
 
-        return templates
+        for tpl in templates:
+            deduped[_template_key(tpl)] = tpl
+        return list(deduped.values())
 
     def create_from_template(
         self,
