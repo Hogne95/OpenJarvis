@@ -195,7 +195,17 @@ export function DesktopPage() {
 
           <div className="space-y-4">
             <div className="rounded-[1.5rem] border border-cyan-400/12 bg-slate-950/55 p-5">
-              <div className="text-[10px] uppercase tracking-[0.3em] text-cyan-300/55">Lifecycle Controls</div>
+              <div className="flex items-start justify-between gap-4">
+                <div>
+                  <div className="text-[10px] uppercase tracking-[0.3em] text-cyan-300/55">Lifecycle Controls</div>
+                  <p className="mt-2 text-sm leading-6 text-slate-200/70">
+                    Keep local testing fast by restarting the runtime here instead of bouncing between scripts, trays, and terminals.
+                  </p>
+                </div>
+                <div className="rounded-full border border-cyan-400/12 bg-cyan-400/[0.06] px-3 py-1 text-[10px] uppercase tracking-[0.24em] text-cyan-200/75">
+                  Local Operator
+                </div>
+              </div>
               <div className="mt-4 grid gap-3">
                 <button
                   onClick={() => void runAction('starting', startDesktopRuntime, 'Desktop runtime start requested.')}

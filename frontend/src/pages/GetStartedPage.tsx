@@ -496,7 +496,7 @@ export function GetStartedPage() {
 
   return (
     <div className="flex-1 overflow-y-auto">
-      <div className="max-w-2xl mx-auto px-6 py-16">
+      <div className="max-w-4xl mx-auto px-6 py-16">
         {context === 'hosted' && <HostedView />}
         {context === 'desktop' && <DesktopView />}
         {context === 'selfhosted' && <SelfHostedView />}
