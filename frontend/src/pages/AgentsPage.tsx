@@ -334,10 +334,12 @@ function Tooltip({ text }: { text: string }) {
 
 function LaunchWizard({
   templates,
+  initialTemplateId,
   onClose,
   onLaunched,
 }: {
   templates: AgentTemplate[];
+  initialTemplateId?: string | null;
   onClose: () => void;
   onLaunched: () => void;
 }) {
@@ -377,6 +379,14 @@ function LaunchWizard({
       }
     }).catch(() => {});
   }, []);
+
+  useEffect(() => {
+    if (!initialTemplateId || wizard.step !== 1) return;
+    const match = visibleTemplates.find((tpl) => tpl.id === initialTemplateId);
+    if (match) {
+      selectTemplate(match);
+    }
+  }, [initialTemplateId, visibleTemplates, wizard.step]);
 
   function selectTemplate(tpl: AgentTemplate | null) {
     if (tpl) {
@@ -3094,7 +3104,9 @@ export function AgentsPage() {
   const [templates, setTemplates] = useState<AgentTemplate[]>([]);
   const [templatesLoaded, setTemplatesLoaded] = useState(false);
   const [showWizard, setShowWizard] = useState(false);
+  const [pendingTemplateId, setPendingTemplateId] = useState<string | null>(null);
   const visibleAgents = dedupeVisibleAgents(managedAgents);
+  const visibleTemplates = dedupeTemplatesList(templates);
   const [detailTab, setDetailTab] = useState<'overview' | 'interact' | 'channels' | 'messaging' | 'tasks' | 'memory' | 'learning' | 'logs'>('interact');
 
   const refresh = useCallback(async () => {
@@ -3117,12 +3129,13 @@ export function AgentsPage() {
   }, [refresh]);
 
   useEffect(() => {
-    if (!showWizard || templatesLoaded) return;
+    const shouldLoadTemplates = showWizard || visibleAgents.length === 0;
+    if (!shouldLoadTemplates || templatesLoaded) return;
     fetchTemplates()
       .then(setTemplates)
       .catch(() => {})
       .finally(() => setTemplatesLoaded(true));
-  }, [showWizard, templatesLoaded]);
+  }, [showWizard, templatesLoaded, visibleAgents.length]);
 
   useEffect(() => {
     const interval = setInterval(() => {
@@ -3609,9 +3622,14 @@ export function AgentsPage() {
       {showWizard && (
         <LaunchWizard
           templates={templates}
-          onClose={() => setShowWizard(false)}
+          initialTemplateId={pendingTemplateId}
+          onClose={() => {
+            setShowWizard(false);
+            setPendingTemplateId(null);
+          }}
           onLaunched={() => {
             setShowWizard(false);
+            setPendingTemplateId(null);
             refresh();
           }}
         />
@@ -3622,7 +3640,11 @@ export function AgentsPage() {
           Agents
         </h1>
         <button
-          onClick={() => agentManagerAvailable && setShowWizard(true)}
+          onClick={() => {
+            if (!agentManagerAvailable) return;
+            setPendingTemplateId(null);
+            setShowWizard(true);
+          }}
           disabled={agentManagerAvailable === false}
           className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium cursor-pointer transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
           style={{
@@ -3682,8 +3704,40 @@ export function AgentsPage() {
             No agents yet
           </p>
           <p className="text-sm mb-6">Create your first agent to get started with autonomous task management.</p>
+          {visibleTemplates.length > 0 ? (
+            <div className="mx-auto mb-6 grid max-w-4xl gap-3 text-left" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))' }}>
+              {visibleTemplates.slice(0, 6).map((tpl) => (
+                <button
+                  key={tpl.id}
+                  onClick={() => {
+                    if (!agentManagerAvailable) return;
+                    setPendingTemplateId(tpl.id);
+                    setShowWizard(true);
+                  }}
+                  disabled={agentManagerAvailable === false}
+                  className="rounded-lg p-4 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                  style={{ background: 'var(--color-bg-secondary)', border: '1px solid var(--color-border)' }}
+                >
+                  <div className="flex items-center gap-2">
+                    <span className="text-lg">{(tpl as any).icon || '🤖'}</span>
+                    <span className="text-sm font-semibold" style={{ color: 'var(--color-text)' }}>{tpl.name}</span>
+                  </div>
+                  <div className="mt-2 text-xs leading-5" style={{ color: 'var(--color-text-secondary)' }}>
+                    {tpl.description}
+                  </div>
+                  <div className="mt-3 text-[10px] uppercase tracking-[0.22em]" style={{ color: 'var(--color-accent)' }}>
+                    Configure Agent
+                  </div>
+                </button>
+              ))}
+            </div>
+          ) : null}
           <button
-            onClick={() => agentManagerAvailable && setShowWizard(true)}
+            onClick={() => {
+              if (!agentManagerAvailable) return;
+              setPendingTemplateId(null);
+              setShowWizard(true);
+            }}
             disabled={agentManagerAvailable === false}
             className="inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
             style={{
