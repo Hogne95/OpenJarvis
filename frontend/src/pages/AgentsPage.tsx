@@ -672,7 +672,6 @@ function LaunchWizard({
                   >
                     <div className="flex items-center justify-between gap-2 mb-1">
                       <div className="flex items-center gap-2 min-w-0">
-                        <span className="text-lg">{(tpl as any).icon || '🤖'}</span>
                         <span className="font-semibold text-sm" style={{ color: 'var(--color-text)' }}>{tpl.name}</span>
                       </div>
                       <span className="text-[10px] px-2 py-0.5 rounded-full" style={{ background: 'rgba(34,197,94,0.14)', color: '#4ade80' }}>
@@ -713,7 +712,6 @@ function LaunchWizard({
                 onMouseLeave={(e) => { e.currentTarget.style.borderColor = 'var(--color-border)'; e.currentTarget.style.background = 'var(--color-bg-secondary)'; }}
               >
                 <div className="flex items-center gap-2 mb-1">
-                  <span className="text-lg">{(tpl as any).icon || '🤖'}</span>
                   <span className="font-semibold text-sm" style={{ color: 'var(--color-text)' }}>{tpl.name}</span>
                 </div>
                 <div className="text-xs mt-1" style={{ color: 'var(--color-text-tertiary)', textAlign: 'left' }}>{describeTemplate(tpl)}</div>
@@ -4060,7 +4058,6 @@ export function AgentsPage() {
                     >
                       <div className="flex items-center justify-between gap-2">
                         <div className="flex items-center gap-2">
-                          <span className="text-lg">{(tpl as any).icon || '🤖'}</span>
                           <span className="text-sm font-semibold" style={{ color: 'var(--color-text)' }}>{tpl.name}</span>
                         </div>
                         <span className="text-[10px] px-2 py-0.5 rounded-full" style={{ background: 'rgba(34,197,94,0.14)', color: '#4ade80' }}>
@@ -4098,7 +4095,6 @@ export function AgentsPage() {
                       style={{ background: 'var(--color-bg-secondary)', border: '1px solid var(--color-border)' }}
                     >
                       <div className="flex items-center gap-2">
-                        <span className="text-lg">{(tpl as any).icon || '🤖'}</span>
                         <span className="text-sm font-semibold" style={{ color: 'var(--color-text)' }}>{tpl.name}</span>
                       </div>
                       <div className="mt-2 text-xs leading-5" style={{ color: 'var(--color-text-secondary)' }}>
@@ -4144,34 +4140,10 @@ export function AgentsPage() {
               </button>
             </div>
           </div>
-          {visibleTemplates.length > 0 ? (
-            <div className="hidden">
-              {visibleTemplates.slice(0, 6).map((tpl) => (
-                <button
-                  key={tpl.id}
-                  onClick={() => {
-                    if (!agentManagerAvailable) return;
-                    setPendingTemplateId(tpl.id);
-                    setShowWizard(true);
-                  }}
-                  disabled={agentManagerAvailable === false}
-                  className="rounded-lg p-4 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
-                  style={{ background: 'var(--color-bg-secondary)', border: '1px solid var(--color-border)' }}
-                >
-                  <div className="flex items-center gap-2">
-                    <span className="text-lg">{(tpl as any).icon || '🤖'}</span>
-                    <span className="text-sm font-semibold" style={{ color: 'var(--color-text)' }}>{tpl.name}</span>
-                  </div>
-                  <div className="mt-2 text-xs leading-5" style={{ color: 'var(--color-text-secondary)' }}>
-                    {tpl.description}
-                  </div>
-                  <div className="mt-3 text-[10px] uppercase tracking-[0.22em]" style={{ color: 'var(--color-accent)' }}>
-                    Configure Agent
-                  </div>
-                </button>
-              ))}
-            </div>
-          ) : null}
+
+
+
+
         </div>
       )}
     </div>
