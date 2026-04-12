@@ -12,10 +12,12 @@ import {
 import type { ChannelBinding, ManagedAgent } from '../lib/api';
 import { getBase } from '../lib/api';
 import { Database, MessageSquare, Loader2, Mail, Plus, Trash2 } from 'lucide-react';
-import { SOURCE_CATALOG } from '../types/connectors';
+import { PROVIDER_CATALOG, SOURCE_CATALOG } from '../types/connectors';
 import type { ConnectRequest } from '../types/connectors';
 import {
   listConnectors,
+  listConnectorProviders,
+  buildConnectorProviderOAuthUrl,
   connectSource,
   getSyncStatus,
   triggerSync,
@@ -25,6 +27,7 @@ import {
 } from '../lib/connectors-api';
 import type { SyncStatus } from '../types/connectors';
 import type { ConnectorAccount } from '../lib/connectors-api';
+import type { ConnectorProviderRuntimeInfo } from '../types/connectors';
 
 const isDocumentHidden = () => typeof document !== 'undefined' && document.hidden;
 
@@ -740,6 +743,7 @@ function DataSourcesSection() {
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [selectedAccountId, setSelectedAccountId] = useState<string | null>(null);
+  const [providerRuntime, setProviderRuntime] = useState<Record<string, ConnectorProviderRuntimeInfo>>({});
 
   const isSuperadmin = currentUser?.role === 'superadmin';
   const effectiveAccountId = isSuperadmin ? selectedAccountId : selectedAccountId || null;
@@ -760,6 +764,17 @@ function DataSourcesSection() {
     } finally {
       setAccountsLoading(false);
       setAccountsHydrated(true);
+    }
+  }, []);
+
+  const loadProviderRuntime = useCallback(async () => {
+    try {
+      const providers = await listConnectorProviders();
+      setProviderRuntime(
+        Object.fromEntries(providers.map((provider) => [provider.provider, provider])),
+      );
+    } catch {
+      setProviderRuntime({});
     }
   }, []);
 
@@ -803,6 +818,10 @@ function DataSourcesSection() {
   useEffect(() => {
     void loadAccounts();
   }, [loadAccounts]);
+
+  useEffect(() => {
+    void loadProviderRuntime();
+  }, [loadProviderRuntime]);
 
   useEffect(() => {
     if (!accountsHydrated) return;
@@ -902,6 +921,16 @@ function DataSourcesSection() {
     ? notConnectedBase
     : [...notConnectedBase, uploadEntry];
 
+  const handleProviderConnect = (providerId: string) => {
+    if (providerId !== 'google') return;
+    if (needsAccountSelection) {
+      setConnectError('Choose an account above first so Google data stays inside the right private connector space.');
+      return;
+    }
+    const authUrl = buildConnectorProviderOAuthUrl(providerId, effectiveAccountId || undefined);
+    window.open(authUrl, '_blank', 'noopener,noreferrer');
+  };
+
   return (
     <div>
       <ConnectorAccountsPanel
@@ -964,6 +993,131 @@ function DataSourcesSection() {
               Connectors below are scoped to your selected account only.
             </span>
           )}
+        </div>
+      </div>
+
+      <div
+        style={{
+          background: 'linear-gradient(135deg, rgba(124,58,237,0.12), rgba(15,23,42,0.18))',
+          border: '1px solid var(--color-border)',
+          borderRadius: 10,
+          padding: 14,
+          marginBottom: 14,
+        }}
+      >
+        <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap', marginBottom: 10 }}>
+          <div>
+            <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--color-text)' }}>
+              Provider Connect
+            </div>
+            <div style={{ fontSize: 12, color: 'var(--color-text-secondary)', marginTop: 4, maxWidth: 680 }}>
+              Root cause: broader users think in providers like Google or Microsoft, not in raw connector IDs. Start with the provider layer here, then drop down to the manual connector cards only when you need a fallback.
+            </div>
+          </div>
+          <div style={{ fontSize: 11, color: 'var(--color-text-tertiary)' }}>
+            Google is live now. Microsoft and GitHub are queued behind real provider-grade connector support.
+          </div>
+        </div>
+
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: 10 }}>
+          {PROVIDER_CATALOG.map((provider) => {
+            const runtime = providerRuntime[provider.provider_id];
+            const connectedCount = connectors.filter((connector) =>
+              provider.connector_ids.includes(connector.connector_id) && connector.connected,
+            ).length;
+            const available = provider.status === 'available';
+            const buttonDisabled = !available || needsAccountSelection;
+
+            return (
+              <div
+                key={provider.provider_id}
+                style={{
+                  background: 'var(--color-bg-secondary)',
+                  border: connectedCount > 0 ? '1px solid #2a5a3a' : '1px solid var(--color-border)',
+                  borderRadius: 10,
+                  padding: 12,
+                }}
+              >
+                <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, alignItems: 'flex-start' }}>
+                  <div>
+                    <div style={{ fontSize: 14, fontWeight: 700 }}>{provider.display_name}</div>
+                    <div style={{ fontSize: 12, color: 'var(--color-text-secondary)', marginTop: 4 }}>
+                      {provider.description}
+                    </div>
+                  </div>
+                  <span
+                    style={{
+                      fontSize: 10,
+                      padding: '3px 8px',
+                      borderRadius: 999,
+                      background: connectedCount > 0 ? 'rgba(34,197,94,0.14)' : 'rgba(148,163,184,0.12)',
+                      color: connectedCount > 0 ? '#4ade80' : 'var(--color-text-secondary)',
+                      whiteSpace: 'nowrap',
+                    }}
+                  >
+                    {connectedCount > 0 ? 'Connected' : provider.status === 'available' ? 'Ready' : 'Planned'}
+                  </span>
+                </div>
+
+                <div style={{ fontSize: 11, color: 'var(--color-text-tertiary)', marginTop: 8, lineHeight: 1.5 }}>
+                  Covers: {provider.connector_ids.join(', ')}
+                </div>
+                {provider.note && (
+                  <div style={{ fontSize: 11, color: 'var(--color-text-secondary)', marginTop: 8, lineHeight: 1.5 }}>
+                    {provider.note}
+                  </div>
+                )}
+                {runtime && (
+                  <div style={{ fontSize: 11, color: runtime.has_credentials ? '#4ade80' : '#f59e0b', marginTop: 8 }}>
+                    {runtime.has_credentials
+                      ? `${runtime.display_name} OAuth credentials are configured on this JARVIS runtime.`
+                      : `${runtime.display_name} still needs OAuth client credentials on this JARVIS runtime.`}
+                  </div>
+                )}
+
+                <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 12 }}>
+                  <button
+                    onClick={() => handleProviderConnect(provider.provider_id)}
+                    disabled={buttonDisabled}
+                    style={{
+                      padding: '8px 12px',
+                      borderRadius: 8,
+                      border: 'none',
+                      background: buttonDisabled ? '#334155' : '#7c3aed',
+                      color: 'white',
+                      cursor: buttonDisabled ? 'not-allowed' : 'pointer',
+                      fontSize: 12,
+                      fontWeight: 600,
+                    }}
+                  >
+                    {provider.actionLabel}
+                  </button>
+                  {runtime?.setup_url && !runtime.has_credentials && (
+                    <a
+                      href={runtime.setup_url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      style={{
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        fontSize: 11,
+                        color: '#60a5fa',
+                        textDecoration: 'underline',
+                      }}
+                    >
+                      Configure provider credentials &rarr;
+                    </a>
+                  )}
+                </div>
+
+                {needsAccountSelection && available && (
+                  <div style={{ fontSize: 11, color: '#f59e0b', marginTop: 8 }}>
+                    Choose an account above first so provider tokens stay inside the right private workspace.
+                  </div>
+                )}
+              </div>
+            );
+          })}
         </div>
       </div>
 

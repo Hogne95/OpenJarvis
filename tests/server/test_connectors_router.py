@@ -45,6 +45,34 @@ def test_connector_detail(app):
     assert "mcp_tools" in data
 
 
+def test_list_connector_providers(app):
+    """GET /v1/connectors/providers returns the real OAuth provider registry."""
+    resp = app.get("/v1/connectors/providers")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert "providers" in data
+    ids = [provider["provider"] for provider in data["providers"]]
+    assert "google" in ids
+
+
+def test_provider_oauth_start_redirects(app, monkeypatch):
+    """Provider OAuth start should redirect through the configured provider."""
+    from openjarvis.connectors import oauth as oauth_module
+
+    monkeypatch.setattr(
+        oauth_module,
+        "get_client_credentials",
+        lambda provider: ("client-id", "client-secret"),
+    )
+
+    resp = app.get("/v1/connectors/providers/google/oauth/start", follow_redirects=False)
+    assert resp.status_code in {302, 307}
+    location = resp.headers["location"]
+    assert "accounts.google.com" in location
+    assert "client_id=client-id" in location
+    assert "state=" in location
+
+
 def test_connector_not_found(app):
     """GET /v1/connectors/nonexistent returns 404."""
     resp = app.get("/v1/connectors/nonexistent")

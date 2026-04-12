@@ -1,5 +1,10 @@
 import { fetchWithTimeout, getBase } from './api';
-import type { ConnectorInfo, SyncStatus, ConnectRequest } from '../types/connectors';
+import type {
+  ConnectorInfo,
+  SyncStatus,
+  ConnectRequest,
+  ConnectorProviderRuntimeInfo,
+} from '../types/connectors';
 
 // ---------------------------------------------------------------------------
 // Connectors API
@@ -31,6 +36,18 @@ export async function listConnectors(accountId?: string): Promise<ConnectorInfo[
   if (!res.ok) throw new Error(`Failed to list connectors: ${res.status}`);
   const data = await res.json();
   return data.connectors || [];
+}
+
+export async function listConnectorProviders(): Promise<ConnectorProviderRuntimeInfo[]> {
+  const res = await connectorFetch('/v1/connectors/providers');
+  if (!res.ok) throw new Error(`Failed to list connector providers: ${res.status}`);
+  const data = await res.json();
+  return data.providers || [];
+}
+
+export function buildConnectorProviderOAuthUrl(providerId: string, accountId?: string): string {
+  const suffix = accountId ? `?account_id=${encodeURIComponent(accountId)}` : '';
+  return `${getBase()}/v1/connectors/providers/${encodeURIComponent(providerId)}/oauth/start${suffix}`;
 }
 
 export async function getConnector(id: string, accountId?: string): Promise<ConnectorInfo> {

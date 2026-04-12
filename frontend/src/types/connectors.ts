@@ -48,12 +48,64 @@ export interface ConnectRequest {
   password?: string;
 }
 
+export interface ConnectorProviderMeta {
+  provider_id: string;
+  display_name: string;
+  description: string;
+  status: 'available' | 'planned';
+  actionLabel: string;
+  connector_ids: string[];
+  fallbackConnectorIds?: string[];
+  note?: string;
+}
+
+export interface ConnectorProviderRuntimeInfo {
+  provider: string;
+  display_name: string;
+  connector_ids: string[];
+  setup_url: string;
+  setup_hint: string;
+  has_credentials: boolean;
+}
+
 export type WizardStep = "pick" | "connect" | "ingest" | "ready";
 
 // Backward-compatible alias
 export type SourceCard = ConnectorMeta;
 
 export type ConnectorCategory = ConnectorMeta['category'];
+
+export const PROVIDER_CATALOG: ConnectorProviderMeta[] = [
+  {
+    provider_id: 'google',
+    display_name: 'Google',
+    description: 'Sign in once to connect Gmail, Calendar, Drive, Contacts, and Tasks.',
+    status: 'available',
+    actionLabel: 'Connect Google',
+    connector_ids: ['gmail', 'gcalendar', 'gdrive', 'gcontacts', 'google_tasks'],
+    fallbackConnectorIds: ['gmail_imap', 'gdrive'],
+    note: 'Best path for broader users. Falls back to manual Gmail/Drive setup only if you need it.',
+  },
+  {
+    provider_id: 'microsoft',
+    display_name: 'Microsoft',
+    description: 'Planned provider connect for Outlook and Microsoft 365 data.',
+    status: 'planned',
+    actionLabel: 'Microsoft Connect Planned',
+    connector_ids: ['outlook'],
+    fallbackConnectorIds: ['outlook'],
+    note: 'For now, use the Outlook fallback below with a Microsoft app password.',
+  },
+  {
+    provider_id: 'github',
+    display_name: 'GitHub',
+    description: 'Planned provider connect for repositories, pull requests, and issue workflows.',
+    status: 'planned',
+    actionLabel: 'GitHub Connect Planned',
+    connector_ids: ['github'],
+    note: 'We still need a first-class GitHub connector path before this can become one-click.',
+  },
+];
 
 export const SOURCE_CATALOG: ConnectorMeta[] = [
   // ── Upload / Paste ─────────────────────────────────────────────────
@@ -386,31 +438,28 @@ export const SOURCE_CATALOG: ConnectorMeta[] = [
   {
     connector_id: 'outlook',
     display_name: 'Outlook',
-    auth_type: 'oauth',
+    auth_type: 'local',
     category: 'communication',
     icon: 'Mail',
     color: 'text-blue-400',
-    description: 'Microsoft email and calendar',
+    description: 'Microsoft email via Outlook IMAP and app password',
     unitLabel: 'emails',
     steps: [
       {
-        label: 'Go to the Azure Portal → App Registrations → click "+ New registration". Name it "OpenJarvis", select "Accounts in this organizational directory only", and click Register',
-        url: 'https://portal.azure.com/#view/Microsoft_AAD_RegisteredApps/ApplicationsListBlade',
-        urlLabel: 'Open Azure App Registrations',
+        label: 'Go to your Microsoft account security page and make sure two-step verification is enabled for the mailbox you want JARVIS to read.',
+        url: 'https://account.microsoft.com/security',
+        urlLabel: 'Open Microsoft Security',
       },
       {
-        label: 'In the left sidebar, click "API Permissions" → "Add a permission" → "Microsoft Graph" → "Delegated permissions" → search and check "Mail.Read" → click "Add permissions"',
+        label: 'Create an app password for Outlook / Microsoft 365 mail access. Microsoft will show it once, so copy it immediately.',
       },
       {
-        label: 'In the left sidebar, click "Certificates & secrets" → "New client secret" → set a description and expiry → click "Add" → immediately copy the "Value" (you won\'t see it again)',
-      },
-      {
-        label: 'Go to "Overview" in the left sidebar and copy the "Application (client) ID". Paste both the Client ID and the Client Secret below',
+        label: 'Paste your Outlook email address and the app password below. JARVIS uses Outlook IMAP in this flow, not Azure app registration.',
       },
     ],
     inputFields: [
-      { name: 'email', placeholder: 'Application (client) ID', type: 'text' },
-      { name: 'password', placeholder: 'Client Secret Value', type: 'password' },
+      { name: 'email', placeholder: 'your.name@outlook.com', type: 'text' },
+      { name: 'password', placeholder: 'Microsoft app password', type: 'password' },
     ],
   },
   {

@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import base64
 import inspect
+import json
 import logging
 import time
 from pathlib import Path
@@ -164,6 +166,24 @@ def create_connectors_router():
         if account is None:
             raise HTTPException(status_code=404, detail="Connector account not found")
         return account
+
+    def _encode_oauth_state(*, account_id: str = "") -> str:
+        payload = {"account_id": account_id}
+        raw = json.dumps(payload, separators=(",", ":")).encode("utf-8")
+        return base64.urlsafe_b64encode(raw).decode("ascii")
+
+    def _decode_oauth_state(state: str) -> Dict[str, str]:
+        if not state:
+            return {}
+        try:
+            padded = state + "=" * (-len(state) % 4)
+            raw = base64.urlsafe_b64decode(padded.encode("ascii"))
+            data = json.loads(raw.decode("utf-8"))
+            if isinstance(data, dict):
+                return {str(k): str(v) for k, v in data.items()}
+        except Exception:
+            return {}
+        return {}
 
     def _instantiate_connector(
         connector_id: str,
@@ -419,6 +439,24 @@ def create_connectors_router():
                     }
                 )
         return {"connectors": results}
+
+    @router.get("/providers")
+    async def list_connector_providers():
+        from openjarvis.connectors.oauth import OAUTH_PROVIDERS, get_client_credentials
+
+        providers = []
+        for provider in OAUTH_PROVIDERS.values():
+            providers.append(
+                {
+                    "provider": provider.name,
+                    "display_name": provider.display_name,
+                    "connector_ids": list(provider.connector_ids),
+                    "setup_url": provider.setup_url,
+                    "setup_hint": provider.setup_hint,
+                    "has_credentials": get_client_credentials(provider) is not None,
+                }
+            )
+        return {"providers": providers}
 
     @router.get("/{connector_id}")
     async def connector_detail(
@@ -696,6 +734,57 @@ def create_connectors_router():
 
         return RedirectResponse(url=auth_url)
 
+    @router.get("/providers/{provider_name}/oauth/start")
+    async def provider_oauth_start(
+        provider_name: str,
+        request: FastAPIRequest,
+        account_id: Optional[str] = None,
+    ):
+        """Redirect to a provider-first OAuth consent page.
+
+        Root cause: Google-style provider auth already spans multiple
+        connectors, but the previous API only exposed connector-specific
+        OAuth starts. A provider route lets the UI offer "Connect Google"
+        without pretending the user should pick one connector first.
+        """
+        from urllib.parse import urlencode
+
+        from openjarvis.connectors.oauth import OAUTH_PROVIDERS, get_client_credentials
+
+        account = _resolve_account(request, account_id)
+        if account is None:
+            require_role_if_bootstrapped(request, "superadmin")
+
+        provider = OAUTH_PROVIDERS.get(provider_name)
+        if provider is None:
+            raise HTTPException(404, f"OAuth provider '{provider_name}' not found")
+
+        creds = get_client_credentials(provider)
+        if not creds:
+            raise HTTPException(
+                400,
+                f"No client credentials configured for {provider.display_name}. "
+                f"Set up at: {provider.setup_url}",
+            )
+
+        client_id, _ = creds
+        base_url = str(request.base_url).rstrip("/")
+        callback_url = f"{base_url}/v1/connectors/providers/{provider_name}/oauth/callback"
+        state = _encode_oauth_state(account_id=str(account["id"]) if account is not None else "")
+        params = {
+            "client_id": client_id,
+            "redirect_uri": callback_url,
+            "response_type": "code",
+            "scope": " ".join(provider.scopes),
+            "state": state,
+            **provider.extra_auth_params,
+        }
+        auth_url = f"{provider.auth_endpoint}?{urlencode(params)}"
+
+        from fastapi.responses import RedirectResponse
+
+        return RedirectResponse(url=auth_url)
+
     @router.get("/{connector_id}/oauth/callback")
     async def oauth_callback(
         connector_id: str,
@@ -782,6 +871,132 @@ def create_connectors_router():
             content=(
                 f"<html><body style='{_style}'>"
                 "<h2 style='color:#22c55e'>Connected!</h2>"
+                "<p>You can close this tab and return to OpenJarvis.</p>"
+                "<script>setTimeout(()=>window.close(),2000)</script>"
+                "</body></html>"
+            )
+        )
+
+    @router.get("/providers/{provider_name}/oauth/callback")
+    async def provider_oauth_callback(
+        provider_name: str,
+        code: str = "",
+        error: str = "",
+        state: str = "",
+        request: FastAPIRequest = None,
+    ):
+        """Handle provider-first OAuth callbacks and persist tokens.
+
+        Root cause: once the UI connects by provider, the callback must save
+        credentials across the provider's covered connectors instead of only
+        one connector-specific file.
+        """
+        from fastapi.responses import HTMLResponse
+
+        from openjarvis.connectors.oauth import (
+            OAUTH_PROVIDERS,
+            _CONNECTORS_DIR,
+            _exchange_token,
+            get_client_credentials,
+            save_tokens,
+        )
+
+        provider = OAUTH_PROVIDERS.get(provider_name)
+        if provider is None:
+            raise HTTPException(404, f"OAuth provider '{provider_name}' not found")
+
+        if error:
+            _style = "font-family:system-ui;text-align:center;padding:60px"
+            return HTMLResponse(
+                content=(
+                    f"<html><body style='{_style}'>"
+                    f"<h2 style='color:#ef4444'>Authorization Failed</h2>"
+                    f"<p>{error}</p>"
+                    "<script>setTimeout(()=>window.close(),3000)</script>"
+                    "</body></html>"
+                ),
+                status_code=400,
+            )
+
+        if not code:
+            raise HTTPException(400, "Missing authorization code")
+
+        state_data = _decode_oauth_state(state)
+        account_id = state_data.get("account_id", "")
+        account = _resolve_account(request, account_id or None) if request is not None and account_id else None
+        if request is not None and account is None:
+            require_role_if_bootstrapped(request, "superadmin")
+
+        creds = get_client_credentials(provider)
+        if not creds:
+            raise HTTPException(400, "No client credentials configured")
+
+        client_id, client_secret = creds
+        base_url = str(request.base_url).rstrip("/")
+        redirect_uri = f"{base_url}/v1/connectors/providers/{provider_name}/oauth/callback"
+
+        try:
+            tokens = _exchange_token(
+                provider, code, client_id, client_secret, redirect_uri
+            )
+        except Exception as exc:
+            _style = "font-family:system-ui;text-align:center;padding:60px"
+            return HTMLResponse(
+                content=(
+                    f"<html><body style='{_style}'>"
+                    f"<h2 style='color:#ef4444'>Token Exchange Failed</h2>"
+                    f"<p>{exc}</p>"
+                    "</body></html>"
+                ),
+                status_code=500,
+            )
+
+        payload = {
+            "access_token": tokens.get("access_token", ""),
+            "refresh_token": tokens.get("refresh_token", ""),
+            "token_type": tokens.get("token_type", "Bearer"),
+            "expires_in": tokens.get("expires_in", 3600),
+            "client_id": client_id,
+            "client_secret": client_secret,
+        }
+
+        owner_user_id = str(account["owner_user_id"]) if account is not None else ""
+        account_key = str(account["id"]) if account is not None else ""
+
+        if account is not None:
+            for connector_id in provider.connector_ids:
+                save_tokens(
+                    _account_credentials_path(owner_user_id, account_key, connector_id),
+                    payload,
+                )
+                _invalidate_connector_cache(
+                    connector_id,
+                    owner_user_id=owner_user_id,
+                    account_key=account_key,
+                )
+            try:
+                request.app.state.connector_account_store.update_account(
+                    account_key,
+                    owner_user_id=owner_user_id,
+                    status="connected",
+                    metadata={
+                        **(account.get("metadata") or {}),
+                        "oauth_provider": provider.name,
+                    },
+                )
+            except Exception:
+                logger.debug("Provider account status update skipped", exc_info=True)
+        else:
+            for filename in provider.credential_files:
+                save_tokens(str(_CONNECTORS_DIR / filename), payload)
+            for connector_id in provider.connector_ids:
+                _invalidate_connector_cache(connector_id)
+
+        _style = "font-family:system-ui;text-align:center;padding:60px"
+        return HTMLResponse(
+            content=(
+                f"<html><body style='{_style}'>"
+                f"<h2 style='color:#22c55e'>{provider.display_name} connected!</h2>"
                 "<p>You can close this tab and return to OpenJarvis.</p>"
                 "<script>setTimeout(()=>window.close(),2000)</script>"
                 "</body></html>"
