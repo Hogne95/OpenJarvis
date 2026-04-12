@@ -297,7 +297,7 @@ export function SystemPage() {
               <div className="rounded-[1.5rem] border border-cyan-400/12 bg-slate-950/55 p-5">
                 <div className="flex items-start justify-between gap-3">
                   <div>
-                    <div className="text-[10px] uppercase tracking-[0.3em] text-cyan-300/55">Desktop Runtime Control</div>
+                    <div className="text-[10px] uppercase tracking-[0.3em] text-cyan-300/55">JARVIS Runtime</div>
                     <div className="mt-2 text-lg uppercase tracking-[0.18em] text-cyan-50/92">
                       {desktopRuntime?.setup?.phase || 'Runtime control'}
                     </div>
