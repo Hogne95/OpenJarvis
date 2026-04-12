@@ -14,6 +14,7 @@ export function InputArea() {
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const activeId = useAppStore((s) => s.activeId);
+  const models = useAppStore((s) => s.models);
   const selectedModel = useAppStore((s) => s.selectedModel);
   const streamState = useAppStore((s) => s.streamState);
   const messages = useAppStore((s) => s.messages);
@@ -26,6 +27,8 @@ export function InputArea() {
   const setStreamState = useAppStore((s) => s.setStreamState);
   const resetStream = useAppStore((s) => s.resetStream);
   const modelsLoading = useAppStore((s) => s.modelsLoading);
+  const setSelectedModel = useAppStore((s) => s.setSelectedModel);
+  const effectiveModel = selectedModel || models[0]?.id || '';
 
   const { state: speechState, available: speechAvailable, startRecording, stopRecording } = useSpeech();
 
@@ -84,14 +87,18 @@ export function InputArea() {
   }, [resetStream]);
 
   const sendMessage = useCallback(async () => {
+    const modelId = effectiveModel;
     const content = input.trim();
-    if (!content || streamState.isStreaming || modelsLoading || !selectedModel) return;
+    if (!content || streamState.isStreaming || !modelId) return;
 
     setInput('');
+    if (!selectedModel && modelId) {
+      setSelectedModel(modelId);
+    }
 
     let convId = activeId;
     if (!convId) {
-      convId = createConversation(selectedModel);
+      convId = createConversation(modelId);
     }
 
     const userMsg: ChatMessage = {
@@ -150,7 +157,7 @@ export function InputArea() {
 
     try {
       for await (const sseEvent of streamChat(
-        { model: selectedModel, messages: apiMessages, stream: true, temperature, max_tokens: maxTokens },
+        { model: modelId, messages: apiMessages, stream: true, temperature, max_tokens: maxTokens },
         controller.signal,
       )) {
         const eventName = sseEvent.event;
@@ -161,7 +168,7 @@ export function InputArea() {
           setStreamState({ phase: 'Generating...' });
           useAppStore.getState().addLogEntry({
             timestamp: Date.now(), level: 'info', category: 'chat',
-            message: `Generating with ${selectedModel}...`,
+            message: `Generating with ${modelId}...`,
           });
         } else if (eventName === 'tool_call_start') {
           try {
@@ -244,10 +251,10 @@ export function InputArea() {
       }
       const totalMs = Date.now() - startTime;
       const _CLOUD_PREFIXES = ['gpt-', 'o1-', 'o3-', 'o4-', 'claude-', 'gemini-', 'openrouter/', 'MiniMax-', 'chatgpt-'];
-      const engineLabel = _CLOUD_PREFIXES.some(p => selectedModel.startsWith(p)) ? 'cloud' : 'ollama';
+      const engineLabel = _CLOUD_PREFIXES.some(p => modelId.startsWith(p)) ? 'cloud' : 'ollama';
       const telemetry: MessageTelemetry = {
         engine: engineLabel,
-        model_id: selectedModel,
+        model_id: modelId,
         total_ms: totalMs,
         ttft_ms: ttftMs,
         tokens_per_sec: usage?.completion_tokens
@@ -285,6 +292,8 @@ export function InputArea() {
   }, [
     input,
     activeId,
+    effectiveModel,
+    models,
     modelsLoading,
     selectedModel,
     streamState.isStreaming,
@@ -293,6 +302,7 @@ export function InputArea() {
     updateLastAssistant,
     setStreamState,
     resetStream,
+    setSelectedModel,
   ]);
 
   useEffect(() => {
@@ -329,7 +339,7 @@ export function InputArea() {
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
-      if (!modelsLoading && selectedModel) {
+      if (effectiveModel) {
         void sendMessage();
       }
     }
@@ -337,9 +347,9 @@ export function InputArea() {
 
   const inputPlaceholder = streamState.isStreaming
     ? 'JARVIS is responding...'
-    : modelsLoading
+    : modelsLoading && !effectiveModel
       ? 'Models are loading... you can type while JARVIS gets ready'
-      : !selectedModel
+      : !effectiveModel
         ? 'Select a model to send your message'
         : 'Message OpenJarvis...';
 
@@ -383,7 +393,7 @@ export function InputArea() {
             />
             <button
               onClick={sendMessage}
-              disabled={!input.trim() || modelsLoading || !selectedModel}
+              disabled={!input.trim() || !effectiveModel}
               className="p-2 rounded-xl transition-colors shrink-0 cursor-pointer disabled:opacity-30 disabled:cursor-default"
               style={{
                 background: input.trim() ? 'var(--color-accent)' : 'var(--color-bg-tertiary)',
