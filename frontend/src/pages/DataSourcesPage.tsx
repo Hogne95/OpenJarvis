@@ -2018,6 +2018,41 @@ export function DataSourcesPage() {
         <p className="text-sm mt-1" style={{ color: 'var(--color-text-secondary)' }}>
           Connect your personal data so your AI can search across everything, and set up messaging channels to chat from your phone.
         </p>
+        <div className="grid gap-3 mt-4 md:grid-cols-3">
+          <div
+            className="rounded-xl p-4"
+            style={{ background: 'var(--color-bg-secondary)', border: '1px solid var(--color-border)' }}
+          >
+            <div className="text-[11px] font-semibold uppercase tracking-[0.24em] mb-2" style={{ color: 'var(--color-text-tertiary)' }}>
+              Best First Path
+            </div>
+            <div className="text-sm" style={{ color: 'var(--color-text-secondary)' }}>
+              Add one account, connect one provider or app, then come back later if you want to broaden JARVIS with more sources.
+            </div>
+          </div>
+          <div
+            className="rounded-xl p-4"
+            style={{ background: 'var(--color-bg-secondary)', border: '1px solid var(--color-border)' }}
+          >
+            <div className="text-[11px] font-semibold uppercase tracking-[0.24em] mb-2" style={{ color: 'var(--color-text-tertiary)' }}>
+              Privacy Model
+            </div>
+            <div className="text-sm" style={{ color: 'var(--color-text-secondary)' }}>
+              Accounts and connected sources stay scoped to the selected user and account workspace instead of becoming one shared system inbox.
+            </div>
+          </div>
+          <div
+            className="rounded-xl p-4"
+            style={{ background: 'var(--color-bg-secondary)', border: '1px solid var(--color-border)' }}
+          >
+            <div className="text-[11px] font-semibold uppercase tracking-[0.24em] mb-2" style={{ color: 'var(--color-text-tertiary)' }}>
+              What You Get
+            </div>
+            <div className="text-sm" style={{ color: 'var(--color-text-secondary)' }}>
+              Connected sources make search, briefings, and specialist agents much more useful because they can finally work with your real context.
+            </div>
+          </div>
+        </div>
       </div>
 
       {/* Tabs */}
@@ -2058,7 +2093,7 @@ export function DataSourcesPage() {
                 border: '1px solid var(--color-border)',
                 borderRadius: 12,
                 padding: 18,
-                maxWidth: 520,
+                maxWidth: 680,
               }}
             >
               <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 6 }}>
@@ -2066,6 +2101,41 @@ export function DataSourcesPage() {
               </div>
               <div style={{ fontSize: 12, color: 'var(--color-text-secondary)', marginBottom: 14 }}>
                 Root cause: we were auto-creating an agent the moment this tab opened, which made the page feel frozen before you even chose anything. Messaging setup now stays lightweight until you explicitly start it.
+              </div>
+              <div className="grid gap-3 mb-4 md:grid-cols-2">
+                <div
+                  className="rounded-lg p-4"
+                  style={{ background: 'var(--color-bg)', border: '1px solid var(--color-border)' }}
+                >
+                  <div className="text-[11px] font-semibold uppercase tracking-[0.24em] mb-2" style={{ color: 'var(--color-text-tertiary)' }}>
+                    Why This Comes First
+                  </div>
+                  <div className="text-sm" style={{ color: 'var(--color-text-secondary)' }}>
+                    Messaging channels attach to an actual agent, so JARVIS needs one specialist ready before it can wire phone or chat access correctly.
+                  </div>
+                </div>
+                <div
+                  className="rounded-lg p-4"
+                  style={{ background: 'var(--color-bg)', border: '1px solid var(--color-border)' }}
+                >
+                  <div className="text-[11px] font-semibold uppercase tracking-[0.24em] mb-2" style={{ color: 'var(--color-text-tertiary)' }}>
+                    What Happens Next
+                  </div>
+                  <div className="text-sm" style={{ color: 'var(--color-text-secondary)' }}>
+                    JARVIS will create one starter assistant for you, then you can connect phone or chat channels to that same agent without extra setup guesswork.
+                  </div>
+                </div>
+              </div>
+              <div className="flex flex-wrap gap-2 mb-4">
+                {['Create agent', 'Connect channel', 'Start chatting'].map((step, index) => (
+                  <span
+                    key={step}
+                    className="px-2.5 py-1.5 rounded-full text-[11px]"
+                    style={{ background: 'rgba(124,58,237,0.12)', color: 'var(--color-text)' }}
+                  >
+                    {index + 1}. {step}
+                  </span>
+                ))}
               </div>
               <button
                 onClick={() => { void ensureAgent(); }}

@@ -68,6 +68,56 @@ export function SystemPage() {
     () => buildSystemAwarenessCards(architecture?.awareness),
     [architecture?.awareness],
   );
+  const glanceCards = useMemo(
+    () => [
+      {
+        label: 'Runtime',
+        value: readiness
+          ? `${readiness.summary.ready}/${readiness.summary.total} ready`
+          : desktopRuntime?.setup?.phase || 'checking',
+        detail: readiness
+          ? `${readiness.summary.blocked} blocked checks still need attention.`
+          : desktopRuntime?.setup?.detail || 'Waiting for runtime readiness details.',
+      },
+      {
+        label: 'Voice',
+        value: voiceLoop?.active ? `${voiceLoop.phase || 'active'} / armed` : speech?.available ? speech.backend || 'available' : 'standby',
+        detail: voiceLoop?.last_error || speech?.reason || 'Voice loop and speech state are stable when armed.',
+      },
+      {
+        label: 'Agents',
+        value: architecture?.roles?.some((role) => role.ready)
+          ? `${architecture.roles.filter((role) => role.ready).length} ready`
+          : 'not provisioned',
+        detail: architecture?.mission?.summary || 'Planner, executor, and supporting roles show up here once they are active.',
+      },
+      {
+        label: 'Focus',
+        value: commanderBrief?.best_next_step || codingBrief?.best_next_step || 'monitoring',
+        detail:
+          commanderBrief?.recommendation ||
+          memoryAnalytics?.friction_brief?.recommended_focus ||
+          'Commander and analytics will surface the main next move here.',
+      },
+    ],
+    [
+      architecture?.mission?.summary,
+      architecture?.roles,
+      codingBrief?.best_next_step,
+      commanderBrief?.best_next_step,
+      commanderBrief?.recommendation,
+      desktopRuntime?.setup?.detail,
+      desktopRuntime?.setup?.phase,
+      memoryAnalytics?.friction_brief?.recommended_focus,
+      readiness?.summary,
+      speech?.available,
+      speech?.backend,
+      speech?.reason,
+      voiceLoop?.active,
+      voiceLoop?.last_error,
+      voiceLoop?.phase,
+    ],
+  );
 
   const refresh = useCallback(async () => {
     setBusy('refreshing');
@@ -290,6 +340,21 @@ export function SystemPage() {
             {notice}
           </div>
         ) : null}
+
+        <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+          {glanceCards.map((card) => (
+            <div
+              key={card.label}
+              className="rounded-[1.2rem] border border-cyan-400/12 bg-slate-950/55 px-4 py-4"
+            >
+              <div className="text-[10px] uppercase tracking-[0.24em] text-cyan-300/55">{card.label}</div>
+              <div className="mt-2 text-sm uppercase tracking-[0.12em] text-cyan-50/92">
+                {card.value}
+              </div>
+              <div className="mt-2 text-xs leading-6 text-slate-200/72">{card.detail}</div>
+            </div>
+          ))}
+        </div>
 
         <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_360px]">
           <div className="space-y-4">

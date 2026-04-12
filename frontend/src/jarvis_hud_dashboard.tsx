@@ -3769,6 +3769,125 @@ export default function JarvisHudDashboard({
     { icon: Brain, label: 'Agents', action: () => navigate('/agents') },
     { icon: Terminal, label: focusMode ? 'Full HUD' : 'Focus Mode', action: () => setFocusMode((value) => !value) },
   ];
+  const viewSummary = useMemo(() => {
+    if (isWorkspaceView) {
+      return {
+        title: 'Workspace keeps repo actions, approvals, and direct command control in one calmer lane.',
+        cards: [
+          {
+            label: 'Best For',
+            value: 'coding and repo flow',
+            detail: 'Use this when you want the shortest path to staged diffs, workbench status, and the next safe repo action.',
+          },
+          {
+            label: 'Primary Focus',
+            value: pendingCodeEdit ? 'review staged diff' : activeWorkspaceRepo?.name || 'active workspace',
+            detail: pendingCodeEdit
+              ? 'A coding change is already waiting in the approval gate.'
+              : workspaceSummary?.root || 'Repo checks, summaries, and command input stay centered here.',
+          },
+          {
+            label: 'Next Good Move',
+            value: workspaceChecks?.checks?.[0]?.label || 'inspect repo state',
+            detail: workspaceChecks?.checks?.[0]?.command || 'Run the next check or prepare the next git action once the workspace looks clean.',
+          },
+        ],
+      };
+    }
+    if (isOperationsView) {
+      return {
+        title: 'Operations is the coordination deck for missions, automations, alerts, and active system pressure.',
+        cards: [
+          {
+            label: 'Best For',
+            value: 'coordination and triage',
+            detail: 'Use this when you want to steer active missions, resolve blockers, and manage the next operational move.',
+          },
+          {
+            label: 'Primary Focus',
+            value: automationNotice || autonomyMissions[0]?.title || 'system coordination',
+            detail: autonomyMissions[0]?.summary || 'Mission loops, commander pressure, and background automation signals stay strongest here.',
+          },
+          {
+            label: 'Next Good Move',
+            value: commanderQueue[0]?.title || 'review mission queue',
+            detail: commanderQueue[0]?.detail || 'Open the highest-priority queue item or continue the most urgent mission.',
+          },
+        ],
+      };
+    }
+    if (isBriefingsView) {
+      return {
+        title: 'Briefings is the reading deck for synthesized insight across visuals, documents, customers, sales, and store operations.',
+        cards: [
+          {
+            label: 'Best For',
+            value: 'reading and planning',
+            detail: 'Use this when you want synthesized context before routing, drafting, or creating follow-up work.',
+          },
+          {
+            label: 'Primary Focus',
+            value: visualBrief?.title || documentBrief?.title || salesBrief?.title || customerBrief?.title || 'latest brief',
+            detail:
+              visualBrief?.summary ||
+              documentBrief?.summary ||
+              salesBrief?.summary ||
+              customerBrief?.summary ||
+              'Saved and live intel briefs collect here so you can scan before acting.',
+          },
+          {
+            label: 'Next Good Move',
+            value: 'load one brief',
+            detail: 'Pick the brief with the clearest pressure signal, then route it to planner or turn it into a task.',
+          },
+        ],
+      };
+    }
+    return {
+      title: 'Dashboard is the live command deck for voice, approvals, missions, and the next best move across JARVIS.',
+      cards: [
+        {
+          label: 'Best For',
+          value: 'live command and awareness',
+          detail: 'Use this when you want the broadest real-time picture of JARVIS without leaving the main control surface.',
+        },
+        {
+          label: 'Primary Focus',
+          value: status,
+          detail: statusMeta.reply,
+        },
+        {
+          label: 'Next Good Move',
+          value: commanderQueue[0]?.title || immediateReminder?.title || 'review command core',
+          detail:
+            commanderQueue[0]?.detail ||
+            (immediateReminder ? `Immediate reminder set for ${formatReminderMoment(immediateReminder.when)}.` : 'Start from Command Core or the highest-priority queue item.'),
+        },
+      ],
+    };
+  }, [
+    activeWorkspaceRepo?.name,
+    autonomyMissions,
+    automationNotice,
+    commanderQueue,
+    customerBrief?.summary,
+    customerBrief?.title,
+    documentBrief?.summary,
+    documentBrief?.title,
+    immediateReminder,
+    isBriefingsView,
+    isOperationsView,
+    isWorkspaceView,
+    pendingCodeEdit,
+    salesBrief?.summary,
+    salesBrief?.title,
+    status,
+    statusMeta.reply,
+    visualBrief?.summary,
+    visualBrief?.title,
+    workspaceChecks?.checks,
+    workspaceSummary?.root,
+  ]);
 
   function injectCommand(text: string) {
     window.dispatchEvent(new CustomEvent('jarvis:set-input', { detail: { text, replace: true } }));
@@ -6907,9 +7026,26 @@ export default function JarvisHudDashboard({
               {focusMode ? 'Full HUD' : 'Focus Mode'}
             </button>
           </div>
-        </header>
+	        </header>
 
-        <div
+        <div className="mb-4 grid gap-3 xl:grid-cols-[1.2fr_repeat(3,minmax(0,1fr))]">
+          <div className="rounded-[1.4rem] border border-cyan-400/12 bg-slate-950/55 px-4 py-4">
+            <div className="text-[10px] uppercase tracking-[0.35em] text-cyan-300/55">View Guide</div>
+            <div className="mt-2 text-sm leading-7 text-slate-200/78">{viewSummary.title}</div>
+          </div>
+          {viewSummary.cards.map((card) => (
+            <div
+              key={card.label}
+              className="rounded-[1.4rem] border border-cyan-400/12 bg-slate-950/55 px-4 py-4"
+            >
+              <div className="text-[10px] uppercase tracking-[0.3em] text-cyan-300/55">{card.label}</div>
+              <div className="mt-2 text-sm uppercase tracking-[0.14em] text-cyan-50/92">{card.value}</div>
+              <div className="mt-2 text-xs leading-6 text-slate-200/72">{card.detail}</div>
+            </div>
+          ))}
+        </div>
+
+	        <div
           className={`grid flex-1 gap-4 ${
             isDashboardView
               ? focusMode
