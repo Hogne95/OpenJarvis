@@ -544,6 +544,11 @@ export default function JarvisHudDashboard({
   const needsArchitectureTaskPolling = isDashboardView || isWorkspaceView || isOperationsView;
   const needsWorkspaceStatusPolling = isDashboardView || isWorkspaceView || isOperationsView;
   const needsExtendedIntelBriefs = isDashboardView || isWorkspaceView || isOperationsView;
+  const needsVoiceStatusPolling = isDashboardView || isOperationsView || isBriefingsView;
+  const needsActionCenterPolling = isDashboardView || isOperationsView || isBriefingsView;
+  const needsAutomationPolling = isDashboardView || isOperationsView;
+  const needsAgentPresencePolling = isDashboardView || isOperationsView;
+  const needsLearningPolling = isDashboardView || isWorkspaceView;
   const messages = useAppStore((s) => s.messages);
   const streamState = useAppStore((s) => s.streamState);
   const selectedModel = useAppStore((s) => s.selectedModel);
@@ -633,6 +638,7 @@ export default function JarvisHudDashboard({
   const [workbenchTimeout, setWorkbenchTimeout] = useState(30);
   const [workbenchBusy, setWorkbenchBusy] = useState<'prepare' | 'stage' | 'approve' | 'hold' | null>(null);
   const [workbenchNotice, setWorkbenchNotice] = useState('');
+  const lastLearningFetchKeyRef = useRef('');
   const [actionMode, setActionMode] = useState<'email' | 'calendar'>('email');
   const [actionBusy, setActionBusy] = useState<'stage' | 'approve' | 'hold' | null>(null);
   const [actionNotice, setActionNotice] = useState('');
@@ -789,28 +795,28 @@ export default function JarvisHudDashboard({
       fastRefreshInFlightRef.current = true;
       try {
         const [action, automation, coding, health, speech, loop, wb] = await Promise.allSettled([
-          fetchActionCenterStatus(),
-          fetchAutomationStatus(),
+          needsActionCenterPolling ? fetchActionCenterStatus() : Promise.resolve<ActionCenterStatus | null>(null),
+          needsAutomationPolling ? fetchAutomationStatus() : Promise.resolve<AutomationStatus | null>(null),
           fetchCodingStatus(),
           checkHealth(),
-          fetchSpeechHealth(),
-          fetchVoiceLoopStatus(),
+          needsVoiceStatusPolling ? fetchSpeechHealth() : Promise.resolve(null),
+          needsVoiceStatusPolling ? fetchVoiceLoopStatus() : Promise.resolve<VoiceLoopStatus | null>(null),
           fetchWorkbenchStatus(),
         ]);
 
         if (cancelled) return;
 
-        if (action.status === 'fulfilled') setActionCenter(action.value);
-        if (automation.status === 'fulfilled') setAutomationStatus(automation.value);
+        if (action.status === 'fulfilled' && action.value) setActionCenter(action.value);
+        if (automation.status === 'fulfilled' && automation.value) setAutomationStatus(automation.value);
         if (coding.status === 'fulfilled') setCodingWorkspace(coding.value);
-        if (loop.status === 'fulfilled') setVoiceLoop(loop.value);
+        if (loop.status === 'fulfilled' && loop.value) setVoiceLoop(loop.value);
         if (wb.status === 'fulfilled') {
           setWorkbench(wb.value);
           setWorkbenchDirectory((current) => current || wb.value.default_working_dir);
         }
         if (health.status === 'fulfilled') setApiReachable(health.value);
         if (health.status === 'rejected') setApiReachable(false);
-        if (speech.status === 'fulfilled') setSpeechAvailable(speech.value.available);
+        if (speech.status === 'fulfilled' && speech.value) setSpeechAvailable(speech.value.available);
       } finally {
         fastRefreshInFlightRef.current = false;
       }
@@ -864,9 +870,9 @@ export default function JarvisHudDashboard({
           includeExtended ? fetchInboxSummary() : Promise.resolve<InboxSummaryItem[]>([]),
           includeExtended ? fetchTaskSummary() : Promise.resolve<TaskSummaryItem[]>([]),
           includeExtended ? fetchReminders() : Promise.resolve<ReminderItem[]>([]),
-          fetchManagedAgents({ compact: true }),
+          needsAgentPresencePolling ? fetchManagedAgents({ compact: true }) : Promise.resolve([] as typeof managedAgents),
           listConnectors(),
-          includeExtended ? fetchSpeechProfile() : Promise.resolve<SpeechProfile | null>(null),
+          includeExtended && needsVoiceStatusPolling ? fetchSpeechProfile() : Promise.resolve<SpeechProfile | null>(null),
           includeExtended && needsExtendedIntelBriefs ? fetchOperatorCommanderBrief() : Promise.resolve<OperatorCommanderBriefResponse | null>(null),
           includeExtended && needsWorkspaceStatusPolling ? fetchWorkspaceSummary() : Promise.resolve<WorkspaceSummary | null>(null),
           includeExtended && needsWorkspaceStatusPolling ? fetchWorkspaceRepos() : Promise.resolve<WorkspaceRepoCatalog | null>(null),
@@ -891,7 +897,7 @@ export default function JarvisHudDashboard({
         if (desktop.status === 'fulfilled' && desktop.value) setDesktopState(desktop.value);
         if (architecture.status === 'fulfilled' && architecture.value) setAgentArchitecture(architecture.value);
         if (profile.status === 'fulfilled') setSpeechProfile(profile.value);
-        if (agents.status === 'fulfilled') setManagedAgents(agents.value);
+        if (agents.status === 'fulfilled' && needsAgentPresencePolling) setManagedAgents(agents.value);
 
         if (connectors.status === 'fulfilled') {
           const connected = connectors.value.filter((connector) => connector.connected);
@@ -916,13 +922,13 @@ export default function JarvisHudDashboard({
     void refreshSlowStatus('light');
     const deferredSlowRefresh = window.setTimeout(() => {
       void refreshSlowStatus('full');
-    }, 900);
+    }, 1800);
     const fastInterval = window.setInterval(() => {
       void refreshFastStatus();
-    }, 5000);
+    }, 8000);
     const slowInterval = window.setInterval(() => {
       void refreshSlowStatus('full');
-    }, 20000);
+    }, 30000);
     return () => {
       cancelled = true;
       window.clearTimeout(deferredSlowRefresh);
@@ -940,7 +946,7 @@ export default function JarvisHudDashboard({
       }
       agentEventRefreshTimerRef.current = window.setTimeout(() => {
         void Promise.allSettled([
-          fetchManagedAgents({ compact: true }).then(setManagedAgents),
+          needsAgentPresencePolling ? fetchManagedAgents({ compact: true }).then(setManagedAgents) : Promise.resolve(),
           needsArchitectureTaskPolling
             ? fetchAgentArchitectureStatus().then((value) => {
                 if (value) setAgentArchitecture(value);
@@ -949,7 +955,7 @@ export default function JarvisHudDashboard({
         ]).finally(() => {
           agentEventRefreshTimerRef.current = null;
         });
-      }, 700);
+      }, 1200);
     };
 
     const unsubscribe = subscribeAgentEvents((event) => {
@@ -970,11 +976,11 @@ export default function JarvisHudDashboard({
         agentEventRefreshTimerRef.current = null;
       }
     };
-  }, [needsArchitectureTaskPolling, setManagedAgents]);
+  }, [needsAgentPresencePolling, needsArchitectureTaskPolling, setManagedAgents]);
 
   useEffect(() => {
     let cancelled = false;
-    if (!needsArchitectureTaskPolling) {
+    if (!needsArchitectureTaskPolling || !needsAgentPresencePolling) {
       setAgentRoleTasks({});
       return;
     }
@@ -1000,14 +1006,14 @@ export default function JarvisHudDashboard({
     };
     const initialDelay = window.setTimeout(() => {
       void loadRoleTasks();
-    }, 1400);
-    const timer = window.setInterval(loadRoleTasks, 12000);
+    }, 2600);
+    const timer = window.setInterval(loadRoleTasks, 20000);
     return () => {
       cancelled = true;
       window.clearTimeout(initialDelay);
       window.clearInterval(timer);
     };
-  }, [agentArchitecture, needsArchitectureTaskPolling]);
+  }, [agentArchitecture, needsAgentPresencePolling, needsArchitectureTaskPolling]);
 
   useEffect(() => {
     return () => {
@@ -2301,6 +2307,11 @@ export default function JarvisHudDashboard({
       .slice(0, 4);
   }, [fivemCodingBrief?.resourceKey, rankedLearningItems, recentLearningExperiences]);
   useEffect(() => {
+    if (!needsLearningPolling) {
+      setRankedLearningItems([]);
+      lastLearningFetchKeyRef.current = '';
+      return;
+    }
     const domain = fivemCodingBrief ? 'fivem' : 'coding';
     const contextKey =
       fivemCodingBrief?.resourceKey ||
@@ -2309,10 +2320,18 @@ export default function JarvisHudDashboard({
       nextReviewQueueItem?.filePath ||
       workspaceSummary?.changed_files?.[0] ||
       '';
-    fetchOperatorLearningExperiences({ domain, context_key: contextKey, limit: 4 })
-      .then((items) => setRankedLearningItems(items))
-      .catch(() => setRankedLearningItems([]));
-  }, [editorFilePath, fivemCodingBrief, latestCodeResult?.file_path, nextReviewQueueItem?.filePath, workspaceSummary?.changed_files]);
+    const fetchKey = `${domain}:${contextKey}`;
+    if (fetchKey === lastLearningFetchKeyRef.current) return;
+    const timeout = window.setTimeout(() => {
+      fetchOperatorLearningExperiences({ domain, context_key: contextKey, limit: 4 })
+        .then((items) => {
+          lastLearningFetchKeyRef.current = fetchKey;
+          setRankedLearningItems(items);
+        })
+        .catch(() => setRankedLearningItems([]));
+    }, 1000);
+    return () => window.clearTimeout(timeout);
+  }, [editorFilePath, fivemCodingBrief, latestCodeResult?.file_path, needsLearningPolling, nextReviewQueueItem?.filePath, workspaceSummary?.changed_files]);
 
   function loadSalesPrompt(mode: 'account-brief' | 'deal-review' | 'follow-up' | 'objection' | 'meeting-prep') {
     if (!salesBrief) {

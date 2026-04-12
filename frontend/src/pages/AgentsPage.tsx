@@ -3242,23 +3242,16 @@ export function AgentsPage() {
 
   const prevStatuses = useRef<Record<string, string>>({});
   useEffect(() => {
-    const interval = setInterval(async () => {
-      if (isDocumentHidden()) return;
-      try {
-        const agents = await fetchManagedAgents();
-        for (const agent of agents) {
-          const prev = prevStatuses.current[agent.id];
-          if (prev && prev !== 'error' && agent.status === 'error') {
-            toast.error(`Agent "${agent.name}" failed`, {
-              description: agent.summary_memory?.replace(/^ERROR: /, '') || 'Unknown error',
-            });
-          }
-          prevStatuses.current[agent.id] = agent.status;
-        }
-      } catch {}
-    }, 30000);
-    return () => clearInterval(interval);
-  }, []);
+    for (const agent of managedAgents) {
+      const prev = prevStatuses.current[agent.id];
+      if (prev && prev !== 'error' && agent.status === 'error') {
+        toast.error(`Agent "${agent.name}" failed`, {
+          description: agent.summary_memory?.replace(/^ERROR: /, '') || 'Unknown error',
+        });
+      }
+      prevStatuses.current[agent.id] = agent.status;
+    }
+  }, [managedAgents]);
 
   if (loading) {
     return (
