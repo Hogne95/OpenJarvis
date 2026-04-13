@@ -18,11 +18,13 @@ import {
   Loader2,
   ScrollText,
   Database,
-  Briefcase,
+  Code2,
   PanelsTopLeft,
   RadioTower,
   AppWindow,
   ShieldAlert,
+  ChevronDown,
+  ChevronRight,
 } from 'lucide-react';
 import { ConversationList } from './ConversationList';
 import { useAppStore } from '../../lib/store';
@@ -31,6 +33,7 @@ export function Sidebar() {
   const navigate = useNavigate();
   const location = useLocation();
   const [searchQuery, setSearchQuery] = useState('');
+  const [moreOpen, setMoreOpen] = useState(false);
 
   const sidebarOpen = useAppStore((s) => s.sidebarOpen);
   const toggleSidebar = useAppStore((s) => s.toggleSidebar);
@@ -58,16 +61,19 @@ export function Sidebar() {
     navigate('/');
   };
 
-  const navItems = [
+  const primaryNavItems = [
     { path: '/', icon: LayoutDashboard, label: 'Dashboard' },
     { path: '/chat', icon: MessageSquare, label: 'Chat' },
-    { path: '/workspace', icon: Briefcase, label: 'Workspace' },
+    { path: '/coding', icon: Code2, label: 'Coding' },
+    { path: '/data-sources', icon: Database, label: 'Connected Apps' },
+    { path: '/agents', icon: Bot, label: 'Agents' },
+    { path: '/system', icon: RadioTower, label: 'System' },
+  ];
+
+  const secondaryNavItems = [
     { path: '/briefings', icon: PanelsTopLeft, label: 'Briefings' },
     { path: '/operations', icon: BarChart3, label: 'Operations' },
     { path: '/desktop', icon: AppWindow, label: 'Desktop' },
-    { path: '/system', icon: RadioTower, label: 'System' },
-    { path: '/data-sources', icon: Database, label: 'Connected Apps' },
-    { path: '/agents', icon: Bot, label: 'Agents' },
     { path: '/logs', icon: ScrollText, label: 'Logs' },
     ...(currentUser?.role === 'admin' || currentUser?.role === 'superadmin'
       ? [{ path: '/admin', icon: ShieldAlert, label: 'Admin' }]
@@ -75,6 +81,8 @@ export function Sidebar() {
     { path: '/settings', icon: Settings, label: 'Settings' },
     { path: '/get-started', icon: Rocket, label: 'Get Started' },
   ];
+
+  const secondaryActive = secondaryNavItems.some((item) => location.pathname === item.path);
 
   return (
     <>
@@ -202,7 +210,10 @@ export function Sidebar() {
 
           {/* Bottom nav */}
           <nav className="px-2 pb-3 pt-2 flex flex-col gap-0.5" style={{ borderTop: '1px solid var(--color-border)' }}>
-            {navItems.map((item) => {
+            <div className="px-3 pb-2 pt-1 text-[10px] uppercase tracking-[0.24em]" style={{ color: 'var(--color-text-tertiary)' }}>
+              Main
+            </div>
+            {primaryNavItems.map((item) => {
               const isActive = location.pathname === item.path;
               return (
                 <button
@@ -226,6 +237,49 @@ export function Sidebar() {
                 </button>
               );
             })}
+
+            <div className="mt-3 rounded-lg" style={{ background: moreOpen || secondaryActive ? 'var(--color-bg-secondary)' : 'transparent' }}>
+              <button
+                onClick={() => setMoreOpen((value) => !value)}
+                className="flex w-full items-center gap-3 px-3 py-2 rounded-lg text-sm transition-colors text-left cursor-pointer"
+                style={{
+                  color: secondaryActive ? 'var(--color-text)' : 'var(--color-text-secondary)',
+                  fontWeight: secondaryActive ? 500 : 400,
+                }}
+              >
+                {moreOpen ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
+                More
+              </button>
+
+              {(moreOpen || secondaryActive) && (
+                <div className="mt-1 flex flex-col gap-0.5 px-2 pb-2">
+                  {secondaryNavItems.map((item) => {
+                    const isActive = location.pathname === item.path;
+                    return (
+                      <button
+                        key={item.path}
+                        onClick={() => navigate(item.path)}
+                        className="flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition-colors w-full text-left cursor-pointer"
+                        style={{
+                          background: isActive ? 'var(--color-accent-subtle)' : 'transparent',
+                          color: isActive ? 'var(--color-text)' : 'var(--color-text-secondary)',
+                          fontWeight: isActive ? 500 : 400,
+                        }}
+                        onMouseEnter={(e) => {
+                          if (!isActive) e.currentTarget.style.background = 'var(--color-bg)';
+                        }}
+                        onMouseLeave={(e) => {
+                          if (!isActive) e.currentTarget.style.background = 'transparent';
+                        }}
+                      >
+                        <item.icon size={16} />
+                        {item.label}
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
           </nav>
         </div>
       </aside>

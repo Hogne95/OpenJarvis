@@ -1131,7 +1131,6 @@ function LaunchWizard({
             </summary>
             <div className="px-3 pb-3 pt-1 space-y-3" style={{ borderTop: '1px solid var(--color-border)' }}>
               <div className="text-xs" style={{ color: 'var(--color-text-secondary)' }}>
-                Root cause: first-time setup felt too technical because the wizard exposed deep runtime controls too early.
                 These defaults are already tuned well enough for a strong first launch, so only open this if you know what you want to change.
               </div>
               <div className="grid grid-cols-2 gap-3 text-sm">
@@ -2221,7 +2220,7 @@ function ChannelsTab({ agentId, agent }: { agentId: string; agent: ManagedAgent 
             Why It Helps
           </div>
           <div className="text-sm" style={{ color: 'var(--color-text-secondary)' }}>
-            Connected apps make this agent feel specialized instead of generic by giving it the sources its role actually depends on.
+            Connected apps make this agent feel genuinely useful by giving it the sources its role actually depends on.
           </div>
         </div>
       </div>
@@ -3680,7 +3679,7 @@ function LogsTab({ agentId }: { agentId: string }) {
     <div className="space-y-3">
       <div className="flex items-center justify-between">
         <span className="text-sm font-medium" style={{ color: 'var(--color-text)' }}>
-          Agent Timeline
+          Recent Timeline
         </span>
         <span className="text-xs" style={{ color: 'var(--color-text-tertiary)' }}>
           {timeline.length} entr{timeline.length !== 1 ? 'ies' : 'y'} (auto-refreshing)
@@ -4064,7 +4063,7 @@ export function AgentsPage() {
         { id: 'interact', label: 'Chat', icon: MessageSquare },
         { id: 'overview', label: 'Overview', icon: Activity },
         { id: 'channels', label: 'Connected Apps', icon: Database },
-        { id: 'messaging', label: 'Notifications', icon: Wifi },
+        { id: 'messaging', label: 'Reach Me', icon: Wifi },
         { id: 'tasks', label: 'Runs', icon: ListTodo },
       { id: 'memory', label: 'Memory', icon: Brain },
       { id: 'learning', label: 'Improvements', icon: Settings },
@@ -4232,7 +4231,7 @@ export function AgentsPage() {
                     onClick={() => setDetailTab('messaging')}
                     className="cursor-pointer underline"
                     style={{ color: 'var(--color-accent)', background: 'none', border: 'none', padding: 0, font: 'inherit' }}
-                  >Notifications</button>{' '}
+                  >Reach Me</button>{' '}
                     to talk to this agent from your phone.
                 </div>
               </div>
@@ -4346,17 +4345,17 @@ export function AgentsPage() {
                     style={{ background: 'var(--color-bg)', border: '1px solid var(--color-border)' }}
                   >
                     <div className="text-sm font-medium mb-1" style={{ color: 'var(--color-text)' }}>
-                      2. Choose notifications
+                      2. Choose how JARVIS reaches you
                     </div>
                     <div className="text-sm mb-3" style={{ color: 'var(--color-text-secondary)' }}>
-                      Pick one route you already check often. One good notification path is better than three noisy ones.
+                      Pick one route you already check often. One good route is better than three noisy ones.
                     </div>
                     <button
                       onClick={() => setDetailTab('messaging')}
                       className="inline-flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium cursor-pointer"
                       style={{ background: 'var(--color-bg-secondary)', border: '1px solid var(--color-border)', color: 'var(--color-text)' }}
                     >
-                      <Wifi size={14} /> Notifications
+                      <Wifi size={14} /> Reach Me
                     </button>
                   </div>
                   <div
@@ -4427,7 +4426,7 @@ export function AgentsPage() {
                 style={{ background: 'var(--color-bg-secondary)', border: '1px solid var(--color-border)' }}
               >
                   <h3 className="text-sm font-medium mb-2" style={{ color: 'var(--color-text-secondary)' }}>
-                    Notifications
+                    Reach Me
                   </h3>
                 {channels.map((b) => (
                   <div key={b.id} className="text-sm py-1" style={{ color: 'var(--color-text)' }}>
@@ -4592,8 +4591,46 @@ export function AgentsPage() {
             color: agentManagerAvailable === false ? 'var(--color-text-tertiary)' : '#fff',
           }}
         >
-            <Plus size={15} /> New Agent
+            <Plus size={15} /> New Specialist
         </button>
+      </div>
+
+      <div
+        className="mb-4 grid gap-3 md:grid-cols-3"
+      >
+        <div
+          className="rounded-xl px-4 py-3"
+          style={{ background: 'var(--color-bg-secondary)', border: '1px solid var(--color-border)' }}
+        >
+          <div className="text-[11px] font-semibold uppercase tracking-[0.24em] mb-2" style={{ color: 'var(--color-text-tertiary)' }}>
+            Best First Move
+          </div>
+          <div className="text-sm" style={{ color: 'var(--color-text-secondary)' }}>
+            Start with one useful specialist, run it once, and only add more setup when the role already feels helpful.
+          </div>
+        </div>
+        <div
+          className="rounded-xl px-4 py-3"
+          style={{ background: 'var(--color-bg-secondary)', border: '1px solid var(--color-border)' }}
+        >
+          <div className="text-[11px] font-semibold uppercase tracking-[0.24em] mb-2" style={{ color: 'var(--color-text-tertiary)' }}>
+            Keep It Focused
+          </div>
+          <div className="text-sm" style={{ color: 'var(--color-text-secondary)' }}>
+            Specialists work best when they have one clear job instead of trying to handle every workflow at once.
+          </div>
+        </div>
+        <div
+          className="rounded-xl px-4 py-3"
+          style={{ background: 'var(--color-bg-secondary)', border: '1px solid var(--color-border)' }}
+        >
+          <div className="text-[11px] font-semibold uppercase tracking-[0.24em] mb-2" style={{ color: 'var(--color-text-tertiary)' }}>
+            Why It Helps
+          </div>
+          <div className="text-sm" style={{ color: 'var(--color-text-secondary)' }}>
+            A good specialist reduces noise by handling one kind of planning, triage, research, or preparation for you.
+          </div>
+        </div>
       </div>
 
       <div
@@ -4663,7 +4700,7 @@ export function AgentsPage() {
                     className="inline-flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium cursor-pointer"
                     style={{ background: 'var(--color-bg-secondary)', border: '1px solid var(--color-border)', color: 'var(--color-text)' }}
                   >
-                    <Wifi size={14} /> Notifications
+                    <Wifi size={14} /> Reach Me
                   </button>
                 </>
               ) : (
@@ -4743,10 +4780,10 @@ export function AgentsPage() {
               <div className="text-center mb-8">
                 <Bot size={48} className="mx-auto mb-4 opacity-30" />
                 <p className="mb-2 font-medium text-lg" style={{ color: 'var(--color-text)' }}>
-                  Choose your first agent
+                  Choose your first specialist
                 </p>
                 <p className="text-sm max-w-2xl mx-auto" style={{ color: 'var(--color-text-secondary)' }}>
-                  Start with one focused role below. You do not need to configure everything perfectly up front. The best first step is to launch one useful specialist and see how it behaves.
+                  Start with one focused role below. You do not need to configure everything perfectly up front. The best first step is to launch one useful specialist and see how it helps.
                 </p>
                 <div className="mt-3 text-xs" style={{ color: 'var(--color-text-tertiary)' }}>
                   Best first path for personal email and meeting alerts: <span style={{ color: 'var(--color-text)' }}>JARVIS Personal Watcher</span>
@@ -4786,7 +4823,7 @@ export function AgentsPage() {
                         {setupHeadlineForTemplate(tpl)}
                       </div>
                       <div className="mt-3 text-[10px] uppercase tracking-[0.22em]" style={{ color: 'var(--color-accent)' }}>
-                        Configure Agent
+                        Set Up Agent
                       </div>
                     </button>
                   ))}
@@ -4808,7 +4845,7 @@ export function AgentsPage() {
                   color: agentManagerAvailable === false ? 'var(--color-text-tertiary)' : '#fff',
                 }}
               >
-                  <Plus size={15} /> Start Personal Watcher
+                  <Plus size={15} /> Set Up Personal Watcher
                 </button>
               <button
                 onClick={() => {
@@ -4824,7 +4861,7 @@ export function AgentsPage() {
                   color: agentManagerAvailable === false ? 'var(--color-text-tertiary)' : 'var(--color-text)',
                 }}
               >
-                  <Plus size={15} /> See More Agent Types
+                  <Plus size={15} /> See More Specialists
               </button>
             </div>
           </div>

@@ -203,7 +203,7 @@ export function UserManagementSection({ currentUser }: { currentUser: AuthUser |
   return (
     <Section title="User Management">
       <div className="mb-4 text-xs" style={{ color: 'var(--color-text-tertiary)' }}>
-        Root cause: login alone is not enough for safe household or friend access. JARVIS now has server-side admin controls so you can create users, restrict roles, disable accounts, and reset passwords without crossing privacy boundaries.
+        Create users, assign roles, disable access, and reset passwords from one place without crossing privacy boundaries between accounts.
       </div>
 
       <div className="grid gap-2 mb-4" style={{ gridTemplateColumns: '1fr 1fr 1fr 1fr auto' }}>
@@ -423,7 +423,7 @@ function AssistantProfileSection({ onSaved }: { onSaved: () => void }) {
   return (
     <Section title="Personal Assistant Profile">
       <div className="mb-4 text-xs" style={{ color: 'var(--color-text-tertiary)' }}>
-        Root cause: JARVIS could infer your working style, but you could not explicitly shape how it handles you. This profile now lets each user steer tone, depth, autonomy, and decisiveness so personalization is deliberate as well as learned.
+        Shape how JARVIS handles you by setting tone, depth, autonomy, and decision style directly instead of leaving everything to inference alone.
       </div>
       {loading ? (
         <div className="text-xs" style={{ color: 'var(--color-text-secondary)' }}>Loading assistant profile...</div>

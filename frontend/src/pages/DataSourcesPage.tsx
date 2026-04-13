@@ -952,7 +952,7 @@ function DataSourcesSection() {
           color: 'var(--color-text-secondary)',
         }}
       >
-        Root cause: the connector runtime is now account-scoped, so the page needs an active account before it can safely connect or sync private inboxes.
+        Choose the account workspace you want to use first. JARVIS keeps connected inboxes and private sources scoped there so your data stays separated correctly.
         <div style={{ marginTop: 6, display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
           {isSuperadmin && (
             <>
@@ -2023,7 +2023,7 @@ export function DataSourcesPage() {
 
   const tabs = [
     { id: 'sources' as const, label: 'Connected Apps', icon: Database },
-    { id: 'messaging' as const, label: 'External Chat', icon: MessageSquare },
+    { id: 'messaging' as const, label: 'Reach Me', icon: MessageSquare },
   ];
 
   return (
@@ -2031,10 +2031,10 @@ export function DataSourcesPage() {
       {/* Header */}
       <div className="shrink-0 px-6 pt-6 pb-4">
         <h1 className="text-lg font-semibold" style={{ color: 'var(--color-text)' }}>
-          Connected Apps &amp; External Chat
+          Connected Apps &amp; Reach Me
         </h1>
         <p className="text-sm mt-1" style={{ color: 'var(--color-text-secondary)' }}>
-          Connect the apps and accounts JARVIS should understand, then add phone or chat access when you want to reach it outside the browser.
+          Connect the apps and accounts JARVIS should understand, then choose how JARVIS can reach you outside the browser when something matters.
         </p>
         <div className="grid gap-3 mt-4 md:grid-cols-3">
           <div
@@ -2042,7 +2042,7 @@ export function DataSourcesPage() {
             style={{ background: 'var(--color-bg-secondary)', border: '1px solid var(--color-border)' }}
           >
             <div className="text-[11px] font-semibold uppercase tracking-[0.24em] mb-2" style={{ color: 'var(--color-text-tertiary)' }}>
-              Best First Path
+              Best First Move
             </div>
             <div className="text-sm" style={{ color: 'var(--color-text-secondary)' }}>
               Add one account, connect one provider or app, then come back later if you want to broaden JARVIS with more sources.
@@ -2053,7 +2053,7 @@ export function DataSourcesPage() {
             style={{ background: 'var(--color-bg-secondary)', border: '1px solid var(--color-border)' }}
           >
             <div className="text-[11px] font-semibold uppercase tracking-[0.24em] mb-2" style={{ color: 'var(--color-text-tertiary)' }}>
-              Privacy Model
+              Keep It Private
             </div>
             <div className="text-sm" style={{ color: 'var(--color-text-secondary)' }}>
               Accounts and connected sources stay scoped to the selected user and account workspace instead of becoming one shared system inbox.
@@ -2064,7 +2064,7 @@ export function DataSourcesPage() {
             style={{ background: 'var(--color-bg-secondary)', border: '1px solid var(--color-border)' }}
           >
             <div className="text-[11px] font-semibold uppercase tracking-[0.24em] mb-2" style={{ color: 'var(--color-text-tertiary)' }}>
-              What You Get
+              Why It Helps
             </div>
             <div className="text-sm" style={{ color: 'var(--color-text-secondary)' }}>
               Connected sources make search, briefings, and specialist agents much more useful because they can finally work with your real context.
@@ -2115,10 +2115,10 @@ export function DataSourcesPage() {
               }}
             >
               <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 6 }}>
-                Launch your first agent
+                Set up your first specialist
               </div>
               <div style={{ fontSize: 12, color: 'var(--color-text-secondary)', marginBottom: 14 }}>
-                Root cause: we were auto-creating an agent the moment this tab opened, which made the page feel frozen before you even chose anything. Messaging setup now stays lightweight until you explicitly start it.
+                Reach Me works through a real agent, so the first step is to create one specialist that JARVIS can use for updates, reminders, or alerts.
               </div>
               <div className="grid gap-3 mb-4 md:grid-cols-2">
                 <div
@@ -2137,15 +2137,15 @@ export function DataSourcesPage() {
                   style={{ background: 'var(--color-bg)', border: '1px solid var(--color-border)' }}
                 >
                   <div className="text-[11px] font-semibold uppercase tracking-[0.24em] mb-2" style={{ color: 'var(--color-text-tertiary)' }}>
-                    What Happens Next
+                    Next Step
                   </div>
                   <div className="text-sm" style={{ color: 'var(--color-text-secondary)' }}>
-                    JARVIS will create one starter assistant for you, then you can connect phone or chat channels to that same agent without extra setup guesswork.
+                    JARVIS will create one starter specialist for you, then you can connect phone or chat routes to that same specialist without extra setup guesswork.
                   </div>
                 </div>
               </div>
               <div className="flex flex-wrap gap-2 mb-4">
-                {['Create agent', 'Connect channel', 'Start chatting'].map((step, index) => (
+                {['Create specialist', 'Choose route', 'Send a test'].map((step, index) => (
                   <span
                     key={step}
                     className="px-2.5 py-1.5 rounded-full text-[11px]"
@@ -2173,7 +2173,7 @@ export function DataSourcesPage() {
                 }}
               >
                 <Plus size={14} />
-                {creatingAgent ? 'Creating agent...' : 'Launch your first agent'}
+                {creatingAgent ? 'Setting up specialist...' : 'Set up your first specialist'}
               </button>
             </div>
           )

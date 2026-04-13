@@ -7796,6 +7796,30 @@ ${item.details}`,
                   <div className="text-sm leading-7 text-slate-200/78">
                     Run the next recommended check, then move into commit and push once the repo is green.
                   </div>
+                  <div className="mt-3 grid gap-3 sm:grid-cols-3">
+                    <div className="rounded-[0.95rem] border border-cyan-400/10 bg-black/20 px-3 py-3">
+                      <div className="text-[10px] uppercase tracking-[0.22em] text-cyan-300/55">Next Check</div>
+                      <div className="mt-1 text-sm text-cyan-50/92">
+                        {workspaceChecks?.checks?.[0]?.label || 'No suggested check yet'}
+                      </div>
+                    </div>
+                    <div className="rounded-[0.95rem] border border-cyan-400/10 bg-black/20 px-3 py-3">
+                      <div className="text-[10px] uppercase tracking-[0.22em] text-cyan-300/55">Commit Readiness</div>
+                      <div className="mt-1 text-sm text-cyan-50/92">
+                        {workspaceSummary?.commit_ready ? 'Ready to review commit' : 'Not ready yet'}
+                      </div>
+                    </div>
+                    <div className="rounded-[0.95rem] border border-cyan-400/10 bg-black/20 px-3 py-3">
+                      <div className="text-[10px] uppercase tracking-[0.22em] text-cyan-300/55">Push Readiness</div>
+                      <div className="mt-1 text-sm text-cyan-50/92">
+                        {workspaceSummary?.push_ready ? 'Ready to review push' : 'Still local'}
+                      </div>
+                    </div>
+                  </div>
+                  <div className="mt-3">
+                    <div className="mb-2 text-[10px] uppercase tracking-[0.22em] text-cyan-300/55">
+                      Recommended Checks
+                    </div>
                   <div className="mt-3 grid gap-2 sm:grid-cols-2">
                     {(workspaceChecks?.checks || []).map((item) => (
                       <button
@@ -7813,6 +7837,11 @@ ${item.details}`,
                       </div>
                     ) : null}
                   </div>
+                  </div>
+                  <div className="mt-3">
+                    <div className="mb-2 text-[10px] uppercase tracking-[0.22em] text-cyan-300/55">
+                      Git Review Actions
+                    </div>
                   <div className="mt-3 grid gap-3 md:grid-cols-[1fr_160px_160px_160px]">
                     <input
                       value={gitCommitMessage}
@@ -7841,6 +7870,7 @@ ${item.details}`,
                     >
                       {workbenchBusy === 'prepare' ? 'Preparing' : 'Review Push'}
                     </button>
+                  </div>
                   </div>
                   <div className="mt-3 grid gap-2 sm:grid-cols-2">
                     {(workspaceChecks?.git_actions || []).map((item) => (
@@ -8217,6 +8247,9 @@ ${item.details}`,
                   <div className="mb-2 text-[10px] uppercase tracking-[0.35em] text-cyan-300/55">
                     Repo Overview
                   </div>
+                  <div className="mb-3 text-sm leading-7 text-slate-200/78">
+                    Keep the current branch, worktree, and changed files in view before you edit, commit, or push.
+                  </div>
                   <div className="grid gap-3 sm:grid-cols-3">
                     <div className="rounded-[0.95rem] border border-cyan-400/10 bg-black/20 px-3 py-3">
                       <div className="text-[10px] uppercase tracking-[0.22em] text-cyan-300/55">Branch</div>
@@ -8268,6 +8301,9 @@ ${item.details}`,
                   </div>
                   <div className="mt-3 rounded-[0.95rem] border border-cyan-400/10 bg-black/20 px-3 py-3">
                     <div className="text-[10px] uppercase tracking-[0.22em] text-cyan-300/55">Changed Files</div>
+                    <div className="mt-2 text-xs leading-6 text-slate-300/70">
+                      Pick a file to review, inspect, edit, or turn into a task without losing your place in the repo.
+                    </div>
                     {workspaceSummary?.changed_files?.length ? (
                       <div className="mt-2 space-y-2">
                         {workspaceSummary.changed_files.slice(0, 5).map((filePath) => (
@@ -8276,43 +8312,53 @@ ${item.details}`,
                             className="rounded-[0.9rem] border border-cyan-400/10 bg-slate-950/60 px-3 py-3"
                           >
                             <div className="text-sm text-cyan-50/92">{filePath}</div>
-                            <div className="mt-2 grid gap-2 sm:grid-cols-4">
-                              <button
-                                onClick={() => loadFileCodingPrompt(filePath, 'review')}
-                                className="rounded-[0.8rem] border border-cyan-400/12 bg-cyan-400/[0.08] px-2 py-2 text-[10px] uppercase tracking-[0.18em] text-cyan-100 transition hover:bg-cyan-400/[0.14]"
-                              >
-                                Review
-                              </button>
-                              <button
-                                onClick={() => loadFileCodingPrompt(filePath, 'debug')}
-                                className="rounded-[0.8rem] border border-cyan-400/12 bg-slate-950/70 px-2 py-2 text-[10px] uppercase tracking-[0.18em] text-cyan-100 transition hover:bg-cyan-400/[0.08]"
-                              >
-                                Debug
-                              </button>
-                              <button
-                                onClick={() => loadFileCodingPrompt(filePath, 'inspect')}
-                                className="rounded-[0.8rem] border border-cyan-400/12 bg-slate-950/70 px-2 py-2 text-[10px] uppercase tracking-[0.18em] text-cyan-100 transition hover:bg-cyan-400/[0.08]"
-                              >
-                                Inspect
-                              </button>
-                              <button
-                                onClick={() => loadFileWorkbenchPreset(filePath)}
-                                className="rounded-[0.8rem] border border-cyan-400/12 bg-cyan-400/[0.08] px-2 py-2 text-[10px] uppercase tracking-[0.18em] text-cyan-100 transition hover:bg-cyan-400/[0.14]"
-                              >
-                                Diff
-                              </button>
-                              <button
-                                onClick={() => openFileInEditor(filePath)}
-                                className="rounded-[0.8rem] border border-cyan-400/12 bg-slate-950/70 px-2 py-2 text-[10px] uppercase tracking-[0.18em] text-cyan-100 transition hover:bg-cyan-400/[0.08]"
-                              >
-                                Edit
-                              </button>
-                              <button
-                                onClick={() => addCodingTask(filePath, 'fix', `Fix ${filePath}`)}
-                                className="rounded-[0.8rem] border border-amber-300/20 bg-amber-400/[0.08] px-2 py-2 text-[10px] uppercase tracking-[0.18em] text-amber-100 transition hover:bg-amber-400/[0.14]"
-                              >
-                                Task
-                              </button>
+                            <div className="mt-2 grid gap-3 lg:grid-cols-[1.3fr_1fr]">
+                              <div>
+                                <div className="mb-2 text-[10px] uppercase tracking-[0.18em] text-cyan-300/55">Understand</div>
+                                <div className="grid gap-2 sm:grid-cols-2">
+                                  <button
+                                    onClick={() => loadFileCodingPrompt(filePath, 'review')}
+                                    className="rounded-[0.8rem] border border-cyan-400/12 bg-cyan-400/[0.08] px-2 py-2 text-[10px] uppercase tracking-[0.18em] text-cyan-100 transition hover:bg-cyan-400/[0.14]"
+                                  >
+                                    Review
+                                  </button>
+                                  <button
+                                    onClick={() => loadFileCodingPrompt(filePath, 'inspect')}
+                                    className="rounded-[0.8rem] border border-cyan-400/12 bg-slate-950/70 px-2 py-2 text-[10px] uppercase tracking-[0.18em] text-cyan-100 transition hover:bg-cyan-400/[0.08]"
+                                  >
+                                    Inspect
+                                  </button>
+                                  <button
+                                    onClick={() => loadFileCodingPrompt(filePath, 'debug')}
+                                    className="rounded-[0.8rem] border border-cyan-400/12 bg-slate-950/70 px-2 py-2 text-[10px] uppercase tracking-[0.18em] text-cyan-100 transition hover:bg-cyan-400/[0.08]"
+                                  >
+                                    Debug
+                                  </button>
+                                  <button
+                                    onClick={() => loadFileWorkbenchPreset(filePath)}
+                                    className="rounded-[0.8rem] border border-cyan-400/12 bg-cyan-400/[0.08] px-2 py-2 text-[10px] uppercase tracking-[0.18em] text-cyan-100 transition hover:bg-cyan-400/[0.14]"
+                                  >
+                                    View Diff
+                                  </button>
+                                </div>
+                              </div>
+                              <div>
+                                <div className="mb-2 text-[10px] uppercase tracking-[0.18em] text-cyan-300/55">Act</div>
+                                <div className="grid gap-2 sm:grid-cols-2">
+                                  <button
+                                    onClick={() => openFileInEditor(filePath)}
+                                    className="rounded-[0.8rem] border border-cyan-400/12 bg-slate-950/70 px-2 py-2 text-[10px] uppercase tracking-[0.18em] text-cyan-100 transition hover:bg-cyan-400/[0.08]"
+                                  >
+                                    Edit
+                                  </button>
+                                  <button
+                                    onClick={() => addCodingTask(filePath, 'fix', `Fix ${filePath}`)}
+                                    className="rounded-[0.8rem] border border-amber-300/20 bg-amber-400/[0.08] px-2 py-2 text-[10px] uppercase tracking-[0.18em] text-amber-100 transition hover:bg-amber-400/[0.14]"
+                                  >
+                                    Add Task
+                                  </button>
+                                </div>
+                              </div>
                             </div>
                           </div>
                         ))}
@@ -8334,6 +8380,9 @@ ${item.details}`,
                 <div className="mt-4 rounded-[1.15rem] border border-cyan-400/10 bg-slate-950/55 p-4">
                   <div className="mb-2 text-[10px] uppercase tracking-[0.35em] text-cyan-300/55">
                     Code Editor
+                  </div>
+                  <div className="mb-3 text-sm leading-7 text-slate-200/78">
+                    Load a file from the repo, adjust the draft here, then stage the diff when you are ready to review it.
                   </div>
                   <div className="grid gap-3">
                     <input

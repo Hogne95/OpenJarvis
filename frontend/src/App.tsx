@@ -38,6 +38,7 @@ const AdminPage = lazy(() => import('./pages/AdminPage').then((module) => ({ def
 const DataSourcesPage = lazy(() => import('./pages/DataSourcesPage').then((module) => ({ default: module.DataSourcesPage })));
 const LogsPage = lazy(() => import('./pages/LogsPage').then((module) => ({ default: module.LogsPage })));
 const WorkspacePage = lazy(() => import('./pages/WorkspacePage').then((module) => ({ default: module.WorkspacePage })));
+const CodingPage = lazy(() => import('./pages/CodingPage').then((module) => ({ default: module.CodingPage })));
 const OperationsPage = lazy(() => import('./pages/OperationsPage').then((module) => ({ default: module.OperationsPage })));
 const BriefingsPage = lazy(() => import('./pages/BriefingsPage').then((module) => ({ default: module.BriefingsPage })));
 const DesktopPage = lazy(() => import('./pages/DesktopPage').then((module) => ({ default: module.DesktopPage })));
@@ -411,6 +412,7 @@ export default function App() {
           <Route path="dashboard" element={<DashboardPage />} />
           <Route element={<Layout />}>
             <Route path="chat" element={<ChatPage />} />
+            <Route path="coding" element={<CodingPage />} />
             <Route path="workspace" element={<WorkspacePage />} />
             <Route path="operations" element={<OperationsPage />} />
             <Route path="briefings" element={<BriefingsPage />} />
