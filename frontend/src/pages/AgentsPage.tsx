@@ -1120,57 +1120,23 @@ function LaunchWizard({
           </div>
         </div>
 
-        <div className="space-y-4">
+        <div>
           <div
             className="rounded-lg p-4"
             style={{ background: 'var(--color-bg-secondary)', border: '1px solid var(--color-border)' }}
           >
             <div className="text-xs font-semibold uppercase tracking-[0.28em] mb-2" style={{ color: 'var(--color-text-tertiary)' }}>
-              Current Setup
+              Setup Summary
             </div>
             <div className="space-y-2 text-xs" style={{ color: 'var(--color-text-secondary)' }}>
               <div><strong style={{ color: 'var(--color-text)' }}>Name:</strong> {wizard.name || defaultAgentNameForTemplate(wizard.templateData)}</div>
               <div><strong style={{ color: 'var(--color-text)' }}>Model:</strong> {wizard.model || 'Pick a model'}</div>
               <div><strong style={{ color: 'var(--color-text)' }}>Schedule:</strong> {formatScheduleLabel(wizard.scheduleType, wizard.scheduleValue)}</div>
-              <div><strong style={{ color: 'var(--color-text)' }}>Tools:</strong> {wizard.selectedTools.length ? `${wizard.selectedTools.length} selected` : 'Custom / none yet'}</div>
-              <div><strong style={{ color: 'var(--color-text)' }}>Advanced:</strong> safe to leave at defaults for the first run</div>
-            </div>
-          </div>
-
-          <div
-            className="rounded-lg p-4"
-            style={{ background: 'var(--color-bg-secondary)', border: '1px solid var(--color-border)' }}
-          >
-            <div className="text-xs font-semibold uppercase tracking-[0.28em] mb-2" style={{ color: 'var(--color-text-tertiary)' }}>
-              What Happens Next
-            </div>
-            <div className="space-y-2 text-xs" style={{ color: 'var(--color-text-secondary)' }}>
-              <div>The agent is created with the selected model, schedule, and template defaults.</div>
-              <div>You can edit the instruction, tools, and runtime behavior after launch.</div>
-              <div>Manual is the safest starting schedule if you are still learning what you want.</div>
-            </div>
-          </div>
-
-          <div
-            className="rounded-lg p-4"
-            style={{ background: 'var(--color-bg-secondary)', border: '1px solid var(--color-border)' }}
-          >
-            <div className="text-xs font-semibold uppercase tracking-[0.28em] mb-2" style={{ color: 'var(--color-text-tertiary)' }}>
-              Works Best With
-            </div>
-            <div className="space-y-2 text-xs" style={{ color: 'var(--color-text-secondary)' }}>
-              <div>These are the first apps that usually make this agent more useful.</div>
-            </div>
-            <div className="flex flex-wrap gap-2 mt-3">
-              {setupConnectors.map((source) => (
-                <span
-                  key={source.connector_id}
-                  className="px-2 py-1 rounded-full text-[11px]"
-                  style={{ background: 'rgba(124,58,237,0.12)', color: 'var(--color-text)' }}
-                >
-                  {source.display_name}
-                </span>
-              ))}
+              <div><strong style={{ color: 'var(--color-text)' }}>Tools:</strong> {wizard.selectedTools.length ? `${wizard.selectedTools.length} selected` : 'Template defaults'}</div>
+              <div><strong style={{ color: 'var(--color-text)' }}>Recommended apps:</strong> {setupConnectors.slice(0, 3).map((source) => source.display_name).join(', ') || 'None yet'}</div>
+              <div className="pt-2" style={{ color: 'var(--color-text-tertiary)' }}>
+                Keep the first run simple. You can refine tools, connected apps, and runtime behavior after launch.
+              </div>
             </div>
           </div>
         </div>
@@ -4122,14 +4088,19 @@ export function AgentsPage() {
                 </div>);
             })()}
 
-            <div className="grid gap-3 md:grid-cols-2">
-              <div
-                className="p-4 rounded-lg"
-                style={{ background: 'var(--color-bg-secondary)', border: '1px solid var(--color-border)' }}
-              >
-                <h3 className="text-sm font-medium mb-2" style={{ color: 'var(--color-text-secondary)' }}>
-                  Quick Actions
-                </h3>
+            <div
+              className="p-4 rounded-lg"
+              style={{ background: 'var(--color-bg-secondary)', border: '1px solid var(--color-border)' }}
+            >
+              <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+                <div>
+                  <h3 className="text-sm font-medium mb-2" style={{ color: 'var(--color-text-secondary)' }}>
+                    Next best move
+                  </h3>
+                  <div className="text-sm" style={{ color: 'var(--color-text-tertiary)' }}>
+                    Start with a chat or one run. If you want more context, connect {recommendedConnectorsForAgent(selectedAgent).slice(0, 3).map((source) => source.display_name).join(', ')} next.
+                  </div>
+                </div>
                 <div className="flex flex-wrap gap-2">
                   <button
                     onClick={() => setDetailTab('interact')}
@@ -4152,29 +4123,6 @@ export function AgentsPage() {
                   >
                     <Database size={14} /> Connected Apps
                   </button>
-                </div>
-              </div>
-
-              <div
-                className="p-4 rounded-lg"
-                style={{ background: 'var(--color-bg-secondary)', border: '1px solid var(--color-border)' }}
-              >
-                <h3 className="text-sm font-medium mb-2" style={{ color: 'var(--color-text-secondary)' }}>
-                  Best Connected Apps
-                </h3>
-                <div className="flex flex-wrap gap-2">
-                  {recommendedConnectorsForAgent(selectedAgent).slice(0, 4).map((source) => (
-                    <span
-                      key={source.connector_id}
-                      className="px-2 py-1 rounded-full text-[11px]"
-                      style={{ background: 'rgba(124,58,237,0.12)', color: 'var(--color-text)' }}
-                    >
-                      {source.display_name}
-                    </span>
-                  ))}
-                </div>
-                <div className="text-xs mt-3" style={{ color: 'var(--color-text-tertiary)' }}>
-                  Connect these first if you want this agent to become useful faster.
                 </div>
               </div>
             </div>
@@ -4334,37 +4282,6 @@ export function AgentsPage() {
           </div>
         </div>
 
-        <div className="grid gap-3 mb-6 md:grid-cols-3">
-          <div className="rounded-lg p-4" style={{ background: 'var(--color-bg-secondary)', border: '1px solid var(--color-border)' }}>
-            <div className="text-[11px] font-semibold uppercase tracking-[0.24em] mb-2" style={{ color: 'var(--color-text-tertiary)' }}>
-              Best Used For
-            </div>
-            <div className="text-sm" style={{ color: 'var(--color-text-secondary)' }}>
-              {AGENTS_LIST_DESCRIPTION}
-            </div>
-          </div>
-          <div className="rounded-lg p-4" style={{ background: 'var(--color-bg-secondary)', border: '1px solid var(--color-border)' }}>
-            <div className="text-[11px] font-semibold uppercase tracking-[0.24em] mb-2" style={{ color: 'var(--color-text-tertiary)' }}>
-              Current State
-            </div>
-            <div className="text-sm" style={{ color: 'var(--color-text-secondary)' }}>
-              {visibleAgents.length > 0 ? AGENTS_LIST_GUIDANCE_ACTIVE : AGENTS_LIST_GUIDANCE_EMPTY}
-            </div>
-          </div>
-          <div className="rounded-lg p-4" style={{ background: 'var(--color-bg-secondary)', border: '1px solid var(--color-border)' }}>
-            <div className="text-[11px] font-semibold uppercase tracking-[0.24em] mb-2" style={{ color: 'var(--color-text-tertiary)' }}>
-              Recommended Next
-            </div>
-            <div className="space-y-2">
-              {(visibleAgents.length > 0 ? AGENTS_LIST_NEXT_STEPS_ACTIVE : AGENTS_LIST_NEXT_STEPS_EMPTY).map((step: string) => (
-                <div key={step} className="flex gap-2 text-sm" style={{ color: 'var(--color-text-secondary)' }}>
-                  <span style={{ color: 'var(--color-accent)' }}>•</span>
-                  <span>{step}</span>
-                </div>
-              ))}
-            </div>
-          </div>
-        </div>
         <button
           onClick={() => {
             if (!agentManagerAvailable) return;
@@ -4386,33 +4303,18 @@ export function AgentsPage() {
         className="mb-6 rounded-xl p-4"
         style={{ background: 'var(--color-bg-secondary)', border: '1px solid var(--color-border)' }}
       >
-        <div className="text-xs font-semibold uppercase tracking-[0.24em] mb-3" style={{ color: 'var(--color-text-tertiary)' }}>
-          First Good Path
-        </div>
-        <div className="grid gap-3 md:grid-cols-4">
-          {[
-            { step: '1', title: 'Create', detail: 'Start with a recommended role instead of building everything from scratch.' },
-            { step: '2', title: 'Run Once', detail: 'Use chat or a first run to see whether the role and instruction feel right.' },
-            { step: '3', title: 'Connect Apps', detail: 'Add email, calendar, notes, or chat only after the role is clearly useful.' },
-            { step: '4', title: 'Schedule Later', detail: 'Keep it manual first, then add a schedule once you trust the output.' },
-          ].map((item) => (
-            <div key={item.step} className="rounded-lg p-3" style={{ background: 'var(--color-bg)', border: '1px solid var(--color-border)' }}>
-              <div className="flex items-center gap-2 mb-2">
-                <span
-                  className="inline-flex items-center justify-center w-6 h-6 rounded-full text-xs font-semibold"
-                  style={{ background: 'rgba(124,58,237,0.16)', color: 'var(--color-accent)' }}
-                >
-                  {item.step}
-                </span>
-                <span className="text-sm font-semibold" style={{ color: 'var(--color-text)' }}>
-                  {item.title}
-                </span>
-              </div>
-              <div className="text-xs leading-5" style={{ color: 'var(--color-text-secondary)' }}>
-                {item.detail}
-              </div>
+        <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+          <div className="max-w-3xl">
+            <div className="text-xs font-semibold uppercase tracking-[0.24em] mb-2" style={{ color: 'var(--color-text-tertiary)' }}>
+              Best Used For
             </div>
-          ))}
+            <div className="text-sm" style={{ color: 'var(--color-text-secondary)' }}>
+              {AGENTS_LIST_DESCRIPTION}
+            </div>
+          </div>
+          <div className="max-w-xl text-sm" style={{ color: 'var(--color-text-secondary)' }}>
+            {visibleAgents.length > 0 ? AGENTS_LIST_GUIDANCE_ACTIVE : AGENTS_LIST_GUIDANCE_EMPTY}
+          </div>
         </div>
       </div>
 
@@ -4433,7 +4335,7 @@ export function AgentsPage() {
                 {launchSuccess.name} was created successfully
               </div>
               <div className="text-sm mt-1" style={{ color: 'var(--color-text-secondary)' }}>
-                Best next step: open it once, chat with it, or run its first task before adding more complexity.
+                Best next step: open it once, then chat with it or run it before adding more setup.
               </div>
             </div>
             <div className="flex flex-wrap gap-2">
@@ -4456,13 +4358,6 @@ export function AgentsPage() {
                 style={{ background: 'var(--color-bg-secondary)', border: '1px solid var(--color-border)', color: 'var(--color-text)' }}
               >
                 <MessageSquare size={14} /> Chat With Agent
-              </button>
-              <button
-                onClick={() => handleRun(launchSuccess.id)}
-                className="inline-flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium cursor-pointer"
-                style={{ background: 'var(--color-bg-secondary)', border: '1px solid var(--color-border)', color: 'var(--color-text)' }}
-              >
-                <Zap size={14} /> Run First Task
               </button>
               <button
                 onClick={() => setLaunchSuccess(null)}
@@ -4577,39 +4472,6 @@ export function AgentsPage() {
               </>
             ) : null}
 
-            {additionalStarterTemplates.length > 0 ? (
-              <>
-                <div className="text-xs font-semibold uppercase tracking-[0.28em] mb-3" style={{ color: 'var(--color-text-tertiary)' }}>
-                  More Agent Types
-                </div>
-                <div className="mx-auto mb-6 grid gap-3 text-left" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))' }}>
-                  {additionalStarterTemplates.slice(0, 4).map((tpl) => (
-                    <button
-                      key={tpl.id}
-                      onClick={() => {
-                        if (!agentManagerAvailable) return;
-                        setPendingTemplateId(tpl.id);
-                        setShowWizard(true);
-                      }}
-                      disabled={agentManagerAvailable === false}
-                      className="rounded-lg p-4 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
-                      style={{ background: 'var(--color-bg-secondary)', border: '1px solid var(--color-border)' }}
-                    >
-                      <div className="flex items-center gap-2">
-                        <span className="text-sm font-semibold" style={{ color: 'var(--color-text)' }}>{tpl.name}</span>
-                      </div>
-                      <div className="mt-2 text-[10px] uppercase tracking-[0.2em]" style={{ color: 'var(--color-accent)' }}>
-                        {templateBestForLabel(tpl)}
-                      </div>
-                      <div className="mt-2 text-xs leading-5" style={{ color: 'var(--color-text-secondary)' }}>
-                        {tpl.description}
-                      </div>
-                    </button>
-                  ))}
-                </div>
-              </>
-            ) : null}
-
             <div className="flex flex-wrap items-center justify-center gap-3">
               <button
                 onClick={() => {
@@ -4640,7 +4502,7 @@ export function AgentsPage() {
                   color: agentManagerAvailable === false ? 'var(--color-text-tertiary)' : 'var(--color-text)',
                 }}
               >
-                <Plus size={15} /> Build a Custom Agent
+                <Plus size={15} /> More Options
               </button>
             </div>
           </div>

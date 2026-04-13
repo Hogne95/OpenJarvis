@@ -22,6 +22,7 @@ import {
   PanelsTopLeft,
   RadioTower,
   AppWindow,
+  ShieldAlert,
 } from 'lucide-react';
 import { ConversationList } from './ConversationList';
 import { useAppStore } from '../../lib/store';
@@ -38,6 +39,7 @@ export function Sidebar() {
   const serverInfo = useAppStore((s) => s.serverInfo);
   const setCommandPaletteOpen = useAppStore((s) => s.setCommandPaletteOpen);
   const modelLoading = useAppStore((s) => s.modelLoading);
+  const currentUser = useAppStore((s) => s.currentUser);
 
   const settings = useAppStore((s) => s.settings);
   const updateSettings = useAppStore((s) => s.updateSettings);
@@ -67,6 +69,9 @@ export function Sidebar() {
     { path: '/data-sources', icon: Database, label: 'Data Sources' },
     { path: '/agents', icon: Bot, label: 'Agents' },
     { path: '/logs', icon: ScrollText, label: 'Logs' },
+    ...(currentUser?.role === 'admin' || currentUser?.role === 'superadmin'
+      ? [{ path: '/admin', icon: ShieldAlert, label: 'Admin' }]
+      : []),
     { path: '/settings', icon: Settings, label: 'Settings' },
     { path: '/get-started', icon: Rocket, label: 'Get Started' },
   ];

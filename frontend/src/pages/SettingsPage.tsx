@@ -112,7 +112,7 @@ function Section({ title, children }: { title: string; children: React.ReactNode
   );
 }
 
-function UserManagementSection({ currentUser }: { currentUser: AuthUser | null }) {
+export function UserManagementSection({ currentUser }: { currentUser: AuthUser | null }) {
   const [users, setUsers] = useState<AuthUser[]>([]);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);

@@ -17,6 +17,7 @@ import {
   fetchVoiceLoopStatus,
   forgotPasswordAuth,
   loginAuth,
+  preloadModel,
   resetPasswordAuth,
   submitSavings,
   isTauri,
@@ -33,6 +34,7 @@ const DashboardPage = lazy(() => import('./pages/DashboardPage').then((module) =
 const SettingsPage = lazy(() => import('./pages/SettingsPage').then((module) => ({ default: module.SettingsPage })));
 const GetStartedPage = lazy(() => import('./pages/GetStartedPage').then((module) => ({ default: module.GetStartedPage })));
 const AgentsPage = lazy(() => import('./pages/AgentsPage').then((module) => ({ default: module.AgentsPage })));
+const AdminPage = lazy(() => import('./pages/AdminPage').then((module) => ({ default: module.AdminPage })));
 const DataSourcesPage = lazy(() => import('./pages/DataSourcesPage').then((module) => ({ default: module.DataSourcesPage })));
 const LogsPage = lazy(() => import('./pages/LogsPage').then((module) => ({ default: module.LogsPage })));
 const WorkspacePage = lazy(() => import('./pages/WorkspacePage').then((module) => ({ default: module.WorkspacePage })));
@@ -60,6 +62,7 @@ export default function App() {
   const [startupDismissed, setStartupDismissed] = useState(false);
   const handleSetupReady = useCallback(() => setSetupDone(true), []);
   const modelsBootstrapRanRef = useRef(false);
+  const warmedModelsRef = useRef<Set<string>>(new Set());
   const serverInfoBootstrapRanRef = useRef(false);
   const optInBootstrapRanRef = useRef(false);
   const startupRanRef = useRef(false);
@@ -98,6 +101,7 @@ export default function App() {
 
   useEffect(() => {
     modelsBootstrapRanRef.current = false;
+    warmedModelsRef.current.clear();
     serverInfoBootstrapRanRef.current = false;
     startupRanRef.current = false;
     setStartupPhase('idle');
@@ -169,6 +173,22 @@ export default function App() {
       cancelled = true;
     };
   }, [currentUser, selectedModel, setModels, setModelsLoading, setSelectedModel]);
+
+  useEffect(() => {
+    if (!currentUser || !selectedModel) return;
+    if (warmedModelsRef.current.has(selectedModel)) return;
+    warmedModelsRef.current.add(selectedModel);
+
+    const timer = window.setTimeout(() => {
+      void preloadModel(selectedModel).catch(() => {
+        warmedModelsRef.current.delete(selectedModel);
+      });
+    }, 500);
+
+    return () => {
+      window.clearTimeout(timer);
+    };
+  }, [currentUser, selectedModel]);
 
   useEffect(() => {
     if (!currentUser) return;
@@ -398,9 +418,10 @@ export default function App() {
             <Route path="system" element={<SystemPage />} />
             <Route path="settings" element={<SettingsPage />} />
             <Route path="get-started" element={<GetStartedPage />} />
-            <Route path="data-sources" element={<DataSourcesPage />} />
-            <Route path="agents" element={<AgentsPage />} />
-            <Route path="logs" element={<LogsPage />} />
+                  <Route path="data-sources" element={<DataSourcesPage />} />
+                  <Route path="agents" element={<AgentsPage />} />
+                  <Route path="admin" element={<AdminPage />} />
+                  <Route path="logs" element={<LogsPage />} />
           </Route>
         </Routes>
       </Suspense>
