@@ -761,9 +761,9 @@ function LaunchWizard({
             </>
           )}
 
-          <div className="text-xs font-semibold uppercase tracking-[0.28em] mb-3" style={{ color: 'var(--color-text-tertiary)' }}>
-            More Options
-          </div>
+            <div className="text-xs font-semibold uppercase tracking-[0.28em] mb-3" style={{ color: 'var(--color-text-tertiary)' }}>
+              Other Agent Types
+            </div>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
             {additionalTemplates.map((tpl) => (
               <button
@@ -826,7 +826,7 @@ function LaunchWizard({
           <div className="flex items-center gap-2">
             <button onClick={() => setWizard((w) => ({ ...w, step: 1 }))} className="p-1 rounded" style={{ color: 'var(--color-text-tertiary)' }}><ChevronLeft size={18} /></button>
             <h2 className="text-lg font-semibold" style={{ color: 'var(--color-text)' }}>
-              {wizard.templateData ? `New ${wizard.templateData.name}` : 'New Custom Agent'}
+                {wizard.templateData ? `Set Up ${wizard.templateData.name}` : 'Set Up a Custom Agent'}
             </h2>
           </div>
           <button onClick={onClose} className="p-1 rounded" style={{ color: 'var(--color-text-tertiary)' }}><X size={18} /></button>
@@ -3121,9 +3121,9 @@ function MessagingTab({ agentId, agent }: { agentId: string; agent: ManagedAgent
           className="rounded-xl p-4"
           style={{ background: 'var(--color-bg-secondary)', border: '1px solid var(--color-border)' }}
         >
-          <div className="text-[11px] font-semibold uppercase tracking-[0.24em] mb-2" style={{ color: 'var(--color-text-tertiary)' }}>
-            What Happens Next
-          </div>
+            <div className="text-[11px] font-semibold uppercase tracking-[0.24em] mb-2" style={{ color: 'var(--color-text-tertiary)' }}>
+              After You Launch
+            </div>
           <div className="text-sm" style={{ color: 'var(--color-text-secondary)' }}>
             Once a channel is active, you can reach this same specialist outside the dashboard from the device you already use most.
           </div>
@@ -4349,7 +4349,7 @@ export function AgentsPage() {
             color: agentManagerAvailable === false ? 'var(--color-text-tertiary)' : '#fff',
           }}
         >
-          <Plus size={15} /> Create Agent
+            <Plus size={15} /> New Agent
         </button>
       </div>
 
@@ -4473,10 +4473,10 @@ export function AgentsPage() {
             <div className="text-center mb-8">
               <Bot size={48} className="mx-auto mb-4 opacity-30" />
               <p className="mb-2 font-medium text-lg" style={{ color: 'var(--color-text)' }}>
-                No agents yet
+                  Choose your first agent
               </p>
               <p className="text-sm max-w-2xl mx-auto" style={{ color: 'var(--color-text-secondary)' }}>
-                Start with a recommended role below. You do not need to configure everything perfectly up front. The best first step is to launch one focused agent and see how it behaves.
+                  Start with one focused role below. You do not need to configure everything perfectly up front. The best first step is to launch one useful specialist and see how it behaves.
               </p>
             </div>
 
@@ -4535,7 +4535,7 @@ export function AgentsPage() {
                   color: agentManagerAvailable === false ? 'var(--color-text-tertiary)' : '#fff',
                 }}
               >
-                <Plus size={15} /> Start with a Recommended Agent
+                  <Plus size={15} /> Start with a Recommended Role
               </button>
               <button
                 onClick={() => {
@@ -4551,7 +4551,7 @@ export function AgentsPage() {
                   color: agentManagerAvailable === false ? 'var(--color-text-tertiary)' : 'var(--color-text)',
                 }}
               >
-                <Plus size={15} /> More Options
+                  <Plus size={15} /> See More Agent Types
               </button>
             </div>
           </div>

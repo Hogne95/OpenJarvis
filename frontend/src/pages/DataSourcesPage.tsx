@@ -565,10 +565,10 @@ function ConnectorAccountsPanel({
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10 }}>
         <Mail size={18} style={{ color: 'var(--color-accent)' }} />
         <div style={{ flex: 1 }}>
-          <div style={{ fontSize: 14, fontWeight: 600 }}>Connected Accounts</div>
-          <div style={{ fontSize: 11, color: 'var(--color-text-secondary)' }}>
-            Keep personal and work accounts separate so JARVIS can help each one without mixing them together.
-          </div>
+            <div style={{ fontSize: 14, fontWeight: 600 }}>Step 1 · Choose an Account</div>
+            <div style={{ fontSize: 11, color: 'var(--color-text-secondary)' }}>
+              Keep work and personal data separate so JARVIS knows which private space each connection belongs to.
+            </div>
         </div>
       </div>
 
@@ -583,12 +583,12 @@ function ConnectorAccountsPanel({
           padding: '10px 12px',
         }}
       >
-        Root cause: JARVIS used to treat connectors as one shared system surface. This account registry is the first privacy-safe layer, so each user can declare multiple inbox identities without exposing them to anyone else.
-        {currentUserRole !== 'superadmin' && (
-          <div style={{ marginTop: 6 }}>
-            Pick one of your accounts below, then connect data sources into that private account workspace. Other users cannot see or reuse those credentials.
-          </div>
-        )}
+          Start here first. An account is just a private workspace label like Work, Personal, or Side Project.
+          {currentUserRole !== 'superadmin' && (
+            <div style={{ marginTop: 6 }}>
+              Pick one account below, then connect apps into that private space. Other users cannot see or reuse those credentials.
+            </div>
+          )}
       </div>
 
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1.2fr auto', gap: 8, marginBottom: 12 }}>
@@ -597,22 +597,22 @@ function ConnectorAccountsPanel({
           onChange={(e) => setForm((prev) => ({ ...prev, provider: e.target.value }))}
           style={inputStyle}
         >
-          <option value="gmail">Gmail</option>
-          <option value="outlook">Outlook</option>
-          <option value="imap">IMAP</option>
-          <option value="slack">Slack</option>
-          <option value="custom">Custom</option>
+            <option value="gmail">Email / Google</option>
+            <option value="outlook">Email / Microsoft</option>
+            <option value="imap">Other Email</option>
+            <option value="slack">Slack Workspace</option>
+            <option value="custom">Custom</option>
         </select>
         <input
           value={form.label}
           onChange={(e) => setForm((prev) => ({ ...prev, label: e.target.value }))}
-          placeholder="Label (Work, Personal)"
+            placeholder="Account name (Work, Personal)"
           style={inputStyle}
         />
         <input
           value={form.external_identity}
           onChange={(e) => setForm((prev) => ({ ...prev, external_identity: e.target.value }))}
-          placeholder="Email or account identity"
+            placeholder="Email address or account name"
           style={inputStyle}
         />
         <button
@@ -634,7 +634,7 @@ function ConnectorAccountsPanel({
           }}
         >
           <Plus size={14} />
-          {saving ? 'Adding...' : 'Add'}
+            {saving ? 'Saving...' : 'Save'}
         </button>
       </div>
 
@@ -1006,15 +1006,15 @@ function DataSourcesSection() {
       >
         <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap', marginBottom: 10 }}>
           <div>
-            <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--color-text)' }}>
-              Provider Connect
+              <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--color-text)' }}>
+                Step 2 · Connect a Provider
+              </div>
+              <div style={{ fontSize: 12, color: 'var(--color-text-secondary)', marginTop: 4, maxWidth: 680 }}>
+                Use the provider cards first. They are the easiest path because one sign-in can cover the related apps together.
+              </div>
             </div>
-            <div style={{ fontSize: 12, color: 'var(--color-text-secondary)', marginTop: 4, maxWidth: 680 }}>
-              Root cause: broader users think in providers like Google or Microsoft, not in raw connector IDs. Start with the provider layer here, then drop down to the manual connector cards only when you need a fallback.
-            </div>
-          </div>
             <div style={{ fontSize: 11, color: 'var(--color-text-tertiary)' }}>
-              Google is live now. Microsoft and GitHub are the next one-click provider upgrades, and we can wire them up cleanly once the runtime credentials are in place.
+              Best path: connect Google or Microsoft here first, then use the manual cards below only when you need a fallback.
             </div>
         </div>
 
@@ -1126,14 +1126,18 @@ function DataSourcesSection() {
         </div>
       </div>
 
-      {/* Connected sources grid */}
-      {connected.length > 0 && (
-        <div style={{
-          display: 'grid',
-          gridTemplateColumns: '1fr 1fr',
-          gap: 6, marginBottom: 12,
-        }}>
-          {connected.map((c) => {
+        {/* Connected sources grid */}
+        {connected.length > 0 && (
+          <div>
+            <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--color-text)', marginBottom: 8 }}>
+              Connected Now
+            </div>
+            <div style={{
+              display: 'grid',
+              gridTemplateColumns: '1fr 1fr',
+              gap: 6, marginBottom: 12,
+            }}>
+            {connected.map((c) => {
             const meta = SOURCE_CATALOG.find(s => s.connector_id === c.connector_id);
             const unit = meta?.unitLabel || 'items';
             const sync = syncStatuses[c.connector_id];
@@ -1222,19 +1226,27 @@ function DataSourcesSection() {
                   </div>
                 )}
               </div>
-            );
-          })}
-        </div>
-      )}
+              );
+            })}
+            </div>
+          </div>
+        )}
 
-      {/* Not connected grid */}
-      {notConnected.length > 0 && (
-        <div style={{
-          display: 'grid',
-          gridTemplateColumns: '1fr 1fr',
-          gap: 6,
-        }}>
-          {notConnected.map((c) => {
+        {/* Not connected grid */}
+        {notConnected.length > 0 && (
+          <div>
+            <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--color-text)', marginBottom: 8 }}>
+              Step 3 · Add a Specific App Only If You Need It
+            </div>
+            <div style={{ fontSize: 11, color: 'var(--color-text-secondary)', marginBottom: 10 }}>
+              These are the manual or advanced setup cards. Use them when a provider sign-in is not available yet or when you want one very specific app connection.
+            </div>
+            <div style={{
+              display: 'grid',
+              gridTemplateColumns: '1fr 1fr',
+              gap: 6,
+            }}>
+            {notConnected.map((c) => {
             const meta = SOURCE_CATALOG.find(s => s.connector_id === c.connector_id);
             const isExpanded = expandedId === c.connector_id;
 
@@ -1370,10 +1382,11 @@ function DataSourcesSection() {
                   </div>
                 )}
               </div>
-            );
-          })}
-        </div>
-      )}
+              );
+            })}
+            </div>
+          </div>
+        )}
     </div>
   );
 }
