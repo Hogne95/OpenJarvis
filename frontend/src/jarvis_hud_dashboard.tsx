@@ -7042,17 +7042,61 @@ export default function JarvisHudDashboard({
             <div className="text-[10px] uppercase tracking-[0.35em] text-cyan-300/55">View Guide</div>
             <div className="mt-2 text-sm leading-7 text-slate-200/78">{viewSummary.title}</div>
           </div>
-          {viewSummary.cards.map((card) => (
-            <div
-              key={card.label}
-              className="rounded-[1.4rem] border border-cyan-400/12 bg-slate-950/55 px-4 py-4"
-            >
-              <div className="text-[10px] uppercase tracking-[0.3em] text-cyan-300/55">{card.label}</div>
-              <div className="mt-2 text-sm uppercase tracking-[0.14em] text-cyan-50/92">{card.value}</div>
-              <div className="mt-2 text-xs leading-6 text-slate-200/72">{card.detail}</div>
-            </div>
-          ))}
-        </div>
+            {viewSummary.cards.map((card) => (
+              <div
+                key={card.label}
+                className="rounded-[1.4rem] border border-cyan-400/12 bg-slate-950/55 px-4 py-4"
+              >
+                <div className="text-[10px] uppercase tracking-[0.3em] text-cyan-300/55">{card.label}</div>
+                <div className="mt-2 text-sm uppercase tracking-[0.14em] text-cyan-50/92">{card.value}</div>
+                <div className="mt-2 text-xs leading-6 text-slate-200/72">{card.detail}</div>
+              </div>
+            ))}
+            {isWorkspaceView ? (
+              <div className="xl:col-span-4 rounded-[1.4rem] border border-cyan-400/12 bg-slate-950/55 px-4 py-4">
+                <div className="text-[10px] uppercase tracking-[0.35em] text-cyan-300/55">Workspace Flow</div>
+                <div className="mt-3 grid gap-3 md:grid-cols-4">
+                  {[
+                    {
+                      label: '1. Connect',
+                      value: activeWorkspaceRepo?.name || 'Choose a repo',
+                      detail: activeWorkspaceRepo?.root || 'Start by selecting the repo JARVIS should work inside.',
+                    },
+                    {
+                      label: '2. Inspect',
+                      value: workspaceSummary?.dirty ? `${workspaceSummary.changed_count} changed files` : 'Repo is calm',
+                      detail: workspaceSummary?.dirty
+                        ? 'Look through Repo Overview first so you know what changed before editing or shipping.'
+                        : 'Repo Overview is the quickest place to confirm branch, worktree, and changed files.',
+                    },
+                    {
+                      label: '3. Verify',
+                      value: workspaceChecks?.checks?.[0]?.label || 'Pick the next check',
+                      detail: workspaceChecks?.checks?.[0]?.command || 'Use Verify Changes to run the next recommended check.',
+                    },
+                    {
+                      label: '4. Ship',
+                      value: workspaceSummary?.push_ready ? 'Ready to publish' : workspaceSummary?.commit_ready ? 'Ready to review commit' : 'Not ready yet',
+                      detail: workspaceSummary?.push_ready
+                        ? 'Review Push is the last step once your local commits are ready.'
+                        : workspaceSummary?.commit_ready
+                        ? 'Review Commit is the next good move once the repo looks green.'
+                        : 'Once checks are green, move into Review Commit and Review Push.',
+                    },
+                  ].map((step) => (
+                    <div
+                      key={step.label}
+                      className="rounded-[1rem] border border-cyan-400/10 bg-black/20 px-3 py-3"
+                    >
+                      <div className="text-[10px] uppercase tracking-[0.22em] text-cyan-300/55">{step.label}</div>
+                      <div className="mt-2 text-sm uppercase tracking-[0.14em] text-cyan-50/92">{step.value}</div>
+                      <div className="mt-2 text-xs leading-6 text-slate-200/72">{step.detail}</div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ) : null}
+          </div>
 
 	        <div
           className={`grid flex-1 gap-4 ${

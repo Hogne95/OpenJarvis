@@ -285,6 +285,7 @@ function recommendedConnectorsForAgent(agent: ManagedAgent) {
 function recommendedConnectorIdsForTemplate(tpl: AgentTemplate | null): string[] {
   if (!tpl) return ['gmail', 'slack', 'notion'];
   const normalized = (tpl.id || tpl.name || '').toLowerCase();
+  if (normalized.includes('personal-watcher') || normalized.includes('personal_watcher')) return ['microsoft_mail', 'outlook', 'gcalendar', 'gmail'];
   if (normalized.includes('meeting')) return ['gcalendar', 'gmail', 'granola'];
   if (normalized.includes('inbox')) return ['gmail', 'outlook', 'slack'];
   if (normalized.includes('vision')) return ['gdrive', 'notion', 'upload'];
@@ -301,6 +302,7 @@ function recommendedConnectorsForTemplate(tpl: AgentTemplate | null) {
 
 function templateBestForLabel(tpl: AgentTemplate): string {
   const normalized = (tpl.id || tpl.name || '').toLowerCase();
+  if (normalized.includes('personal-watcher') || normalized.includes('personal_watcher')) return 'Best for personal alerts';
   if (normalized.includes('planner')) return 'Best for planning';
   if (normalized.includes('executor')) return 'Best for execution';
   if (normalized.includes('vision')) return 'Best for visual context';
@@ -313,7 +315,7 @@ function templateBestForLabel(tpl: AgentTemplate): string {
 
 function dedupeTemplatesList(items: AgentTemplate[]): AgentTemplate[] {
   const byKey = new Map<string, AgentTemplate>();
-  for (const item of items) {
+  for (const item of [PERSONAL_WATCHER_TEMPLATE, ...items]) {
     const key = item.id?.trim().toLowerCase() || normalizeAgentName(item.name || '');
     byKey.set(key, item);
   }
@@ -422,6 +424,8 @@ interface WizardState {
 
 
 const TEMPLATE_INSTRUCTIONS: Record<string, string> = {
+  'personal-watcher': 'Watch my personal inbox and calendar. Only alert me when a new meeting appears, a meeting changes, something today needs preparation, or an email requires a real action from me. Stay quiet for newsletters, promotions, and low-priority noise. When you alert me, keep it short and clearly say what changed, why it matters, and what I should do next.',
+  'personal_watcher': 'Watch my personal inbox and calendar. Only alert me when a new meeting appears, a meeting changes, something today needs preparation, or an email requires a real action from me. Stay quiet for newsletters, promotions, and low-priority noise. When you alert me, keep it short and clearly say what changed, why it matters, and what I should do next.',
   'daily-briefing': 'Every morning, give me a fun quote of the day, summarize my top important emails, list any meetings today from my calendar, and tell me the weather for [my city].',
   'daily_briefing': 'Every morning, give me a fun quote of the day, summarize my top important emails, list any meetings today from my calendar, and tell me the weather for [my city].',
   'research-monitor': 'Search for the latest news and papers on [your topic]. Summarize the top 3 most relevant findings and explain why they matter.',
@@ -432,6 +436,17 @@ const TEMPLATE_INSTRUCTIONS: Record<string, string> = {
   'meeting_prep': 'Before my next meeting, pull context from my emails, messages, and past meetings with the attendees. Summarize key topics and suggest talking points.',
   'personal_deep_research': 'Search across all my personal data — messages, emails, meetings, documents, and notes — to answer [my question]. Cite your sources.',
   'inbox_triager': 'Check my recent emails and messages. Categorize them by priority (urgent, important, FYI, spam). Summarize the top items I should act on.',
+};
+
+const PERSONAL_WATCHER_TEMPLATE: AgentTemplate = {
+  id: 'personal-watcher',
+  name: 'JARVIS Personal Watcher',
+  description: 'Watches your personal inbox and calendar, then only reaches out when something actually matters.',
+  source: 'built-in',
+  agent_type: 'personal_watcher',
+  schedule_type: 'manual',
+  schedule_value: '',
+  tools: ['email', 'calendar', 'memory_store'],
 };
 
 function humanizeTemplateName(value: string): string {
@@ -450,6 +465,7 @@ function defaultAgentNameForTemplate(tpl: AgentTemplate | null): string {
 function setupHeadlineForTemplate(tpl: AgentTemplate | null): string {
   if (!tpl) return 'Start with one clear responsibility. You can add more behavior after the first successful run.';
   const normalized = (tpl.id || tpl.name || '').toLowerCase();
+  if (normalized.includes('personal-watcher') || normalized.includes('personal_watcher')) return 'Good for watching your personal inbox and calendar, then notifying you only when something really needs attention.';
   if (normalized.includes('planner')) return 'Good for planning, triage, and deciding what JARVIS should do next.';
   if (normalized.includes('executor')) return 'Good for carrying out bounded work once the objective is clear.';
   if (normalized.includes('vision')) return 'Good for screenshots, interface interpretation, and visual context.';
@@ -469,6 +485,13 @@ function setupChecklistForTemplate(tpl: AgentTemplate | null): string[] {
     ];
   }
   const normalized = (tpl.id || tpl.name || '').toLowerCase();
+  if (normalized.includes('personal-watcher') || normalized.includes('personal_watcher')) {
+    return [
+      'Connect your personal inbox first, then add calendar when it is ready.',
+      'Keep this agent manual until the alerts feel calm and useful.',
+      'Set up one notification channel you already check often, then test one run before making it more active.',
+    ];
+  }
   if (normalized.includes('meeting')) {
     return [
       'Connect calendar and inbox sources if you want the strongest prep.',
@@ -517,6 +540,8 @@ const AGENTS_LIST_NEXT_STEPS_EMPTY: string[] = [
 function isRecommendedTemplate(tpl: AgentTemplate): boolean {
   const normalized = (tpl.id || tpl.name || '').toLowerCase();
   return (
+    normalized.includes('personal-watcher') ||
+    normalized.includes('personal_watcher') ||
     normalized.includes('planner') ||
     normalized.includes('executor') ||
     normalized.includes('vision') ||
@@ -3011,6 +3036,18 @@ function recommendedMessagingChannelTypesForAgent(agent: ManagedAgent): string[]
   return ['sendblue', 'slack'];
 }
 
+function notificationGoalForAgent(agent: ManagedAgent): string {
+  const role = (agent.agent_type || '').toLowerCase();
+  const normalized = normalizeAgentName(agent.name);
+  if (role.includes('meeting') || normalized.includes('watcher')) {
+    return 'Choose where JARVIS should notify you about meeting changes, calendar prep, and important personal updates.';
+  }
+  if (role.includes('inbox')) {
+    return 'Choose where JARVIS should notify you when a message or email needs a real action from you.';
+  }
+  return 'Choose where JARVIS should reach you when this agent has something worth your attention.';
+}
+
 function MessagingTab({ agentId, agent }: { agentId: string; agent: ManagedAgent }) {
   const [bindings, setBindings] = useState<ChannelBinding[]>([]);
   const [setupType, setSetupType] = useState<string | null>(null);
@@ -3081,7 +3118,7 @@ function MessagingTab({ agentId, agent }: { agentId: string; agent: ManagedAgent
         color: 'var(--color-text-secondary)',
         fontSize: 12, marginBottom: 14,
       }}>
-        Connect a messaging channel so you can talk to your agent from your phone or other devices.
+        {notificationGoalForAgent(agent)}
       </div>
 
       {/* SendBlue wizard — primary option */}
@@ -3090,14 +3127,14 @@ function MessagingTab({ agentId, agent }: { agentId: string; agent: ManagedAgent
           className="rounded-xl p-4"
           style={{ background: 'var(--color-bg-secondary)', border: '1px solid var(--color-border)' }}
         >
-          <div className="text-[11px] font-semibold uppercase tracking-[0.24em] mb-2" style={{ color: 'var(--color-text-tertiary)' }}>
-            Best First Channel
-          </div>
-          <div className="text-sm mb-2" style={{ color: 'var(--color-text-secondary)' }}>
-            {bindings.length > 0
-              ? 'You already have an external chat route. Add another one only if you want a backup or a second workflow.'
-              : `${recommendedChannels[0]?.name || 'SendBlue Phone Chat'} is the easiest first option for this agent.`}
-          </div>
+            <div className="text-[11px] font-semibold uppercase tracking-[0.24em] mb-2" style={{ color: 'var(--color-text-tertiary)' }}>
+              Best First Notification Path
+            </div>
+            <div className="text-sm mb-2" style={{ color: 'var(--color-text-secondary)' }}>
+              {bindings.length > 0
+                ? 'You already have one active route. Add another one only if you want a backup or a separate workflow.'
+                : `${recommendedChannels[0]?.name || 'SendBlue Phone Chat'} is the easiest first option when you want JARVIS to reach you outside the dashboard.`}
+            </div>
           {recommendedChannels.length > 0 && (
             <div className="flex flex-wrap gap-2">
               {recommendedChannels.map((channel) => (
@@ -3138,25 +3175,25 @@ function MessagingTab({ agentId, agent }: { agentId: string; agent: ManagedAgent
       />
 
       {/* Divider */}
-      <div style={{
-        fontSize: 10, color: 'var(--color-text-secondary)',
-        textTransform: 'uppercase', letterSpacing: 1,
-        margin: '14px 0 8px', fontWeight: 600,
-      }}>
-        Other messaging channels
-      </div>
+        <div style={{
+          fontSize: 10, color: 'var(--color-text-secondary)',
+          textTransform: 'uppercase', letterSpacing: 1,
+          margin: '14px 0 8px', fontWeight: 600,
+        }}>
+          Other notification options
+        </div>
 
       {bindings.length === 0 && (
         <div
           className="rounded-xl p-5 mb-3 text-center"
           style={{ background: 'var(--color-bg-secondary)', border: '1px solid var(--color-border)' }}
         >
-          <div className="text-sm font-medium mb-2" style={{ color: 'var(--color-text)' }}>
-            No external channel is active yet
-          </div>
-          <div className="text-sm" style={{ color: 'var(--color-text-tertiary)' }}>
-            Start with one channel you will actually use often. You can always add another route later if this agent becomes part of your daily workflow.
-          </div>
+            <div className="text-sm font-medium mb-2" style={{ color: 'var(--color-text)' }}>
+              No notification route is active yet
+            </div>
+            <div className="text-sm" style={{ color: 'var(--color-text-tertiary)' }}>
+              Start with one route you already check often. You can always add another route later if this agent becomes part of your daily workflow.
+            </div>
         </div>
       )}
 
@@ -3888,12 +3925,12 @@ export function AgentsPage() {
     const selectedAgentGuidance = statusGuidance(selectedAgent);
     const selectedAgentNextSteps = recommendedNextSteps(selectedAgent);
 
-    const DETAIL_TABS = [
-      { id: 'interact', label: 'Chat', icon: MessageSquare },
-      { id: 'overview', label: 'Overview', icon: Activity },
-      { id: 'channels', label: 'Connected Apps', icon: Database },
-      { id: 'messaging', label: 'External Chat', icon: Wifi },
-      { id: 'tasks', label: 'Runs', icon: ListTodo },
+      const DETAIL_TABS = [
+        { id: 'interact', label: 'Chat', icon: MessageSquare },
+        { id: 'overview', label: 'Overview', icon: Activity },
+        { id: 'channels', label: 'Connected Apps', icon: Database },
+        { id: 'messaging', label: 'Notifications', icon: Wifi },
+        { id: 'tasks', label: 'Runs', icon: ListTodo },
       { id: 'memory', label: 'Memory', icon: Brain },
       { id: 'learning', label: 'Improvements', icon: Settings },
       { id: 'logs', label: 'Timeline', icon: FileText },
@@ -4060,8 +4097,8 @@ export function AgentsPage() {
                     onClick={() => setDetailTab('messaging')}
                     className="cursor-pointer underline"
                     style={{ color: 'var(--color-accent)', background: 'none', border: 'none', padding: 0, font: 'inherit' }}
-                  >External Chat</button>{' '}
-                  to talk to this agent from your phone.
+                  >Notifications</button>{' '}
+                    to talk to this agent from your phone.
                 </div>
               </div>
             )}
@@ -4187,9 +4224,9 @@ export function AgentsPage() {
                 className="p-4 rounded-lg"
                 style={{ background: 'var(--color-bg-secondary)', border: '1px solid var(--color-border)' }}
               >
-                <h3 className="text-sm font-medium mb-2" style={{ color: 'var(--color-text-secondary)' }}>
-                  External Chat
-                </h3>
+                  <h3 className="text-sm font-medium mb-2" style={{ color: 'var(--color-text-secondary)' }}>
+                    Notifications
+                  </h3>
                 {channels.map((b) => (
                   <div key={b.id} className="text-sm py-1" style={{ color: 'var(--color-text)' }}>
                     {b.channel_type}: {b.routing_mode}
@@ -4470,15 +4507,18 @@ export function AgentsPage() {
               border: '1px solid var(--color-border)',
             }}
           >
-            <div className="text-center mb-8">
-              <Bot size={48} className="mx-auto mb-4 opacity-30" />
-              <p className="mb-2 font-medium text-lg" style={{ color: 'var(--color-text)' }}>
+              <div className="text-center mb-8">
+                <Bot size={48} className="mx-auto mb-4 opacity-30" />
+                <p className="mb-2 font-medium text-lg" style={{ color: 'var(--color-text)' }}>
                   Choose your first agent
-              </p>
-              <p className="text-sm max-w-2xl mx-auto" style={{ color: 'var(--color-text-secondary)' }}>
+                </p>
+                <p className="text-sm max-w-2xl mx-auto" style={{ color: 'var(--color-text-secondary)' }}>
                   Start with one focused role below. You do not need to configure everything perfectly up front. The best first step is to launch one useful specialist and see how it behaves.
-              </p>
-            </div>
+                </p>
+                <div className="mt-3 text-xs" style={{ color: 'var(--color-text-tertiary)' }}>
+                  Best first path for personal email and meeting alerts: <span style={{ color: 'var(--color-text)' }}>JARVIS Personal Watcher</span>
+                </div>
+              </div>
 
             {recommendedStarterTemplates.length > 0 ? (
               <>
@@ -4522,12 +4562,12 @@ export function AgentsPage() {
             ) : null}
 
             <div className="flex flex-wrap items-center justify-center gap-3">
-              <button
-                onClick={() => {
-                  if (!agentManagerAvailable) return;
-                  setPendingTemplateId(recommendedStarterTemplates[0]?.id || null);
-                  setShowWizard(true);
-                }}
+                <button
+                  onClick={() => {
+                    if (!agentManagerAvailable) return;
+                    setPendingTemplateId(PERSONAL_WATCHER_TEMPLATE.id);
+                    setShowWizard(true);
+                  }}
                 disabled={agentManagerAvailable === false}
                 className="inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
                 style={{
@@ -4535,8 +4575,8 @@ export function AgentsPage() {
                   color: agentManagerAvailable === false ? 'var(--color-text-tertiary)' : '#fff',
                 }}
               >
-                  <Plus size={15} /> Start with a Recommended Role
-              </button>
+                  <Plus size={15} /> Start Personal Watcher
+                </button>
               <button
                 onClick={() => {
                   if (!agentManagerAvailable) return;
