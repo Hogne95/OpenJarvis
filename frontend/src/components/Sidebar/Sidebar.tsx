@@ -66,7 +66,7 @@ export function Sidebar() {
     { path: '/operations', icon: BarChart3, label: 'Operations' },
     { path: '/desktop', icon: AppWindow, label: 'Desktop' },
     { path: '/system', icon: RadioTower, label: 'System' },
-    { path: '/data-sources', icon: Database, label: 'Data Sources' },
+    { path: '/data-sources', icon: Database, label: 'Connected Apps' },
     { path: '/agents', icon: Bot, label: 'Agents' },
     { path: '/logs', icon: ScrollText, label: 'Logs' },
     ...(currentUser?.role === 'admin' || currentUser?.role === 'superadmin'

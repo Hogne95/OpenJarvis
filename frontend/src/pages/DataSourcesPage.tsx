@@ -565,9 +565,9 @@ function ConnectorAccountsPanel({
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10 }}>
         <Mail size={18} style={{ color: 'var(--color-accent)' }} />
         <div style={{ flex: 1 }}>
-          <div style={{ fontSize: 14, fontWeight: 600 }}>My Accounts</div>
+          <div style={{ fontSize: 14, fontWeight: 600 }}>Connected Accounts</div>
           <div style={{ fontSize: 11, color: 'var(--color-text-secondary)' }}>
-            Register personal and work accounts under your own user so JARVIS can assist them separately later.
+            Keep personal and work accounts separate so JARVIS can help each one without mixing them together.
           </div>
         </div>
       </div>
@@ -2004,8 +2004,8 @@ export function DataSourcesPage() {
   }, [firstAgent]);
 
   const tabs = [
-    { id: 'sources' as const, label: 'Data Sources', icon: Database },
-    { id: 'messaging' as const, label: 'Messaging Channels', icon: MessageSquare },
+    { id: 'sources' as const, label: 'Connected Apps', icon: Database },
+    { id: 'messaging' as const, label: 'External Chat', icon: MessageSquare },
   ];
 
   return (
@@ -2013,10 +2013,10 @@ export function DataSourcesPage() {
       {/* Header */}
       <div className="shrink-0 px-6 pt-6 pb-4">
         <h1 className="text-lg font-semibold" style={{ color: 'var(--color-text)' }}>
-          Data Sources &amp; Messaging Channels
+          Connected Apps &amp; External Chat
         </h1>
         <p className="text-sm mt-1" style={{ color: 'var(--color-text-secondary)' }}>
-          Connect your personal data so your AI can search across everything, and set up messaging channels to chat from your phone.
+          Connect the apps and accounts JARVIS should understand, then add phone or chat access when you want to reach it outside the browser.
         </p>
         <div className="grid gap-3 mt-4 md:grid-cols-3">
           <div

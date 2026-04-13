@@ -908,21 +908,21 @@ export function SystemPage() {
                   disabled={busy !== 'idle' || !voiceLoop?.active}
                   className="rounded-[1rem] border border-cyan-400/15 bg-slate-950/70 px-4 py-3 text-left text-xs uppercase tracking-[0.24em] text-cyan-100 transition hover:bg-cyan-400/[0.08] disabled:cursor-not-allowed disabled:opacity-50"
                 >
-                  Stand Down Voice
+                  Stop Voice
                 </button>
                 <button
                   onClick={() => void handleEnsureAgents()}
                   disabled={busy !== 'idle'}
                   className="rounded-[1rem] border border-cyan-400/15 bg-slate-950/70 px-4 py-3 text-left text-xs uppercase tracking-[0.24em] text-cyan-100 transition hover:bg-cyan-400/[0.08] disabled:cursor-not-allowed disabled:opacity-50"
                 >
-                  Ensure Core Team
+                  Refresh Core Team
                 </button>
                 <button
                   onClick={() => void handleLogReviewItem()}
                   disabled={busy !== 'idle'}
                   className="rounded-[1rem] border border-cyan-400/15 bg-slate-950/70 px-4 py-3 text-left text-xs uppercase tracking-[0.24em] text-cyan-100 transition hover:bg-cyan-400/[0.08] disabled:cursor-not-allowed disabled:opacity-50"
                 >
-                  Queue Review Item
+                  Add Review Note
                 </button>
               </div>
             </div>
