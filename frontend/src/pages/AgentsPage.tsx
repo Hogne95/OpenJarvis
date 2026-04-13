@@ -449,6 +449,23 @@ const PERSONAL_WATCHER_TEMPLATE: AgentTemplate = {
   tools: ['email', 'calendar', 'memory_store'],
 };
 
+function isPersonalWatcherTemplate(tpl: AgentTemplate | null | undefined): boolean {
+  const normalized = (tpl?.id || tpl?.name || '').toLowerCase();
+  return normalized.includes('personal-watcher') || normalized.includes('personal_watcher');
+}
+
+function isPersonalWatcherAgent(agent: ManagedAgent | null | undefined): boolean {
+  if (!agent) return false;
+  const name = normalizeAgentName(agent.name);
+  const type = String(agent.agent_type || '').toLowerCase();
+  const instruction = String(agent.config?.instruction || '').toLowerCase();
+  return (
+    type.includes('personal_watcher') ||
+    name.includes('personal watcher') ||
+    instruction.includes('watch my personal inbox and calendar')
+  );
+}
+
 function humanizeTemplateName(value: string): string {
   return value
     .replace(/[_-]+/g, ' ')
@@ -740,6 +757,37 @@ function LaunchWizard({
               <div>3. Launch first and only open Advanced if you actually need it.</div>
             </div>
           </div>
+          <button
+            type="button"
+            onClick={() => selectTemplate(PERSONAL_WATCHER_TEMPLATE)}
+            className="w-full rounded-xl p-5 mb-4 text-left transition-all"
+            style={{
+              background: 'linear-gradient(135deg, rgba(34,197,94,0.14), rgba(15,23,42,0.3))',
+              border: '1px solid rgba(74,222,128,0.32)',
+            }}
+          >
+            <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+              <div>
+                <div className="text-[11px] font-semibold uppercase tracking-[0.28em] mb-2" style={{ color: '#86efac' }}>
+                  Personal Watcher
+                </div>
+                <div className="text-base font-semibold" style={{ color: 'var(--color-text)' }}>
+                  Easiest path for personal email and meeting alerts
+                </div>
+                <div className="text-sm mt-2 max-w-3xl" style={{ color: 'var(--color-text-secondary)' }}>
+                  Use this when you want JARVIS to quietly watch your personal inbox and calendar, then only notify you when something actually needs attention.
+                </div>
+              </div>
+              <div className="text-xs px-2.5 py-1 rounded-full h-fit" style={{ background: 'rgba(74,222,128,0.18)', color: '#bbf7d0' }}>
+                Recommended first
+              </div>
+            </div>
+            <div className="grid gap-2 mt-4 md:grid-cols-3 text-xs" style={{ color: 'var(--color-text-secondary)' }}>
+              <div>1. Connect your personal inbox first.</div>
+              <div>2. Choose one notification route you already check daily.</div>
+              <div>3. Keep it manual until the alerts feel calm and useful.</div>
+            </div>
+          </button>
           {recommendedTemplates.length > 0 && (
             <>
               <div className="text-xs font-semibold uppercase tracking-[0.28em] mb-3" style={{ color: 'var(--color-text-tertiary)' }}>
@@ -856,6 +904,34 @@ function LaunchWizard({
           </div>
           <button onClick={onClose} className="p-1 rounded" style={{ color: 'var(--color-text-tertiary)' }}><X size={18} /></button>
         </div>
+
+        {isPersonalWatcherTemplate(wizard.templateData) && (
+          <div
+            className="rounded-xl p-4 mb-4"
+            style={{
+              background: 'linear-gradient(135deg, rgba(34,197,94,0.12), rgba(15,23,42,0.18))',
+              border: '1px solid rgba(74,222,128,0.24)',
+            }}
+          >
+            <div className="text-xs font-semibold uppercase tracking-[0.24em] mb-2" style={{ color: '#86efac' }}>
+              Watcher Setup Path
+            </div>
+            <div className="grid gap-3 md:grid-cols-3 text-sm">
+              <div>
+                <div className="font-medium mb-1" style={{ color: 'var(--color-text)' }}>Connect inbox first</div>
+                <div style={{ color: 'var(--color-text-secondary)' }}>Email is the main signal source at the start. Calendar can come right after.</div>
+              </div>
+              <div>
+                <div className="font-medium mb-1" style={{ color: 'var(--color-text)' }}>Keep it calm</div>
+                <div style={{ color: 'var(--color-text-secondary)' }}>The best watcher only speaks up when something truly matters, not for every update.</div>
+              </div>
+              <div>
+                <div className="font-medium mb-1" style={{ color: 'var(--color-text)' }}>Test one route</div>
+                <div style={{ color: 'var(--color-text-secondary)' }}>After launch, connect one notification path and send one test before adding more.</div>
+              </div>
+            </div>
+          </div>
+        )}
 
         <div
           className="rounded-lg p-4 mb-4"
@@ -3048,6 +3124,30 @@ function notificationGoalForAgent(agent: ManagedAgent): string {
   return 'Choose where JARVIS should reach you when this agent has something worth your attention.';
 }
 
+function notificationRulesForAgent(agent: ManagedAgent): string[] {
+  const role = (agent.agent_type || '').toLowerCase();
+  const normalized = normalizeAgentName(agent.name);
+  if (role.includes('meeting') || normalized.includes('watcher')) {
+    return [
+      'New meeting added or an existing meeting changes',
+      'Something today needs preparation',
+      'An email needs a real action, reply, or confirmation',
+    ];
+  }
+  if (role.includes('inbox')) {
+    return [
+      'A message clearly needs a reply or action',
+      'Something urgent has changed since the last check',
+      'Low-priority noise should stay quiet',
+    ];
+  }
+  return [
+    'Only notify when something is worth your attention',
+    'Prefer short alerts with a clear next step',
+    'Stay quiet when the update is low-value',
+  ];
+}
+
 function MessagingTab({ agentId, agent }: { agentId: string; agent: ManagedAgent }) {
   const [bindings, setBindings] = useState<ChannelBinding[]>([]);
   const [setupType, setSetupType] = useState<string | null>(null);
@@ -3122,7 +3222,7 @@ function MessagingTab({ agentId, agent }: { agentId: string; agent: ManagedAgent
       </div>
 
       {/* SendBlue wizard — primary option */}
-      <div className="grid gap-3 md:grid-cols-2 mb-4">
+      <div className="grid gap-3 md:grid-cols-3 mb-4">
         <div
           className="rounded-xl p-4"
           style={{ background: 'var(--color-bg-secondary)', border: '1px solid var(--color-border)' }}
@@ -3164,6 +3264,39 @@ function MessagingTab({ agentId, agent }: { agentId: string; agent: ManagedAgent
           <div className="text-sm" style={{ color: 'var(--color-text-secondary)' }}>
             Once a channel is active, you can reach this same specialist outside the dashboard from the device you already use most.
           </div>
+        </div>
+        <div
+          className="rounded-xl p-4"
+          style={{ background: 'var(--color-bg-secondary)', border: '1px solid var(--color-border)' }}
+        >
+          <div className="text-[11px] font-semibold uppercase tracking-[0.24em] mb-2" style={{ color: 'var(--color-text-tertiary)' }}>
+            Good Notification Rules
+          </div>
+          <div className="space-y-2 text-sm" style={{ color: 'var(--color-text-secondary)' }}>
+            {notificationRulesForAgent(agent).map((rule) => (
+              <div key={rule}>• {rule}</div>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      <div
+        className="rounded-xl p-4 mb-4"
+        style={{ background: 'var(--color-bg-secondary)', border: '1px solid var(--color-border)' }}
+      >
+        <div className="text-[11px] font-semibold uppercase tracking-[0.24em] mb-2" style={{ color: 'var(--color-text-tertiary)' }}>
+          Simple Path
+        </div>
+        <div className="flex flex-wrap gap-2">
+          {['Pick one route', 'Connect it', 'Send one test', 'Keep the rest quiet'].map((step, index) => (
+            <span
+              key={step}
+              className="px-2.5 py-1.5 rounded-full text-[11px]"
+              style={{ background: 'rgba(124,58,237,0.12)', color: 'var(--color-text)' }}
+            >
+              {index + 1}. {step}
+            </span>
+          ))}
         </div>
       </div>
 
@@ -3680,6 +3813,7 @@ function LogsTab({ agentId }: { agentId: string }) {
 type AgentLaunchSuccessState = {
   id: string;
   name: string;
+  watcher?: boolean;
 };
 
 // ---------------------------------------------------------------------------
@@ -3921,6 +4055,7 @@ export function AgentsPage() {
       tasks.length > 0
         ? Math.round((tasks.filter((t) => t.status === 'completed').length / tasks.length) * 100)
         : null;
+    const isWatcherAgent = isPersonalWatcherAgent(selectedAgent);
     const selectedAgentDescription = describeManagedAgent(selectedAgent);
     const selectedAgentGuidance = statusGuidance(selectedAgent);
     const selectedAgentNextSteps = recommendedNextSteps(selectedAgent);
@@ -4179,6 +4314,73 @@ export function AgentsPage() {
                 </div>);
             })()}
 
+            {isWatcherAgent && (
+              <div
+                className="p-4 rounded-lg"
+                style={{ background: 'var(--color-bg-secondary)', border: '1px solid var(--color-border)' }}
+              >
+                <div className="text-[11px] font-semibold uppercase tracking-[0.24em] mb-3" style={{ color: 'var(--color-text-tertiary)' }}>
+                  Watcher Setup Path
+                </div>
+                <div className="grid gap-3 md:grid-cols-3">
+                  <div
+                    className="rounded-lg p-3"
+                    style={{ background: 'var(--color-bg)', border: '1px solid var(--color-border)' }}
+                  >
+                    <div className="text-sm font-medium mb-1" style={{ color: 'var(--color-text)' }}>
+                      1. Connect inbox
+                    </div>
+                    <div className="text-sm mb-3" style={{ color: 'var(--color-text-secondary)' }}>
+                      Start with personal email so this watcher can actually see meeting changes and action-needed messages.
+                    </div>
+                    <button
+                      onClick={() => setDetailTab('channels')}
+                      className="inline-flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium cursor-pointer"
+                      style={{ background: 'var(--color-bg-secondary)', border: '1px solid var(--color-border)', color: 'var(--color-text)' }}
+                    >
+                      <Database size={14} /> Connected Apps
+                    </button>
+                  </div>
+                  <div
+                    className="rounded-lg p-3"
+                    style={{ background: 'var(--color-bg)', border: '1px solid var(--color-border)' }}
+                  >
+                    <div className="text-sm font-medium mb-1" style={{ color: 'var(--color-text)' }}>
+                      2. Choose notifications
+                    </div>
+                    <div className="text-sm mb-3" style={{ color: 'var(--color-text-secondary)' }}>
+                      Pick one route you already check often. One good notification path is better than three noisy ones.
+                    </div>
+                    <button
+                      onClick={() => setDetailTab('messaging')}
+                      className="inline-flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium cursor-pointer"
+                      style={{ background: 'var(--color-bg-secondary)', border: '1px solid var(--color-border)', color: 'var(--color-text)' }}
+                    >
+                      <Wifi size={14} /> Notifications
+                    </button>
+                  </div>
+                  <div
+                    className="rounded-lg p-3"
+                    style={{ background: 'var(--color-bg)', border: '1px solid var(--color-border)' }}
+                  >
+                    <div className="text-sm font-medium mb-1" style={{ color: 'var(--color-text)' }}>
+                      3. Run one calm test
+                    </div>
+                    <div className="text-sm mb-3" style={{ color: 'var(--color-text-secondary)' }}>
+                      Keep it manual first so you can see whether the watcher is useful before it becomes part of your daily routine.
+                    </div>
+                    <button
+                      onClick={() => handleRun(selectedAgent.id)}
+                      className="inline-flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium cursor-pointer"
+                      style={{ background: 'var(--color-accent)', color: '#fff' }}
+                    >
+                      <Zap size={14} /> Run Agent
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
+
             <div
               className="p-4 rounded-lg"
               style={{ background: 'var(--color-bg-secondary)', border: '1px solid var(--color-border)' }}
@@ -4355,7 +4557,11 @@ export function AgentsPage() {
             setPendingTemplateId(null);
           }}
           onLaunched={(agent) => {
-            setLaunchSuccess({ id: agent.id, name: agent.name });
+            setLaunchSuccess({
+              id: agent.id,
+              name: agent.name,
+              watcher: isPersonalWatcherAgent(agent) || pendingTemplateId === PERSONAL_WATCHER_TEMPLATE.id,
+            });
             setShowWizard(false);
             setPendingTemplateId(null);
             refresh();
@@ -4421,7 +4627,9 @@ export function AgentsPage() {
                 {launchSuccess.name} was created successfully
               </div>
               <div className="text-sm mt-1" style={{ color: 'var(--color-text-secondary)' }}>
-                Best next step: open it once, then chat with it or run it before adding more setup.
+                {launchSuccess.watcher
+                  ? 'Best next step: connect your inbox, choose one notification route, then run one calm test before automating anything.'
+                  : 'Best next step: open it once, then chat with it or run it before adding more setup.'}
               </div>
             </div>
             <div className="flex flex-wrap gap-2">
@@ -4435,16 +4643,41 @@ export function AgentsPage() {
               >
                 <Activity size={14} /> Open Agent
               </button>
-              <button
-                onClick={() => {
-                  setSelectedAgentId(launchSuccess.id);
-                  setDetailTab('interact');
-                }}
-                className="inline-flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium cursor-pointer"
-                style={{ background: 'var(--color-bg-secondary)', border: '1px solid var(--color-border)', color: 'var(--color-text)' }}
-              >
-                <MessageSquare size={14} /> Chat With Agent
-              </button>
+              {launchSuccess.watcher ? (
+                <>
+                  <button
+                    onClick={() => {
+                      setSelectedAgentId(launchSuccess.id);
+                      setDetailTab('channels');
+                    }}
+                    className="inline-flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium cursor-pointer"
+                    style={{ background: 'var(--color-bg-secondary)', border: '1px solid var(--color-border)', color: 'var(--color-text)' }}
+                  >
+                    <Database size={14} /> Connect Inbox
+                  </button>
+                  <button
+                    onClick={() => {
+                      setSelectedAgentId(launchSuccess.id);
+                      setDetailTab('messaging');
+                    }}
+                    className="inline-flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium cursor-pointer"
+                    style={{ background: 'var(--color-bg-secondary)', border: '1px solid var(--color-border)', color: 'var(--color-text)' }}
+                  >
+                    <Wifi size={14} /> Notifications
+                  </button>
+                </>
+              ) : (
+                <button
+                  onClick={() => {
+                    setSelectedAgentId(launchSuccess.id);
+                    setDetailTab('interact');
+                  }}
+                  className="inline-flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium cursor-pointer"
+                  style={{ background: 'var(--color-bg-secondary)', border: '1px solid var(--color-border)', color: 'var(--color-text)' }}
+                >
+                  <MessageSquare size={14} /> Chat With Agent
+                </button>
+              )}
               <button
                 onClick={() => setLaunchSuccess(null)}
                 className="inline-flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium cursor-pointer"
