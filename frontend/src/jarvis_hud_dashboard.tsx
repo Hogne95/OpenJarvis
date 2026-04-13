@@ -556,6 +556,7 @@ export default function JarvisHudDashboard({
   const needsCodingFastPolling = isDashboardView || isWorkspaceView;
   const needsWorkbenchFastPolling = isDashboardView || isWorkspaceView;
   const needsConnectorSummary = isDashboardView || isWorkspaceView || isOperationsView || isBriefingsView;
+  const activeConversationId = useAppStore((s) => s.activeId);
   const messages = useAppStore((s) => s.messages);
   const streamState = useAppStore((s) => s.streamState);
   const selectedModel = useAppStore((s) => s.selectedModel);
@@ -673,6 +674,7 @@ export default function JarvisHudDashboard({
   const [relationshipNotice, setRelationshipNotice] = useState('');
   const [projectMemoryNotice, setProjectMemoryNotice] = useState('');
   const [voiceSensitivity, setVoiceSensitivity] = useState<'sensitive' | 'balanced' | 'strict'>('balanced');
+  const [voicePlaybackActive, setVoicePlaybackActive] = useState(false);
   const [intentCommand, setIntentCommand] = useState('');
   const [intentBusy, setIntentBusy] = useState<'classify' | 'run' | 'capture' | null>(null);
   const [intentPreview, setIntentPreview] = useState<JarvisIntent | null>(null);
@@ -732,6 +734,7 @@ export default function JarvisHudDashboard({
   const lastAutoPrepReminderRef = useRef('');
   const lastAutoInboxRef = useRef('');
   const lastSpokenMessageRef = useRef<string>('');
+  const speechHistoryPrimedRef = useRef(false);
   const lastAutomationAnnouncementRef = useRef('');
   const audioUrlRef = useRef<string | null>(null);
   const audioElementRef = useRef<HTMLAudioElement | null>(null);
@@ -1234,6 +1237,17 @@ export default function JarvisHudDashboard({
     () => latestMessageByRole(messages, 'assistant'),
     [messages],
   );
+  useEffect(() => {
+    speechHistoryPrimedRef.current = false;
+    lastSpokenMessageRef.current = '';
+  }, [activeConversationId]);
+  useEffect(() => {
+    if (speechHistoryPrimedRef.current) return;
+    if (streamState.isStreaming) return;
+    if (messages.length === 0) return;
+    lastSpokenMessageRef.current = latestAssistantMessage?.content?.trim() || '';
+    speechHistoryPrimedRef.current = true;
+  }, [latestAssistantMessage?.content, messages.length, streamState.isStreaming]);
   useEffect(() => {
     if (!latestUserMessage?.content?.trim()) return;
     lastSpeechDetectedAtRef.current = Date.now();
@@ -4007,6 +4021,20 @@ export default function JarvisHudDashboard({
     return sinceSpeech >= 2200 && sincePlayback >= 2600;
   }
 
+  function stopHudSpeechPlayback() {
+    const audio = audioElementRef.current;
+    if (audio) {
+      audio.pause();
+      try {
+        audio.currentTime = 0;
+      } catch {
+        // Ignore media reset issues from interrupted blobs.
+      }
+    }
+    audioElementRef.current = null;
+    setVoicePlaybackActive(false);
+  }
+
   async function playHudSpeech(text: string, purpose: 'digest' | 'announcement' | 'reply' = 'reply') {
     if (!speechProfile || !canSpeakForPurpose(purpose)) return false;
     const spoken = buildSpokenLine(text, purpose);
@@ -4022,17 +4050,32 @@ export default function JarvisHudDashboard({
       speed,
       output_format: 'wav',
     });
-    audioElementRef.current?.pause();
+    stopHudSpeechPlayback();
     if (audioUrlRef.current) URL.revokeObjectURL(audioUrlRef.current);
     const url = URL.createObjectURL(blob);
     audioUrlRef.current = url;
     const audio = new Audio(url);
     audio.onended = () => {
-      if (audioElementRef.current === audio) audioElementRef.current = null;
+      if (audioElementRef.current === audio) {
+        audioElementRef.current = null;
+        setVoicePlaybackActive(false);
+      }
+    };
+    audio.onpause = () => {
+      if (audioElementRef.current === audio && audio.ended === false) {
+        audioElementRef.current = null;
+        setVoicePlaybackActive(false);
+      }
     };
     audioElementRef.current = audio;
+    setVoicePlaybackActive(true);
     lastVoicePlaybackAtRef.current = Date.now();
-    await audio.play().catch(() => {});
+    await audio.play().catch(() => {
+      if (audioElementRef.current === audio) {
+        audioElementRef.current = null;
+      }
+      setVoicePlaybackActive(false);
+    });
     return true;
   }
 
@@ -4969,7 +5012,7 @@ export default function JarvisHudDashboard({
   }, [visionAnalysis?.content]);
 
   function interruptAssistantOutput(reason?: string) {
-    audioElementRef.current?.pause();
+    stopHudSpeechPlayback();
     window.dispatchEvent(new Event('jarvis:interrupt-stream'));
     void interruptVoiceLoop(reason).then(setVoiceLoop).catch(() => {});
     if (reason) setVoiceNotice(reason);
@@ -6605,6 +6648,7 @@ export default function JarvisHudDashboard({
 
     if (voiceLoop?.active) {
       try {
+        stopHudSpeechPlayback();
         await stopContinuousListening({ flushPendingAudio: false });
         const snapshot = await stopVoiceLoop();
         setVoiceLoop(snapshot);
@@ -6657,12 +6701,19 @@ export default function JarvisHudDashboard({
   }
 
   async function handleDisarmVoiceLoop() {
-    if (!voiceLoop?.active) return;
+    if (!voiceLoop?.active && !voicePlaybackActive && !streamState.isStreaming) return;
     try {
-      await stopContinuousListening({ flushPendingAudio: false });
-      const snapshot = await stopVoiceLoop();
-      setVoiceLoop(snapshot);
-      setVoiceNotice('Voice loop disarmed.');
+      stopHudSpeechPlayback();
+      window.dispatchEvent(new Event('jarvis:interrupt-stream'));
+      if (voiceLoop?.active) {
+        await stopContinuousListening({ flushPendingAudio: false });
+        const snapshot = await stopVoiceLoop();
+        setVoiceLoop(snapshot);
+      } else {
+        const snapshot = await interruptVoiceLoop('Voice stopped by user.');
+        setVoiceLoop(snapshot);
+      }
+      setVoiceNotice('Voice stopped.');
     } catch (error) {
       setVoiceNotice(error instanceof Error ? error.message : 'Unable to stop voice loop.');
     }
@@ -7292,10 +7343,10 @@ export default function JarvisHudDashboard({
                       </button>
                       <button
                         onClick={handleDisarmVoiceLoop}
-                        disabled={!voiceLoop?.active}
+                        disabled={!voiceLoop?.active && !voicePlaybackActive && !streamState.isStreaming}
                         className="rounded-[1rem] border border-slate-400/20 bg-slate-900/70 px-4 py-3 text-xs uppercase tracking-[0.28em] text-slate-200 transition hover:border-cyan-400/20 hover:text-cyan-100 disabled:cursor-not-allowed disabled:opacity-40"
                       >
-                        Disarm
+                        Stop Reply
                       </button>
                     </div>
                     <div className="mt-4 grid gap-2 sm:grid-cols-3">
