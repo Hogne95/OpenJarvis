@@ -7696,10 +7696,10 @@ ${item.details}`,
 
                 <div className="mt-4 rounded-[1.15rem] border border-cyan-400/10 bg-slate-950/55 p-4">
                   <div className="mb-2 text-[10px] uppercase tracking-[0.35em] text-cyan-300/55">
-                    Validation Loop
+                    Verify Changes
                   </div>
                   <div className="text-sm leading-7 text-slate-200/78">
-                    Suggested checks for the active repo. Load them into the workbench, then approve execution from the gate.
+                    Run the next recommended check, then move into commit and push once the repo is green.
                   </div>
                   <div className="mt-3 grid gap-2 sm:grid-cols-2">
                     {(workspaceChecks?.checks || []).map((item) => (
@@ -7714,7 +7714,7 @@ ${item.details}`,
                     ))}
                     {!workspaceChecks?.checks?.length ? (
                       <div className="rounded-[0.95rem] border border-cyan-400/10 bg-black/20 px-3 py-3 text-sm text-slate-200/72 sm:col-span-2">
-                        No suggested checks detected for this repo yet.
+                        JARVIS has not suggested checks for this repo yet.
                       </div>
                     ) : null}
                   </div>
@@ -7730,21 +7730,21 @@ ${item.details}`,
                       disabled={workbenchBusy !== null}
                       className="rounded-[0.9rem] border border-cyan-400/12 bg-slate-950/70 px-4 py-3 text-xs uppercase tracking-[0.24em] text-cyan-100 transition hover:bg-cyan-400/[0.08]"
                     >
-                      {workbenchBusy === 'prepare' ? 'Preparing' : 'Prepare Stage'}
+                      {workbenchBusy === 'prepare' ? 'Preparing' : 'Stage Changes'}
                     </button>
                     <button
                       onClick={loadPreparedCommitCommand}
                       disabled={workbenchBusy !== null}
                       className="rounded-[0.9rem] border border-cyan-400/12 bg-slate-950/70 px-4 py-3 text-xs uppercase tracking-[0.24em] text-cyan-100 transition hover:bg-cyan-400/[0.08]"
                     >
-                      {workbenchBusy === 'prepare' ? 'Preparing' : 'Prepare Commit'}
+                      {workbenchBusy === 'prepare' ? 'Preparing' : 'Review Commit'}
                     </button>
                     <button
                       onClick={loadPreparedPushCommand}
                       disabled={workbenchBusy !== null}
                       className="rounded-[0.9rem] border border-cyan-400/12 bg-slate-950/70 px-4 py-3 text-xs uppercase tracking-[0.24em] text-cyan-100 transition hover:bg-cyan-400/[0.08]"
                     >
-                      {workbenchBusy === 'prepare' ? 'Preparing' : 'Prepare Push'}
+                      {workbenchBusy === 'prepare' ? 'Preparing' : 'Review Push'}
                     </button>
                   </div>
                   <div className="mt-3 grid gap-2 sm:grid-cols-2">
@@ -7797,13 +7797,13 @@ ${item.details}`,
                           }
                           className="rounded-[0.85rem] border border-emerald-300/20 bg-emerald-400/[0.08] px-3 py-2 text-[10px] uppercase tracking-[0.22em] text-emerald-100 transition hover:bg-emerald-400/[0.14]"
                         >
-                          Prepare Commit
+                          Review Commit
                         </button>
                         <button
                           onClick={loadPreparedPushCommand}
                           className="rounded-[0.85rem] border border-cyan-400/12 bg-slate-950/70 px-3 py-2 text-[10px] uppercase tracking-[0.22em] text-cyan-100 transition hover:bg-cyan-400/[0.08]"
                         >
-                          Prepare Push
+                          Review Push
                         </button>
                       </div>
                     </div>
@@ -7983,18 +7983,18 @@ ${item.details}`,
 
                 <div className="mt-4 rounded-[1.15rem] border border-cyan-400/10 bg-slate-950/55 p-4">
                   <div className="mb-2 text-[10px] uppercase tracking-[0.35em] text-cyan-300/55">
-                    Coding Presets
+                    Coding Shortcuts
                   </div>
                   <div className="text-sm leading-7 text-slate-200/78">
-                    Fast repo-aware actions for inspection, debugging, review, and safe shell staging.
+                    Quick repo-aware actions to understand the codebase, review changes, and plan the next safe move.
                   </div>
                   <div className="mt-3 grid gap-2 sm:grid-cols-2">
                     {([
-                      ['Inspect Repo', () => loadCodingPrompt('inspect')],
-                      ['Debug Mode', () => loadCodingPrompt('debug')],
-                      ['Review Mode', () => loadCodingPrompt('review')],
-                      ['Logic Audit', () => loadCodingPrompt('logic')],
-                      ['Refactor Mode', () => loadCodingPrompt('refactor')],
+                      ['Understand Repo', () => loadCodingPrompt('inspect')],
+                      ['Debug Issue', () => loadCodingPrompt('debug')],
+                      ['Review Code', () => loadCodingPrompt('review')],
+                      ['Check Logic', () => loadCodingPrompt('logic')],
+                      ['Plan Cleanup', () => loadCodingPrompt('refactor')],
                     ] as const).map(([label, action]) => (
                       <button
                         key={label}
@@ -8120,7 +8120,7 @@ ${item.details}`,
 
                 <div className="mt-4 rounded-[1.15rem] border border-cyan-400/10 bg-slate-950/55 p-4">
                   <div className="mb-2 text-[10px] uppercase tracking-[0.35em] text-cyan-300/55">
-                    Repo State
+                    Repo Overview
                   </div>
                   <div className="grid gap-3 sm:grid-cols-3">
                     <div className="rounded-[0.95rem] border border-cyan-400/10 bg-black/20 px-3 py-3">
@@ -8251,7 +8251,7 @@ ${item.details}`,
                       value={editorContent}
                       onChange={(event) => setEditorContent(event.target.value)}
                       rows={12}
-                      placeholder="Load a file from Repo State, then edit it here."
+                        placeholder="Choose a file from Repo Overview, then edit it here."
                       className="rounded-[0.9rem] border border-cyan-400/10 bg-slate-950/70 px-4 py-3 font-mono text-sm text-slate-100 outline-none placeholder:text-slate-500"
                     />
                     <div className="grid gap-3 md:grid-cols-[1fr_1fr_180px]">
