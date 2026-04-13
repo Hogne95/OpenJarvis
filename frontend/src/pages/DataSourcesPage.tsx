@@ -922,9 +922,8 @@ function DataSourcesSection() {
     : [...notConnectedBase, uploadEntry];
 
   const handleProviderConnect = (providerId: string) => {
-    if (providerId !== 'google') return;
     if (needsAccountSelection) {
-      setConnectError('Choose an account above first so Google data stays inside the right private connector space.');
+      setConnectError('Choose an account above first so provider tokens stay inside the right private connector space.');
       return;
     }
     const authUrl = buildConnectorProviderOAuthUrl(providerId, effectiveAccountId || undefined);
@@ -1014,9 +1013,9 @@ function DataSourcesSection() {
               Root cause: broader users think in providers like Google or Microsoft, not in raw connector IDs. Start with the provider layer here, then drop down to the manual connector cards only when you need a fallback.
             </div>
           </div>
-          <div style={{ fontSize: 11, color: 'var(--color-text-tertiary)' }}>
-            Google is live now. Microsoft and GitHub are queued behind real provider-grade connector support.
-          </div>
+            <div style={{ fontSize: 11, color: 'var(--color-text-tertiary)' }}>
+              Google is live now. Microsoft and GitHub are the next one-click provider upgrades, and we can wire them up cleanly once the runtime credentials are in place.
+            </div>
         </div>
 
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: 10 }}>
@@ -1026,7 +1025,8 @@ function DataSourcesSection() {
               provider.connector_ids.includes(connector.connector_id) && connector.connected,
             ).length;
             const available = provider.status === 'available';
-            const buttonDisabled = !available || needsAccountSelection;
+            const hasRuntimeCredentials = runtime ? runtime.has_credentials : available;
+            const buttonDisabled = !available || !hasRuntimeCredentials || needsAccountSelection;
 
             return (
               <div
@@ -1076,9 +1076,9 @@ function DataSourcesSection() {
                 )}
 
                 <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 12 }}>
-                  <button
-                    onClick={() => handleProviderConnect(provider.provider_id)}
-                    disabled={buttonDisabled}
+                    <button
+                      onClick={() => handleProviderConnect(provider.provider_id)}
+                      disabled={buttonDisabled}
                     style={{
                       padding: '8px 12px',
                       borderRadius: 8,
@@ -1090,10 +1090,10 @@ function DataSourcesSection() {
                       fontWeight: 600,
                     }}
                   >
-                    {provider.actionLabel}
-                  </button>
-                  {runtime?.setup_url && !runtime.has_credentials && (
-                    <a
+                      {available ? provider.actionLabel : `Coming Next: ${provider.display_name}`}
+                    </button>
+                    {runtime?.setup_url && !runtime.has_credentials && (
+                      <a
                       href={runtime.setup_url}
                       target="_blank"
                       rel="noopener noreferrer"
@@ -1110,14 +1110,19 @@ function DataSourcesSection() {
                   )}
                 </div>
 
-                {needsAccountSelection && available && (
-                  <div style={{ fontSize: 11, color: '#f59e0b', marginTop: 8 }}>
-                    Choose an account above first so provider tokens stay inside the right private workspace.
-                  </div>
-                )}
-              </div>
-            );
-          })}
+                  {needsAccountSelection && available && (
+                    <div style={{ fontSize: 11, color: '#f59e0b', marginTop: 8 }}>
+                      Choose an account above first so provider tokens stay inside the right private workspace.
+                    </div>
+                  )}
+                  {available && runtime && !runtime.has_credentials && (
+                    <div style={{ fontSize: 11, color: '#f59e0b', marginTop: 8, lineHeight: 1.5 }}>
+                      Add the {provider.display_name} client ID and secret on this JARVIS runtime first, then this button becomes a real one-click sign-in.
+                    </div>
+                  )}
+                </div>
+              );
+            })}
         </div>
       </div>
 

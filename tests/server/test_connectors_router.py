@@ -53,6 +53,7 @@ def test_list_connector_providers(app):
     assert "providers" in data
     ids = [provider["provider"] for provider in data["providers"]]
     assert "google" in ids
+    assert "microsoft" in ids
 
 
 def test_provider_oauth_start_redirects(app, monkeypatch):
@@ -71,6 +72,33 @@ def test_provider_oauth_start_redirects(app, monkeypatch):
     assert "accounts.google.com" in location
     assert "client_id=client-id" in location
     assert "state=" in location
+
+
+def test_microsoft_provider_oauth_start_redirects(app, monkeypatch):
+    """Microsoft provider start should redirect through Microsoft login."""
+    from openjarvis.connectors import oauth as oauth_module
+
+    monkeypatch.setattr(
+        oauth_module,
+        "get_client_credentials",
+        lambda provider: ("microsoft-client-id", "microsoft-client-secret"),
+    )
+
+    resp = app.get("/v1/connectors/providers/microsoft/oauth/start", follow_redirects=False)
+    assert resp.status_code in {302, 307}
+    location = resp.headers["location"]
+    assert "login.microsoftonline.com" in location
+    assert "client_id=microsoft-client-id" in location
+    assert "state=" in location
+
+
+def test_list_connectors_includes_microsoft_mail(app):
+    """GET /v1/connectors should include the Graph-backed Microsoft mail connector."""
+    resp = app.get("/v1/connectors")
+    assert resp.status_code == 200
+    data = resp.json()
+    ids = [c["connector_id"] for c in data["connectors"]]
+    assert "microsoft_mail" in ids
 
 
 def test_connector_not_found(app):

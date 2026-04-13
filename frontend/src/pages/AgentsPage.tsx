@@ -3659,6 +3659,7 @@ export function AgentsPage() {
   const [agentManagerAvailable, setAgentManagerAvailable] = useState<boolean | null>(null);
   const [tasks, setTasks] = useState<AgentTask[]>([]);
   const [channels, setChannels] = useState<ChannelBinding[]>([]);
+  const [selectedAgentDetail, setSelectedAgentDetail] = useState<ManagedAgent | null>(null);
   const [templates, setTemplates] = useState<AgentTemplate[]>([]);
   const [templatesLoaded, setTemplatesLoaded] = useState(false);
   const [showWizard, setShowWizard] = useState(false);
@@ -3669,10 +3670,12 @@ export function AgentsPage() {
   const recommendedStarterTemplates = visibleTemplates.filter(isRecommendedTemplate);
   const additionalStarterTemplates = visibleTemplates.filter((tpl) => !isRecommendedTemplate(tpl));
   const [detailTab, setDetailTab] = useState<'overview' | 'interact' | 'channels' | 'messaging' | 'tasks' | 'memory' | 'learning' | 'logs'>('interact');
+  const shouldLoadTaskHistory = detailTab === 'tasks';
+  const shouldLoadOverviewChannels = detailTab === 'overview';
 
   const refresh = useCallback(async () => {
     try {
-      const agents = await fetchManagedAgents({ compact: !selectedAgentId });
+      const agents = await fetchManagedAgents({ compact: true });
       setManagedAgents(agents);
       setAgentManagerAvailable(true);
     } catch (err: any) {
@@ -3683,7 +3686,7 @@ export function AgentsPage() {
     } finally {
       setLoading(false);
     }
-  }, [selectedAgentId, setManagedAgents]);
+  }, [setManagedAgents]);
 
   useEffect(() => {
     void refresh();
@@ -3706,28 +3709,79 @@ export function AgentsPage() {
     return () => clearInterval(interval);
   }, [refresh]);
 
-  const selectedAgent = managedAgents.find((a) => a.id === selectedAgentId);
+  const selectedAgent =
+    (selectedAgentDetail && selectedAgentDetail.id === selectedAgentId ? selectedAgentDetail : null) ||
+    managedAgents.find((a) => a.id === selectedAgentId) ||
+    null;
 
   useEffect(() => {
-    if (selectedAgentId) {
-      const loadSelectedAgentData = async () => {
-        const [nextTasks, nextChannels] = await Promise.allSettled([
-          fetchAgentTasks(selectedAgentId),
-          fetchAgentChannels(selectedAgentId),
-        ]);
-        setTasks(nextTasks.status === 'fulfilled' ? nextTasks.value : []);
-        setChannels(nextChannels.status === 'fulfilled' ? nextChannels.value : []);
-      };
-      void loadSelectedAgentData();
-      const interval = setInterval(() => {
-        if (isDocumentHidden()) return;
-        void loadSelectedAgentData();
-      }, 10000);
-      return () => clearInterval(interval);
+    if (!selectedAgentId) {
+      setSelectedAgentDetail(null);
+      return;
     }
-    setTasks([]);
-    setChannels([]);
+
+    const loadSelectedAgentDetail = async () => {
+      try {
+        const agent = await fetchManagedAgent(selectedAgentId);
+        setSelectedAgentDetail(agent);
+      } catch {
+        setSelectedAgentDetail(null);
+      }
+    };
+
+    void loadSelectedAgentDetail();
+    const interval = setInterval(() => {
+      if (isDocumentHidden()) return;
+      void loadSelectedAgentDetail();
+    }, 15000);
+    return () => clearInterval(interval);
   }, [selectedAgentId]);
+
+  useEffect(() => {
+    if (!selectedAgentId || !shouldLoadTaskHistory) {
+      setTasks([]);
+      return;
+    }
+
+    const loadSelectedAgentTasks = async () => {
+      try {
+        const nextTasks = await fetchAgentTasks(selectedAgentId);
+        setTasks(nextTasks);
+      } catch {
+        setTasks([]);
+      }
+    };
+
+    void loadSelectedAgentTasks();
+    const interval = setInterval(() => {
+      if (isDocumentHidden()) return;
+      void loadSelectedAgentTasks();
+    }, 12000);
+    return () => clearInterval(interval);
+  }, [selectedAgentId, shouldLoadTaskHistory]);
+
+  useEffect(() => {
+    if (!selectedAgentId || !shouldLoadOverviewChannels) {
+      setChannels([]);
+      return;
+    }
+
+    const loadSelectedAgentChannels = async () => {
+      try {
+        const nextChannels = await fetchAgentChannels(selectedAgentId);
+        setChannels(nextChannels);
+      } catch {
+        setChannels([]);
+      }
+    };
+
+    void loadSelectedAgentChannels();
+    const interval = setInterval(() => {
+      if (isDocumentHidden()) return;
+      void loadSelectedAgentChannels();
+    }, 15000);
+    return () => clearInterval(interval);
+  }, [selectedAgentId, shouldLoadOverviewChannels]);
 
   const handlePause = async (id: string) => {
     await pauseManagedAgent(id).catch(() => {});
@@ -4300,19 +4354,14 @@ export function AgentsPage() {
       </div>
 
       <div
-        className="mb-6 rounded-xl p-4"
+        className="mb-6 rounded-xl px-4 py-3"
         style={{ background: 'var(--color-bg-secondary)', border: '1px solid var(--color-border)' }}
       >
-        <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
-          <div className="max-w-3xl">
-            <div className="text-xs font-semibold uppercase tracking-[0.24em] mb-2" style={{ color: 'var(--color-text-tertiary)' }}>
-              Best Used For
-            </div>
-            <div className="text-sm" style={{ color: 'var(--color-text-secondary)' }}>
-              {AGENTS_LIST_DESCRIPTION}
-            </div>
+        <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+          <div className="text-sm" style={{ color: 'var(--color-text-secondary)' }}>
+            {AGENTS_LIST_DESCRIPTION}
           </div>
-          <div className="max-w-xl text-sm" style={{ color: 'var(--color-text-secondary)' }}>
+          <div className="text-xs md:text-sm" style={{ color: 'var(--color-text-tertiary)' }}>
             {visibleAgents.length > 0 ? AGENTS_LIST_GUIDANCE_ACTIVE : AGENTS_LIST_GUIDANCE_EMPTY}
           </div>
         </div>

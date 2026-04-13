@@ -89,21 +89,21 @@ export const PROVIDER_CATALOG: ConnectorProviderMeta[] = [
   {
     provider_id: 'microsoft',
     display_name: 'Microsoft',
-    description: 'Planned provider connect for Outlook and Microsoft 365 data.',
-    status: 'planned',
-    actionLabel: 'Microsoft Connect Planned',
-    connector_ids: ['outlook'],
+    description: 'Sign in once to connect Microsoft Mail now, with more Microsoft 365 sources ready to follow this same path.',
+    status: 'available',
+    actionLabel: 'Connect Microsoft',
+    connector_ids: ['microsoft_mail'],
     fallbackConnectorIds: ['outlook'],
-    note: 'For now, use the Outlook fallback below with a Microsoft app password.',
+    note: 'Best modern path. Once your Azure app client ID and secret are configured, this becomes the true "Sign in with Microsoft" flow. The older Outlook card stays below as a fallback.',
   },
   {
     provider_id: 'github',
     display_name: 'GitHub',
-    description: 'Planned provider connect for repositories, pull requests, and issue workflows.',
+    description: 'One-click GitHub sign-in will cover repos, pull requests, and issue workflows.',
     status: 'planned',
-    actionLabel: 'GitHub Connect Planned',
+    actionLabel: 'GitHub Connect Setup',
     connector_ids: ['github'],
-    note: 'We still need a first-class GitHub connector path before this can become one-click.',
+    note: 'Next step: add a first-class GitHub provider flow so this becomes a real sign-in instead of a manual connector path.',
   },
 ];
 
@@ -124,6 +124,25 @@ export const SOURCE_CATALOG: ConnectorMeta[] = [
     inputFields: [],
   },
   // ── Communication ──────────────────────────────────────────────────
+  {
+    connector_id: 'microsoft_mail',
+    display_name: 'Microsoft Mail',
+    auth_type: 'oauth',
+    category: 'communication',
+    icon: 'Mail',
+    color: 'text-blue-400',
+    description: 'Microsoft Graph mail access through a modern Microsoft sign-in flow',
+    unitLabel: 'emails',
+    steps: [
+      {
+        label: 'Use the Microsoft provider card above and choose Connect Microsoft. JARVIS will open the normal Microsoft sign-in and consent flow once your runtime credentials are configured.',
+      },
+      {
+        label: 'If Connect Microsoft is not ready yet on this runtime, configure the Azure app credentials first, then come back here and try again.',
+      },
+    ],
+    inputFields: [],
+  },
   {
     connector_id: 'gmail_imap',
     display_name: 'Gmail',

@@ -74,7 +74,7 @@ export function ChatArea() {
         >
           <Database size={16} style={{ color: 'var(--color-accent)', flexShrink: 0 }} />
           <span style={{ color: 'var(--color-text-secondary)', flex: 1 }}>
-            Connect your data sources (Gmail, iMessage, Slack, etc.) to get personalized answers.
+            Connect your apps (Gmail, iMessage, Slack, etc.) to give JARVIS better context.
           </span>
           <button
             onClick={() => navigate('/data-sources')}
@@ -126,7 +126,7 @@ export function ChatArea() {
                 onMouseLeave={(e) => (e.currentTarget.style.borderColor = 'var(--color-border)')}
               >
                 <Database size={14} style={{ color: 'var(--color-accent)' }} />
-                Connect Data Sources
+                Connect Apps
               </button>
               <button
                 onClick={() => { navigate('/data-sources'); setTimeout(() => window.dispatchEvent(new CustomEvent('switch-tab', { detail: 'messaging' })), 100); }}

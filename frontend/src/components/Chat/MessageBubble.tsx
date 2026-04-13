@@ -65,11 +65,49 @@ export function MessageBubble({ message }: Props) {
             background: 'var(--color-user-bubble)',
             color: 'var(--color-user-bubble-text)',
             borderRadius: 'var(--radius-xl) var(--radius-xl) var(--radius-sm) var(--radius-xl)',
-            whiteSpace: 'pre-wrap',
-            wordBreak: 'break-word',
           }}
         >
-          {message.content}
+          {message.content ? (
+            <div style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+              {message.content}
+            </div>
+          ) : null}
+          {message.attachments?.length ? (
+            <div className={`${message.content ? 'mt-3' : ''} space-y-2`}>
+              {message.attachments.map((file) => (
+                <div
+                  key={file.id}
+                  className="rounded-2xl px-3 py-2.5"
+                  style={{
+                    background: 'rgba(255,255,255,0.12)',
+                    border: '1px solid rgba(255,255,255,0.12)',
+                  }}
+                >
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <div className="font-medium">{file.name}</div>
+                      <div className="text-[11px] opacity-75">
+                        {file.size < 1024
+                          ? `${file.size} B`
+                          : file.size < 1024 * 1024
+                            ? `${(file.size / 1024).toFixed(1)} KB`
+                            : `${(file.size / (1024 * 1024)).toFixed(1)} MB`}
+                        {file.truncated ? ' · shortened for chat' : ''}
+                      </div>
+                    </div>
+                    <div className="text-[10px] uppercase tracking-[0.18em] opacity-70">
+                      Attached
+                    </div>
+                  </div>
+                  {file.preview ? (
+                    <div className="mt-2 text-xs leading-5 opacity-85">
+                      {file.preview}
+                    </div>
+                  ) : null}
+                </div>
+              ))}
+            </div>
+          ) : null}
         </div>
       </div>
     );

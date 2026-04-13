@@ -1,7 +1,7 @@
 """Shared OAuth 2.0 helpers for all connectors.
 
 Provides:
-- ``OAuthProvider`` registry with configs for Google, Strava, Spotify
+- ``OAuthProvider`` registry with configs for Google, Microsoft, Strava, Spotify
 - Generic ``run_connector_oauth()`` that opens browser + catches callback
 - URL builder, token persistence, and token cleanup utilities
 """
@@ -102,6 +102,27 @@ OAUTH_PROVIDERS: Dict[str, OAuthProvider] = {
         setup_hint="Create an API Application (callback domain: localhost)",
         connector_ids=("strava",),
         credential_files=("strava.json",),
+    ),
+    "microsoft": OAuthProvider(
+        name="microsoft",
+        display_name="Microsoft",
+        auth_endpoint="https://login.microsoftonline.com/common/oauth2/v2.0/authorize",
+        token_endpoint="https://login.microsoftonline.com/common/oauth2/v2.0/token",
+        scopes=[
+            "openid",
+            "profile",
+            "email",
+            "offline_access",
+            "User.Read",
+            "Mail.Read",
+        ],
+        setup_url="https://portal.azure.com/#view/Microsoft_AAD_RegisteredApps/ApplicationsListBlade",
+        setup_hint=(
+            "Create an app registration, add the OpenJarvis callback URL, and enable delegated Mail.Read access"
+        ),
+        extra_auth_params={"prompt": "select_account"},
+        connector_ids=("microsoft_mail",),
+        credential_files=("microsoft.json", "microsoft_mail.json"),
     ),
     "spotify": OAuthProvider(
         name="spotify",

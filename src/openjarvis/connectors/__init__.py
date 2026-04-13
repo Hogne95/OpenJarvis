@@ -69,6 +69,11 @@ except ImportError:
     pass
 
 try:
+    import openjarvis.connectors.microsoft_mail  # noqa: F401
+except ImportError:
+    pass
+
+try:
     import openjarvis.connectors.gcalendar  # noqa: F401
 except ImportError:
     pass
