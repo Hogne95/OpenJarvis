@@ -29,9 +29,7 @@ import {
   ListTodo,
   Brain,
   Zap,
-  MoreHorizontal,
   AlertTriangle,
-  DollarSign,
   Activity,
   MessageSquare,
   Settings,
@@ -62,6 +60,7 @@ import {
   templateBestForLabel,
   useCasesForAgent,
 } from '../lib/agentPresentation';
+import { AgentCard } from '../components/Agents/AgentCard';
 import { ChannelsTab } from '../components/Agents/ChannelsTab';
 import { InteractTab } from '../components/Agents/InteractTab';
 import { LaunchWizard } from '../components/Agents/LaunchWizard';
@@ -109,17 +108,6 @@ function StatusBadge({ status }: { status: string }) {
     >
       {status.replace('_', ' ')}
     </span>
-  );
-}
-
-function StatusDot({ status }: { status: string }) {
-  const color = statusColor(status);
-  return (
-    <span
-      className="w-2 h-2 rounded-full inline-block flex-shrink-0"
-      style={{ background: color }}
-      title={status}
-    />
   );
 }
 
@@ -182,225 +170,6 @@ function formatSchedule(type?: string, value?: string): string {
     return `Every ${value}`;
   }
   return type || 'Manual';
-}
-
-// ---------------------------------------------------------------------------
-// Overflow menu
-// ---------------------------------------------------------------------------
-
-function OverflowMenu({
-  agentId,
-  onDelete,
-}: {
-  agentId: string;
-  onDelete: (id: string) => void;
-}) {
-  const [open, setOpen] = useState(false);
-  const ref = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    function handler(e: MouseEvent) {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
-    }
-    document.addEventListener('mousedown', handler);
-    return () => document.removeEventListener('mousedown', handler);
-  }, []);
-
-  return (
-    <div ref={ref} className="relative">
-      <button
-        onClick={(e) => {
-          e.stopPropagation();
-          setOpen((v) => !v);
-        }}
-        className="p-1 rounded cursor-pointer"
-        style={{ color: 'var(--color-text-tertiary)' }}
-        title="More actions"
-      >
-        <MoreHorizontal size={14} />
-      </button>
-      {open && (
-        <div
-          className="absolute right-0 top-6 z-20 rounded-lg py-1 min-w-[120px]"
-          style={{ background: 'var(--color-bg)', border: '1px solid var(--color-border)', boxShadow: '0 4px 12px rgba(0,0,0,0.15)' }}
-        >
-          <button
-            onClick={(e) => {
-              e.stopPropagation();
-              onDelete(agentId);
-              setOpen(false);
-            }}
-            className="w-full text-left px-3 py-1.5 text-xs cursor-pointer flex items-center gap-2"
-            style={{ color: '#ef4444' }}
-          >
-            <Trash2 size={12} /> Delete
-          </button>
-        </div>
-      )}
-    </div>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Agent List Card
-// ---------------------------------------------------------------------------
-
-function AgentCard({
-  agent,
-  onClick,
-  onPause,
-  onResume,
-  onRun,
-  onRecover,
-  onDelete,
-  onChat,
-  onEdit,
-}: {
-  agent: ManagedAgent;
-  onClick: () => void;
-  onPause: (id: string) => void;
-  onResume: (id: string) => void;
-  onRun: (id: string) => void;
-  onRecover: (id: string) => void;
-  onDelete: (id: string) => void;
-  onChat: (id: string) => void;
-  onEdit: (id: string) => void;
-}) {
-  const canPause = agent.status === 'running' || agent.status === 'idle';
-  const canResume = agent.status === 'paused';
-  const canRecover = agent.status === 'error' || agent.status === 'stalled' || agent.status === 'needs_attention';
-  const description = describeManagedAgent(agent);
-
-  return (
-    <div
-      onClick={onClick}
-      className="p-4 rounded-lg cursor-pointer transition-colors"
-      style={{ background: 'var(--color-bg-secondary)', border: '1px solid var(--color-border)' }}
-      onMouseEnter={(e) => (e.currentTarget.style.borderColor = 'var(--color-accent)')}
-      onMouseLeave={(e) => (e.currentTarget.style.borderColor = 'var(--color-border)')}
-    >
-      {/* Row 1: Name + status dot */}
-      <div className="flex items-center justify-between mb-2">
-        <div className="flex items-center gap-2 min-w-0">
-          <Bot size={16} style={{ color: 'var(--color-accent)', flexShrink: 0 }} />
-          <span className="font-medium text-sm truncate" style={{ color: 'var(--color-text)' }}>
-            {agent.name}
-          </span>
-        </div>
-        <StatusDot status={agent.status} />
-      </div>
-
-      <div className="text-xs mb-2 leading-5" style={{ color: 'var(--color-text-secondary)' }}>
-        {description}
-      </div>
-
-      {/* Row 2: Schedule + last run */}
-      <div className="text-xs mb-2 flex items-center gap-3" style={{ color: 'var(--color-text-tertiary)' }}>
-        <span>{formatSchedule(agent.schedule_type, agent.schedule_value)}</span>
-        <span>·</span>
-        <span>Last run: {formatRelativeTime(agent.last_run_at)}</span>
-      </div>
-
-      {/* Row 3: Stats */}
-      <div className="flex items-center gap-4 mb-3 text-xs" style={{ color: 'var(--color-text-secondary)' }}>
-        <span className="flex items-center gap-1">
-          <Activity size={11} />
-          {agent.total_runs ?? 0} runs
-        </span>
-        <span className="flex items-center gap-1">
-          <DollarSign size={11} />
-          {formatCost(agent.total_cost)}
-        </span>
-      </div>
-
-      {/* Budget progress bar */}
-      {(agent.config?.max_cost as number) > 0 && (
-        <div className="mb-3">
-          <div className="flex justify-between text-xs mb-1" style={{ color: 'var(--color-text-tertiary)' }}>
-            <span>Budget</span>
-            <span>
-              {formatCost(agent.total_cost)} / ${(agent.config?.max_cost as number).toFixed(0)}
-            </span>
-          </div>
-          <div className="w-full rounded-full h-1.5" style={{ background: 'var(--color-bg)' }}>
-            <div
-              className="h-1.5 rounded-full transition-all"
-              style={{
-                width: `${Math.min(100, ((agent.total_cost ?? 0) / (agent.config?.max_cost as number)) * 100)}%`,
-                background:
-                  ((agent.total_cost ?? 0) / (agent.config?.max_cost as number)) > 0.9
-                    ? '#ef4444'
-                    : ((agent.total_cost ?? 0) / (agent.config?.max_cost as number)) > 0.75
-                      ? '#f59e0b'
-                      : '#22c55e',
-              }}
-            />
-          </div>
-        </div>
-      )}
-
-      {/* Row 4: Actions */}
-      <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
-        <button
-          onClick={(e) => { e.stopPropagation(); onChat(agent.id); }}
-          className="p-1.5 rounded cursor-pointer transition-colors"
-          style={{ background: 'var(--color-bg-tertiary)', color: 'var(--color-text-secondary)' }}
-          title="Chat with agent"
-        >
-          <MessageSquare size={13} />
-        </button>
-        <button
-          onClick={(e) => { e.stopPropagation(); onEdit(agent.id); }}
-          className="p-1.5 rounded cursor-pointer transition-colors"
-          style={{ background: 'var(--color-bg-tertiary)', color: 'var(--color-text-secondary)' }}
-          title="Edit agent"
-        >
-          <Pencil size={13} />
-        </button>
-        <button
-          onClick={() => onRun(agent.id)}
-          className="flex items-center gap-1 px-2 py-1 rounded text-xs cursor-pointer transition-colors"
-          style={{ background: 'var(--color-accent)' + '15', color: 'var(--color-accent)' }}
-          title="Run now"
-        >
-          <Zap size={11} /> Run Now
-        </button>
-        {canPause && (
-          <button
-            onClick={() => onPause(agent.id)}
-            className="p-1 rounded cursor-pointer"
-            style={{ color: 'var(--color-text-secondary)' }}
-            title="Pause"
-          >
-            <Pause size={13} />
-          </button>
-        )}
-        {canResume && (
-          <button
-            onClick={() => onResume(agent.id)}
-            className="p-1 rounded cursor-pointer"
-            style={{ color: '#22c55e' }}
-            title="Resume"
-          >
-            <Play size={13} />
-          </button>
-        )}
-        {canRecover && (
-          <button
-            onClick={() => onRecover(agent.id)}
-            className="flex items-center gap-1 px-2 py-1 rounded text-xs cursor-pointer"
-            style={{ background: '#ef444420', color: '#ef4444' }}
-            title="Recover agent"
-          >
-            <AlertTriangle size={11} /> Reset & Recover
-          </button>
-        )}
-        <div className="ml-auto">
-          <OverflowMenu agentId={agent.id} onDelete={onDelete} />
-        </div>
-      </div>
-    </div>
-  );
 }
 
 // ---------------------------------------------------------------------------
