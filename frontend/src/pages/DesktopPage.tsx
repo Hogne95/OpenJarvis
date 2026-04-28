@@ -97,8 +97,8 @@ export function DesktopPage() {
           <div className="text-[11px] uppercase tracking-[0.38em] text-cyan-300/60">Desktop Shell</div>
           <h1 className="mt-2 text-3xl uppercase tracking-[0.22em] text-cyan-50">Desktop Runtime</h1>
           <p className="mt-4 max-w-2xl text-sm leading-7 text-slate-200/76">
-            Root cause of the app-feel gap is that the native runtime only exists inside the Tauri build. Open this page inside the
-            desktop app to control startup, tray behavior, and shutdown.
+            The native runtime controls are available inside the Tauri build. Open this page in the JARVIS desktop app to control
+            startup, tray behavior, and shutdown from one place.
           </p>
         </div>
       </div>
@@ -120,8 +120,8 @@ export function DesktopPage() {
             <div className="text-[11px] uppercase tracking-[0.38em] text-cyan-300/60">Desktop Shell</div>
             <h1 className="mt-2 text-3xl uppercase tracking-[0.22em] text-cyan-50">JARVIS Desktop</h1>
             <p className="mt-3 max-w-3xl text-sm leading-7 text-slate-200/76">
-              Root cause of the “not a real app yet” feeling was that startup, tray behavior, and shutdown lived half in scripts and
-              half in the HUD. This page makes the native desktop runtime a first-class surface.
+              Startup, tray behavior, and shutdown now live together here instead of being split between scripts and the HUD.
+              This makes the native desktop runtime easier to control during daily use and testing.
             </p>
           </div>
           <div className="flex flex-wrap gap-3">

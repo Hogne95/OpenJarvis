@@ -1,13 +1,26 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import JarvisHudDashboard from '../jarvis_hud_dashboard';
 import { ChatArea } from '../components/Chat/ChatArea';
 import { useAppStore } from '../lib/store';
 
 export function CodingPage() {
   const [mobileSection, setMobileSection] = useState<'chat' | 'repo'>('chat');
+  const [repoMounted, setRepoMounted] = useState(false);
   const messages = useAppStore((s) => s.messages);
   const selectedModel = useAppStore((s) => s.selectedModel);
   const hasConversation = messages.length > 0;
+
+  useEffect(() => {
+    if (repoMounted) return;
+    if (mobileSection === 'repo') {
+      setRepoMounted(true);
+      return;
+    }
+    const timer = window.setTimeout(() => {
+      setRepoMounted(true);
+    }, 450);
+    return () => window.clearTimeout(timer);
+  }, [mobileSection, repoMounted]);
 
   return (
     <div className="flex h-full min-h-0 flex-col overflow-hidden">
@@ -134,13 +147,27 @@ export function CodingPage() {
         <section
           className={`${mobileSection === 'repo' ? 'flex' : 'hidden'} min-h-0 overflow-hidden bg-[linear-gradient(180deg,rgba(2,8,23,0.72),rgba(2,6,23,0.96))] xl:flex`}
         >
-          <div className="shrink-0 border-b border-cyan-400/10 px-5 py-3">
-            <div className="text-[10px] uppercase tracking-[0.28em] text-cyan-300/60">Repo</div>
-            <div className="mt-1 text-sm text-slate-300/74">
-              Connect, inspect, verify, and prepare the next clean git step.
+          {repoMounted ? (
+            <>
+              <div className="shrink-0 border-b border-cyan-400/10 px-5 py-3">
+                <div className="text-[10px] uppercase tracking-[0.28em] text-cyan-300/60">Repo</div>
+                <div className="mt-1 text-sm text-slate-300/74">
+                  Connect, inspect, verify, and prepare the next clean git step.
+                </div>
+              </div>
+              <JarvisHudDashboard view="workspace" />
+            </>
+          ) : (
+            <div className="flex flex-1 items-center justify-center px-6">
+              <div className="max-w-md rounded-[1.2rem] border border-cyan-400/12 bg-slate-950/72 px-5 py-5 text-center">
+                <div className="text-[10px] uppercase tracking-[0.28em] text-cyan-300/58">Repo</div>
+                <div className="mt-2 text-sm font-medium text-cyan-50">Loading the coding workspace...</div>
+                <p className="mt-1 text-sm leading-6 text-slate-300/72">
+                  JARVIS is bringing in repo status and checks in the background so the page becomes useful faster.
+                </p>
+              </div>
             </div>
-          </div>
-          <JarvisHudDashboard view="workspace" />
+          )}
         </section>
       </div>
     </div>

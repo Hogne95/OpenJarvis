@@ -1,4 +1,5 @@
 import { Suspense, lazy, useEffect, useState, useCallback, useRef } from 'react';
+import { useNavigate } from 'react-router';
 import { toast } from 'sonner';
 import { useAppStore } from '../lib/store';
 import {
@@ -59,7 +60,7 @@ import {
   Check,
   Pencil,
 } from 'lucide-react';
-import { SOURCE_CATALOG } from '../types/connectors';
+import { PROVIDER_CATALOG, SOURCE_CATALOG } from '../types/connectors';
 import type { ConnectRequest } from '../types/connectors';
 import { listConnectors, connectSource } from '../lib/connectors-api';
 
@@ -280,6 +281,19 @@ function recommendedConnectorsForAgent(agent: ManagedAgent) {
   return ids
     .map((id) => SOURCE_CATALOG.find((source) => source.connector_id === id))
     .filter((value): value is (typeof SOURCE_CATALOG)[number] => Boolean(value));
+}
+
+function recommendedProvidersForAgent(agent: ManagedAgent) {
+  const ids = new Set(recommendedConnectorIdsForAgent(agent));
+  return PROVIDER_CATALOG
+    .filter((provider) =>
+      [...provider.connector_ids, ...(provider.fallbackConnectorIds || [])].some((connectorId) => ids.has(connectorId)),
+    )
+    .sort((a, b) => {
+      const order = ['google', 'microsoft', 'github'];
+      return order.indexOf(a.provider_id) - order.indexOf(b.provider_id);
+    })
+    .slice(0, 2);
 }
 
 function recommendedConnectorIdsForTemplate(tpl: AgentTemplate | null): string[] {
@@ -537,6 +551,106 @@ function setupChecklistForTemplate(tpl: AgentTemplate | null): string[] {
   ];
 }
 
+function useCasesForTemplate(tpl: AgentTemplate | null): string[] {
+  if (!tpl) {
+    return [
+      'Handle one recurring task you do not want to rebuild from scratch.',
+      'Summarize a narrow source of information on demand.',
+      'Prepare a short report before you take action.',
+    ];
+  }
+  const normalized = (tpl.id || tpl.name || '').toLowerCase();
+  if (normalized.includes('personal-watcher') || normalized.includes('personal_watcher')) {
+    return [
+      'Tell me when a new meeting appears or changes.',
+      'Flag emails that need a real reply or decision.',
+      'Give me a short daily action list from inbox and calendar.',
+    ];
+  }
+  if (normalized.includes('meeting')) {
+    return [
+      'Prepare talking points for my next meeting.',
+      'Find likely follow-ups from recent mail and notes.',
+      'Summarize what I should know before I join.',
+    ];
+  }
+  if (normalized.includes('inbox')) {
+    return [
+      'Sort recent messages by urgent, important, and FYI.',
+      'Draft short replies for action-needed emails.',
+      'Find emails that are waiting on me.',
+    ];
+  }
+  if (normalized.includes('planner')) {
+    return [
+      'Turn a messy goal into a clear next-step plan.',
+      'Compare options before I commit to a direction.',
+      'List risks and dependencies for a task.',
+    ];
+  }
+  if (normalized.includes('executor')) {
+    return [
+      'Run a bounded task after the plan is clear.',
+      'Follow up on approved actions.',
+      'Report what was completed and what blocked.',
+    ];
+  }
+  if (normalized.includes('vision')) {
+    return [
+      'Explain what is visible in a screenshot.',
+      'Find UI issues in a screen or layout.',
+      'Turn visual context into next actions.',
+    ];
+  }
+  if (normalized.includes('research')) {
+    return [
+      'Track a topic and summarize the strongest signals.',
+      'Compare sources before I make a decision.',
+      'Create a short brief with citations or source notes.',
+    ];
+  }
+  if (normalized.includes('code')) {
+    return [
+      'Review a diff for bugs and missing checks.',
+      'Summarize what changed in a repo.',
+      'Prepare a verification plan before commit.',
+    ];
+  }
+  return [
+    'Run a focused task with this specialist.',
+    'Use connected apps to give it real context.',
+    'Keep the first run narrow, then refine from results.',
+  ];
+}
+
+function useCasesForAgent(agent: ManagedAgent): string[] {
+  const type = String(agent.agent_type || '').toLowerCase();
+  const normalized = normalizeAgentName(agent.name);
+  if (isPersonalWatcherAgent(agent)) return useCasesForTemplate(PERSONAL_WATCHER_TEMPLATE);
+  if (normalized.includes('meeting') || type.includes('meeting')) {
+    return useCasesForTemplate({ ...PERSONAL_WATCHER_TEMPLATE, id: 'meeting-prep', name: 'Meeting Prep' });
+  }
+  if (normalized.includes('inbox') || type.includes('triage')) {
+    return useCasesForTemplate({ ...PERSONAL_WATCHER_TEMPLATE, id: 'inbox_triager', name: 'Inbox Triager' });
+  }
+  if (normalized.includes('planner')) {
+    return useCasesForTemplate({ ...PERSONAL_WATCHER_TEMPLATE, id: 'planner', name: 'Planner' });
+  }
+  if (normalized.includes('executor')) {
+    return useCasesForTemplate({ ...PERSONAL_WATCHER_TEMPLATE, id: 'executor', name: 'Executor' });
+  }
+  if (normalized.includes('vision') || type.includes('vision')) {
+    return useCasesForTemplate({ ...PERSONAL_WATCHER_TEMPLATE, id: 'vision', name: 'Vision' });
+  }
+  if (type.includes('deep_research') || String(agent.config?.instruction || '').toLowerCase().includes('research')) {
+    return useCasesForTemplate({ ...PERSONAL_WATCHER_TEMPLATE, id: 'research-monitor', name: 'Research Monitor' });
+  }
+  if (type.includes('code') || String(agent.config?.instruction || '').toLowerCase().includes('repo')) {
+    return useCasesForTemplate({ ...PERSONAL_WATCHER_TEMPLATE, id: 'code-reviewer', name: 'Code Reviewer' });
+  }
+  return useCasesForTemplate(null);
+}
+
 const AGENTS_LIST_DESCRIPTION =
   'Agents are focused specialists that help JARVIS plan, execute, triage, or prepare work without turning every task into one giant chat.';
 const AGENTS_LIST_GUIDANCE_ACTIVE =
@@ -613,6 +727,7 @@ function LaunchWizard({
   const models = useAppStore((s) => s.models);
   const setupHeadline = setupHeadlineForTemplate(wizard.templateData);
   const setupChecklist = setupChecklistForTemplate(wizard.templateData);
+  const setupUseCases = useCasesForTemplate(wizard.templateData);
   const setupConnectors = recommendedConnectorsForTemplate(wizard.templateData).slice(0, 3);
 
   useEffect(() => {
@@ -954,6 +1069,17 @@ function LaunchWizard({
               </div>
             ))}
           </div>
+          <div className="mt-4 grid gap-2 md:grid-cols-3">
+            {setupUseCases.map((item) => (
+              <div
+                key={item}
+                className="rounded-lg px-3 py-2 text-xs leading-5"
+                style={{ background: 'var(--color-bg)', border: '1px solid var(--color-border)', color: 'var(--color-text-secondary)' }}
+              >
+                {item}
+              </div>
+            ))}
+          </div>
         </div>
 
         <div className="grid gap-6 lg:grid-cols-[1.15fr_0.85fr]">
@@ -1234,6 +1360,7 @@ function LaunchWizard({
               <div><strong style={{ color: 'var(--color-text)' }}>Schedule:</strong> {formatScheduleLabel(wizard.scheduleType, wizard.scheduleValue)}</div>
               <div><strong style={{ color: 'var(--color-text)' }}>Tools:</strong> {wizard.selectedTools.length ? `${wizard.selectedTools.length} selected` : 'Template defaults'}</div>
               <div><strong style={{ color: 'var(--color-text)' }}>Recommended apps:</strong> {setupConnectors.slice(0, 3).map((source) => source.display_name).join(', ') || 'None yet'}</div>
+              <div><strong style={{ color: 'var(--color-text)' }}>Good first task:</strong> {setupUseCases[0]}</div>
               <div className="pt-2" style={{ color: 'var(--color-text-tertiary)' }}>
                 Keep the first run simple. You can refine tools, connected apps, and runtime behavior after launch.
               </div>
@@ -2116,6 +2243,7 @@ function InteractTab({
 // ---------------------------------------------------------------------------
 
 function ChannelsTab({ agentId, agent }: { agentId: string; agent: ManagedAgent }) {
+  const navigate = useNavigate();
   const [connectors, setConnectors] = useState<
     Array<{ connector_id: string; display_name: string; connected: boolean; chunks: number }>
   >([]);
@@ -2142,11 +2270,11 @@ function ChannelsTab({ agentId, agent }: { agentId: string; agent: ManagedAgent 
 
   useEffect(() => {
     loadConnectors();
-    // Poll every 10s to catch background OAuth completions
+    // Poll gently to catch background OAuth completions without making the Agents page feel heavy.
     const interval = setInterval(() => {
       if (isDocumentHidden()) return;
       void loadConnectors();
-    }, 10000);
+    }, 20000);
     return () => clearInterval(interval);
   }, [loadConnectors]);
 
@@ -2176,6 +2304,7 @@ function ChannelsTab({ agentId, agent }: { agentId: string; agent: ManagedAgent 
   const recommendedSources = recommendedConnectorsForAgent(agent)
     .filter((source) => !connected.some((item) => item.connector_id === source.connector_id))
     .slice(0, 3);
+  const recommendedProviders = recommendedProvidersForAgent(agent);
 
   // Merge with SOURCE_CATALOG for icons/descriptions
   const getMeta = (id: string) =>
@@ -2225,6 +2354,55 @@ function ChannelsTab({ agentId, agent }: { agentId: string; agent: ManagedAgent 
         </div>
       </div>
 
+      {recommendedProviders.length > 0 && (
+        <div
+          className="rounded-xl p-4 mb-4"
+          style={{ background: 'linear-gradient(135deg, rgba(124,58,237,0.12), rgba(15,23,42,0.18))', border: '1px solid var(--color-border)' }}
+        >
+          <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+            <div>
+              <div className="text-xs font-semibold uppercase tracking-[0.24em] mb-2" style={{ color: 'var(--color-text-tertiary)' }}>
+                Easiest Connection Path
+              </div>
+              <div className="text-sm" style={{ color: 'var(--color-text-secondary)' }}>
+                Start with a provider sign-in when it is available. One connection can unlock several apps for this specialist.
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => navigate('/data-sources?focus=providers')}
+              className="inline-flex items-center gap-2 rounded-lg px-3 py-2 text-sm font-medium"
+              style={{ background: 'var(--color-accent)', color: '#fff' }}
+            >
+              Open Connected Apps <ChevronRight size={14} />
+            </button>
+          </div>
+          <div className="mt-4 grid gap-3 md:grid-cols-2">
+            {recommendedProviders.map((provider) => (
+              <button
+                key={provider.provider_id}
+                type="button"
+                onClick={() => navigate('/data-sources?focus=providers')}
+                className="rounded-lg p-3 text-left transition-colors"
+                style={{ background: 'var(--color-bg)', border: '1px solid var(--color-border)' }}
+              >
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-sm font-semibold" style={{ color: 'var(--color-text)' }}>
+                    {provider.actionLabel}
+                  </span>
+                  <span className="text-[10px] px-2 py-0.5 rounded-full" style={{ background: 'rgba(34,197,94,0.14)', color: '#4ade80' }}>
+                    Provider
+                  </span>
+                </div>
+                <div className="mt-2 text-xs leading-5" style={{ color: 'var(--color-text-secondary)' }}>
+                  {provider.description}
+                </div>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
       {recommendedSources.length > 0 && (
         <div
           className="rounded-xl p-4 mb-4"
@@ -2241,7 +2419,13 @@ function ChannelsTab({ agentId, agent }: { agentId: string; agent: ManagedAgent 
               <button
                 key={source.connector_id}
                 type="button"
-                onClick={() => setExpandedId(source.connector_id)}
+                onClick={() => {
+                  if (source.auth_type === 'oauth') {
+                    navigate('/data-sources?focus=providers');
+                    return;
+                  }
+                  setExpandedId(source.connector_id);
+                }}
                 className="rounded-lg p-3 text-left cursor-pointer transition-colors"
                 style={{ background: 'var(--color-bg)', border: '1px solid var(--color-border)' }}
               >
@@ -2255,7 +2439,7 @@ function ChannelsTab({ agentId, agent }: { agentId: string; agent: ManagedAgent 
                   {source.description}
                 </div>
                 <div className="mt-3 text-[10px] uppercase tracking-[0.22em]" style={{ color: 'var(--color-accent)' }}>
-                  Open Setup
+                  {source.auth_type === 'oauth' ? 'Use Provider Sign-In' : 'Open Setup'}
                 </div>
               </button>
             ))}
@@ -3863,19 +4047,19 @@ export function AgentsPage() {
   }, [refresh]);
 
   useEffect(() => {
-    const shouldLoadTemplates = showWizard || visibleAgents.length === 0;
+    const shouldLoadTemplates = showWizard;
     if (!shouldLoadTemplates || templatesLoaded) return;
     fetchTemplates()
       .then(setTemplates)
       .catch(() => {})
       .finally(() => setTemplatesLoaded(true));
-  }, [showWizard, templatesLoaded, visibleAgents.length]);
+  }, [showWizard, templatesLoaded]);
 
   useEffect(() => {
     const interval = setInterval(() => {
       if (isDocumentHidden()) return;
       void refresh();
-    }, 15000);
+    }, 30000);
     return () => clearInterval(interval);
   }, [refresh]);
 
@@ -3903,7 +4087,7 @@ export function AgentsPage() {
     const interval = setInterval(() => {
       if (isDocumentHidden()) return;
       void loadSelectedAgentDetail();
-    }, 15000);
+    }, 30000);
     return () => clearInterval(interval);
   }, [selectedAgentId]);
 
@@ -3926,7 +4110,7 @@ export function AgentsPage() {
     const interval = setInterval(() => {
       if (isDocumentHidden()) return;
       void loadSelectedAgentTasks();
-    }, 12000);
+    }, 30000);
     return () => clearInterval(interval);
   }, [selectedAgentId, shouldLoadTaskHistory]);
 
@@ -3949,7 +4133,7 @@ export function AgentsPage() {
     const interval = setInterval(() => {
       if (isDocumentHidden()) return;
       void loadSelectedAgentChannels();
-    }, 15000);
+    }, 45000);
     return () => clearInterval(interval);
   }, [selectedAgentId, shouldLoadOverviewChannels]);
 
@@ -4058,6 +4242,7 @@ export function AgentsPage() {
     const selectedAgentDescription = describeManagedAgent(selectedAgent);
     const selectedAgentGuidance = statusGuidance(selectedAgent);
     const selectedAgentNextSteps = recommendedNextSteps(selectedAgent);
+    const selectedAgentUseCases = useCasesForAgent(selectedAgent);
 
       const DETAIL_TABS = [
         { id: 'interact', label: 'Chat', icon: MessageSquare },
@@ -4236,6 +4421,28 @@ export function AgentsPage() {
                 </div>
               </div>
             )}
+
+            <div
+              className="p-4 rounded-lg"
+              style={{ background: 'var(--color-bg-secondary)', border: '1px solid var(--color-border)' }}
+            >
+              <div className="text-[11px] font-semibold uppercase tracking-[0.24em] mb-3" style={{ color: 'var(--color-text-tertiary)' }}>
+                Good First Tasks
+              </div>
+              <div className="grid gap-2 md:grid-cols-3">
+                {selectedAgentUseCases.map((item) => (
+                  <button
+                    key={item}
+                    type="button"
+                    onClick={() => setDetailTab('interact')}
+                    className="rounded-lg px-3 py-2 text-left text-sm leading-5 transition-colors"
+                    style={{ background: 'var(--color-bg)', border: '1px solid var(--color-border)', color: 'var(--color-text-secondary)' }}
+                  >
+                    {item}
+                  </button>
+                ))}
+              </div>
+            </div>
 
             {/* Usage stats + savings — single compact row */}
             {(() => {

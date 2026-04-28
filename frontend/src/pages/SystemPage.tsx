@@ -308,8 +308,8 @@ export function SystemPage() {
             <div className="text-[11px] uppercase tracking-[0.38em] text-cyan-300/60">System Lifecycle</div>
             <h1 className="mt-2 text-3xl uppercase tracking-[0.22em] text-cyan-50">JARVIS Startup</h1>
             <p className="mt-3 max-w-3xl text-sm leading-7 text-slate-200/76">
-              Root cause of the voice pain was that launch only started processes. It did not verify readiness, arm the voice loop,
-              or surface what was still blocked. This page keeps startup, readiness, and shutdown controls in one calmer place.
+              Startup now checks readiness, voice-loop state, and blocked services instead of only starting processes.
+              This page keeps startup, readiness, and shutdown controls in one calmer place.
             </p>
           </div>
           <div className="flex flex-wrap gap-3">
@@ -380,9 +380,8 @@ export function SystemPage() {
                   </div>
                 </div>
                 <div className="mt-3 text-sm leading-7 text-slate-200/76">
-                  Root cause of slower local testing is that start, stop, and restart already exist but live outside the normal
-                  JARVIS control surface. This panel brings runtime control into System so you can cycle the stack without
-                  leaving the app.
+                  Start, stop, and restart controls are now inside the normal JARVIS control surface so you can cycle the stack
+                  without leaving the app.
                 </div>
                 <div className="mt-4 grid gap-3 sm:grid-cols-2">
                   <div className="rounded-[1rem] border border-cyan-400/10 bg-black/20 px-4 py-3">
@@ -540,9 +539,8 @@ export function SystemPage() {
             <div className="rounded-[1.5rem] border border-cyan-400/12 bg-slate-950/55 p-5">
               <div className="text-[10px] uppercase tracking-[0.3em] text-cyan-300/55">Commander Brief</div>
               <div className="mt-3 text-sm leading-7 text-slate-200/76">
-                Root cause of earlier “smart but passive” behavior was that JARVIS could track pressure signals without
-                turning them into one clear command recommendation. Commander mode now compresses memory, blockers, and
-                system state into a bounded next move.
+                JARVIS now turns pressure signals into one clear command recommendation instead of leaving them passive.
+                Commander mode compresses memory, blockers, and system state into a bounded next move.
               </div>
               <div className="mt-4 rounded-[1rem] border border-cyan-400/10 bg-black/20 px-4 py-3">
                 <div className="flex items-center justify-between gap-3">
@@ -565,7 +563,7 @@ export function SystemPage() {
                 ) : null}
                 {commanderBrief?.root_cause ? (
                   <>
-                    <div className="mt-3 text-[10px] uppercase tracking-[0.22em] text-cyan-300/55">Root Cause</div>
+                    <div className="mt-3 text-[10px] uppercase tracking-[0.22em] text-cyan-300/55">Signal</div>
                     <div className="mt-1 text-xs leading-6 text-slate-200/72">{commanderBrief.root_cause}</div>
                   </>
                 ) : null}
@@ -639,9 +637,8 @@ export function SystemPage() {
             <div className="rounded-[1.5rem] border border-cyan-400/12 bg-slate-950/55 p-5">
               <div className="text-[10px] uppercase tracking-[0.3em] text-cyan-300/55">Coding Command Brief</div>
               <div className="mt-3 text-sm leading-7 text-slate-200/76">
-                Root cause of earlier coding drift was that repo state, verification, and conventions were visible, but
-                not compressed into one bounded coding command flow. This brief turns the active repo into an assess,
-                patch, verify, and report plan.
+                Repo state, verification, and conventions are compressed into one bounded coding command flow.
+                This brief turns the active repo into an assess, patch, verify, and report plan.
               </div>
               <div className="mt-4 rounded-[1rem] border border-cyan-400/10 bg-black/20 px-4 py-3">
                 <div className="flex items-center justify-between gap-3">
@@ -975,8 +972,8 @@ export function SystemPage() {
             <div className="rounded-[1.5rem] border border-cyan-400/12 bg-slate-950/55 p-5">
               <div className="text-[10px] uppercase tracking-[0.3em] text-cyan-300/55">Memory Layers</div>
               <div className="mt-3 text-sm leading-7 text-slate-200/76">
-                Root cause of earlier memory ambiguity was that profile facts, active work, and longer-lived lessons were blended together.
-                JARVIS now exposes those layers directly so you can inspect what is guiding recommendations.
+                Profile facts, active work, and longer-lived lessons are separated into visible layers so you can inspect
+                what is guiding recommendations.
               </div>
               <div className="mt-4 space-y-3">
                 {([
@@ -1002,8 +999,8 @@ export function SystemPage() {
             <div className="rounded-[1.5rem] border border-cyan-400/12 bg-slate-950/55 p-5">
               <div className="text-[10px] uppercase tracking-[0.3em] text-cyan-300/55">Personal Analytics</div>
               <div className="mt-3 text-sm leading-7 text-slate-200/76">
-                Root cause of earlier “learning but not helping” behavior was that missions, lessons, and operator signals were stored silently.
-                JARVIS now turns them into a visible bottleneck summary so repeated friction can shape the next recommendation.
+                Missions, lessons, and operator signals now feed a visible bottleneck summary instead of staying hidden in memory.
+                Repeated friction can shape the next recommendation.
               </div>
               <div className="mt-4 grid gap-3 lg:grid-cols-2">
                 <div className="rounded-[1rem] border border-cyan-400/10 bg-black/20 px-4 py-3">

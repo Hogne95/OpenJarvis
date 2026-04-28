@@ -30,7 +30,10 @@ class KokoroTTSBackend(TTSBackend):
         try:
             from kokoro import KPipeline
 
-            self._pipeline = KPipeline(lang_code="a")
+            try:
+                self._pipeline = KPipeline(lang_code="a", repo_id="hexgrad/Kokoro-82M")
+            except TypeError:
+                self._pipeline = KPipeline(lang_code="a")
         except ImportError:
             raise RuntimeError(
                 "kokoro package not installed. Install with: pip install kokoro"

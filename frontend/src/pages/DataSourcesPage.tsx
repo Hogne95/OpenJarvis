@@ -1,4 +1,5 @@
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useRef } from 'react';
+import { useLocation } from 'react-router';
 import { useAppStore } from '../lib/store';
 import {
   fetchManagedAgents,
@@ -731,8 +732,9 @@ function ConnectorAccountsPanel({
   );
 }
 
-function DataSourcesSection() {
+function DataSourcesSection({ focusProviders = false }: { focusProviders?: boolean }) {
   const currentUser = useAppStore((s) => s.currentUser);
+  const providerPanelRef = useRef<HTMLDivElement | null>(null);
   const [accounts, setAccounts] = useState<ConnectorAccount[]>([]);
   const [accountsLoading, setAccountsLoading] = useState(false);
   const [accountsHydrated, setAccountsHydrated] = useState(false);
@@ -820,8 +822,19 @@ function DataSourcesSection() {
   }, [loadAccounts]);
 
   useEffect(() => {
-    void loadProviderRuntime();
+    const timer = window.setTimeout(() => {
+      void loadProviderRuntime();
+    }, 650);
+    return () => window.clearTimeout(timer);
   }, [loadProviderRuntime]);
+
+  useEffect(() => {
+    if (!focusProviders) return;
+    const timer = window.setTimeout(() => {
+      providerPanelRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }, 180);
+    return () => window.clearTimeout(timer);
+  }, [focusProviders]);
 
   useEffect(() => {
     if (!accountsHydrated) return;
@@ -831,7 +844,7 @@ function DataSourcesSection() {
     const interval = setInterval(() => {
       if (isDocumentHidden()) return;
       void loadConnectors();
-    }, 15000);
+    }, 30000);
     return () => {
       window.clearTimeout(timer);
       clearInterval(interval);
@@ -846,7 +859,7 @@ function DataSourcesSection() {
       const interval = setInterval(() => {
         if (isDocumentHidden()) return;
         void loadSyncStatuses();
-      }, 10000);
+      }, 25000);
       return () => {
         window.clearTimeout(timer);
         clearInterval(interval);
@@ -996,9 +1009,11 @@ function DataSourcesSection() {
       </div>
 
       <div
+        ref={providerPanelRef}
         style={{
           background: 'linear-gradient(135deg, rgba(124,58,237,0.12), rgba(15,23,42,0.18))',
-          border: '1px solid var(--color-border)',
+          border: focusProviders ? '1px solid rgba(34,211,238,0.55)' : '1px solid var(--color-border)',
+          boxShadow: focusProviders ? '0 0 0 1px rgba(34,211,238,0.14), 0 20px 60px rgba(8,145,178,0.10)' : undefined,
           borderRadius: 10,
           padding: 14,
           marginBottom: 14,
@@ -1012,6 +1027,11 @@ function DataSourcesSection() {
               <div style={{ fontSize: 12, color: 'var(--color-text-secondary)', marginTop: 4, maxWidth: 680 }}>
                 Use the provider cards first. They are the easiest path because one sign-in can cover the related apps together.
               </div>
+              {focusProviders && (
+                <div style={{ fontSize: 11, color: '#67e8f9', marginTop: 6 }}>
+                  JARVIS brought you here from the agent setup. Pick the provider that matches the inbox, calendar, repo, or messages you want this specialist to use.
+                </div>
+              )}
             </div>
             <div style={{ fontSize: 11, color: 'var(--color-text-tertiary)' }}>
               Best path: connect Google or Microsoft here first, then use the manual cards below only when you need a fallback.
@@ -1983,10 +2003,21 @@ function MessagingSection({ agentId }: { agentId: string }) {
 // ---------------------------------------------------------------------------
 
 export function DataSourcesPage() {
+  const location = useLocation();
   const [agents, setAgents] = useState<ManagedAgent[]>([]);
   const [activeTab, setActiveTab] = useState<'sources' | 'messaging'>('sources');
   const [creatingAgent, setCreatingAgent] = useState(false);
   const [agentsHydrated, setAgentsHydrated] = useState(false);
+
+  useEffect(() => {
+    const params = new URLSearchParams(location.search);
+    if (params.get('tab') === 'reach-me') {
+      setActiveTab('messaging');
+    }
+  }, [location.search]);
+
+  const params = new URLSearchParams(location.search);
+  const focusProviders = params.get('focus') === 'providers';
 
   const loadAgents = useCallback(() => {
     fetchManagedAgents({ compact: true })
@@ -2095,7 +2126,7 @@ export function DataSourcesPage() {
 
       {/* Content */}
       <div className="flex-1 overflow-y-auto px-6 pb-6">
-        {activeTab === 'sources' && <DataSourcesSection />}
+        {activeTab === 'sources' && <DataSourcesSection focusProviders={focusProviders} />}
         {activeTab === 'messaging' && (
           firstAgent ? (
             <MessagingSection agentId={firstAgent.id} />

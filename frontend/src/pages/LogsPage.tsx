@@ -98,8 +98,7 @@ export function LogsPage() {
                 </div>
               </div>
               <p className="mt-4 max-w-2xl text-sm leading-7" style={{ color: 'var(--color-text-secondary)' }}>
-                Root cause of the old page feeling messy was that logs were dumped into one plain panel with almost no hierarchy. This
-                layout keeps the same data but makes health, latest activity, and actions much easier to scan.
+                Logs are now grouped so health, latest activity, and actions are easier to scan without digging through one plain stream.
               </p>
             </div>
 
