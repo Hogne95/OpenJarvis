@@ -367,9 +367,14 @@ export function useSpeech() {
     resetContinuousAudioGraph();
     stopMediaTracks();
 
-    try {
-      await processingQueueRef.current;
-    } finally {
+    if (flushPendingAudio) {
+      try {
+        await processingQueueRef.current;
+      } finally {
+        setState('idle');
+      }
+    } else {
+      processingQueueRef.current = Promise.resolve();
       setState('idle');
     }
   }, [flushContinuousAudio, resetContinuousAudioGraph, stopMediaTracks]);

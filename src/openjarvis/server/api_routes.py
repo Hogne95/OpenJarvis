@@ -8,6 +8,7 @@ import json
 import logging
 import os
 import subprocess
+import threading
 import time
 from typing import Any, Dict, List, Literal, Optional
 from email.utils import parseaddr
@@ -37,6 +38,49 @@ from openjarvis.server.auth import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _get_tts_backend(app_state: Any, backend_key: str, backend_cls: type) -> tuple[Any, threading.Lock]:
+    """Reuse warm TTS backends so local voices do not reload on every reply."""
+    cache = getattr(app_state, "tts_backend_cache", None)
+    if not isinstance(cache, dict):
+        cache = {}
+        setattr(app_state, "tts_backend_cache", cache)
+
+    locks = getattr(app_state, "tts_backend_locks", None)
+    if not isinstance(locks, dict):
+        locks = {}
+        setattr(app_state, "tts_backend_locks", locks)
+
+    backend = cache.get(backend_key)
+    if backend is None:
+        backend = backend_cls()
+        cache[backend_key] = backend
+
+    lock = locks.get(backend_key)
+    if lock is None:
+        lock = threading.Lock()
+        locks[backend_key] = lock
+
+    return backend, lock
+
+
+def _synthesize_with_tts_backend(
+    backend: Any,
+    lock: threading.Lock,
+    text: str,
+    *,
+    voice_id: str,
+    speed: float,
+    output_format: str,
+):
+    with lock:
+        return backend.synthesize(
+            text,
+            voice_id=voice_id,
+            speed=speed,
+            output_format=output_format,
+        )
 
 
 def _package_ready(module_name: str) -> bool:
@@ -2047,8 +2091,11 @@ async def synthesize_speech(req: SpeechSynthesizeRequest, request: Request):
 
     try:
         backend_cls = TTSRegistry.get(backend_key)
-        backend = backend_cls()
-        result = backend.synthesize(
+        backend, backend_lock = _get_tts_backend(request.app.state, backend_key, backend_cls)
+        result = await run_in_threadpool(
+            _synthesize_with_tts_backend,
+            backend,
+            backend_lock,
             text,
             voice_id=voice_id,
             speed=speed,
