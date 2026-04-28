@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback, useRef } from 'react';
+import { Suspense, lazy, useEffect, useState, useCallback, useRef } from 'react';
 import { toast } from 'sonner';
 import { useAppStore } from '../lib/store';
 import {
@@ -52,15 +52,16 @@ import {
   useCasesForAgent,
 } from '../lib/agentPresentation';
 import { AgentCard } from '../components/Agents/AgentCard';
-import { ChannelsTab } from '../components/Agents/ChannelsTab';
-import { InteractTab } from '../components/Agents/InteractTab';
-import { LaunchWizard } from '../components/Agents/LaunchWizard';
-import { LearningTab } from '../components/Agents/LearningTab';
-import { LogsTab } from '../components/Agents/LogsTab';
-import { MemoryTab } from '../components/Agents/MemoryTab';
-import { MessagingTab } from '../components/Agents/MessagingTab';
-import { OverviewTab } from '../components/Agents/OverviewTab';
-import { TasksTab } from '../components/Agents/TasksTab';
+
+const ChannelsTab = lazy(() => import('../components/Agents/ChannelsTab').then((module) => ({ default: module.ChannelsTab })));
+const InteractTab = lazy(() => import('../components/Agents/InteractTab').then((module) => ({ default: module.InteractTab })));
+const LaunchWizard = lazy(() => import('../components/Agents/LaunchWizard').then((module) => ({ default: module.LaunchWizard })));
+const LearningTab = lazy(() => import('../components/Agents/LearningTab').then((module) => ({ default: module.LearningTab })));
+const LogsTab = lazy(() => import('../components/Agents/LogsTab').then((module) => ({ default: module.LogsTab })));
+const MemoryTab = lazy(() => import('../components/Agents/MemoryTab').then((module) => ({ default: module.MemoryTab })));
+const MessagingTab = lazy(() => import('../components/Agents/MessagingTab').then((module) => ({ default: module.MessagingTab })));
+const OverviewTab = lazy(() => import('../components/Agents/OverviewTab').then((module) => ({ default: module.OverviewTab })));
+const TasksTab = lazy(() => import('../components/Agents/TasksTab').then((module) => ({ default: module.TasksTab })));
 
 const isDocumentHidden = () => typeof document !== 'undefined' && document.hidden;
 
@@ -110,6 +111,17 @@ type AgentLaunchSuccessState = {
   name: string;
   watcher?: boolean;
 };
+
+function AgentPanelFallback({ label = 'Loading agent view...' }: { label?: string }) {
+  return (
+    <div
+      className="rounded-xl px-4 py-5 text-sm"
+      style={{ background: 'var(--color-bg-secondary)', border: '1px solid var(--color-border)', color: 'var(--color-text-secondary)' }}
+    >
+      {label}
+    </div>
+  );
+}
 
 // ---------------------------------------------------------------------------
 // Main page component
@@ -476,60 +488,63 @@ export function AgentsPage() {
           ))}
         </div>
         {/* Tab: Overview */}
-        {detailTab === 'overview' && (
-          <OverviewTab
-            agent={selectedAgent}
-            channels={channels}
-            isWatcherAgent={isWatcherAgent}
-            useCases={selectedAgentUseCases}
-            onTabChange={setDetailTab}
-            onRun={handleRun}
-            onAgentUpdated={refresh}
-          />
-        )}
-        {/* Tab: Interact */}
-        {detailTab === 'interact' && (
-          <InteractTab
-            agentId={selectedAgent.id}
-            agentStatus={selectedAgent.status}
-            agentName={selectedAgent.name}
-          />
-        )}
+        <Suspense fallback={<AgentPanelFallback />}>
+          {/* Tab: Overview */}
+          {detailTab === 'overview' && (
+            <OverviewTab
+              agent={selectedAgent}
+              channels={channels}
+              isWatcherAgent={isWatcherAgent}
+              useCases={selectedAgentUseCases}
+              onTabChange={setDetailTab}
+              onRun={handleRun}
+              onAgentUpdated={refresh}
+            />
+          )}
+          {/* Tab: Interact */}
+          {detailTab === 'interact' && (
+            <InteractTab
+              agentId={selectedAgent.id}
+              agentStatus={selectedAgent.status}
+              agentName={selectedAgent.name}
+            />
+          )}
 
-        {/* Tab: Channels */}
-        {detailTab === 'channels' && (
-          <ChannelsTab agentId={selectedAgent.id} agent={selectedAgent} />
-        )}
+          {/* Tab: Channels */}
+          {detailTab === 'channels' && (
+            <ChannelsTab agentId={selectedAgent.id} agent={selectedAgent} />
+          )}
 
-        {/* Tab: Messaging */}
-        {detailTab === 'messaging' && (
-          <MessagingTab agentId={selectedAgent.id} agent={selectedAgent} />
-        )}
+          {/* Tab: Messaging */}
+          {detailTab === 'messaging' && (
+            <MessagingTab agentId={selectedAgent.id} agent={selectedAgent} />
+          )}
 
-        {/* Tab: Tasks */}
-        {detailTab === 'tasks' && (
-          <TasksTab
-            tasks={tasks}
-            agentId={selectedAgent.id}
-            onRun={handleRun}
-            onTabChange={setDetailTab}
-          />
-        )}
+          {/* Tab: Tasks */}
+          {detailTab === 'tasks' && (
+            <TasksTab
+              tasks={tasks}
+              agentId={selectedAgent.id}
+              onRun={handleRun}
+              onTabChange={setDetailTab}
+            />
+          )}
 
-        {/* Tab: Memory */}
-        {detailTab === 'memory' && (
-          <MemoryTab summaryMemory={selectedAgent.summary_memory} />
-        )}
+          {/* Tab: Memory */}
+          {detailTab === 'memory' && (
+            <MemoryTab summaryMemory={selectedAgent.summary_memory} />
+          )}
 
-        {/* Tab: Learning */}
-        {detailTab === 'learning' && (
-          <LearningTab agentId={selectedAgent.id} learningEnabled={!!selectedAgent.learning_enabled} />
-        )}
+          {/* Tab: Learning */}
+          {detailTab === 'learning' && (
+            <LearningTab agentId={selectedAgent.id} learningEnabled={!!selectedAgent.learning_enabled} />
+          )}
 
-        {/* Tab: Logs */}
-        {detailTab === 'logs' && (
-          <LogsTab agentId={selectedAgent.id} />
-        )}
+          {/* Tab: Logs */}
+          {detailTab === 'logs' && (
+            <LogsTab agentId={selectedAgent.id} />
+          )}
+        </Suspense>
       </div>
     );
   }
@@ -540,24 +555,26 @@ export function AgentsPage() {
     <div className="flex-1 overflow-y-auto p-6">
       {/* Launch wizard modal */}
       {showWizard && (
-        <LaunchWizard
-          templates={templates}
-          initialTemplateId={pendingTemplateId}
-          onClose={() => {
-            setShowWizard(false);
-            setPendingTemplateId(null);
-          }}
-          onLaunched={(agent) => {
-            setLaunchSuccess({
-              id: agent.id,
-              name: agent.name,
-              watcher: isPersonalWatcherAgent(agent) || pendingTemplateId === PERSONAL_WATCHER_TEMPLATE.id,
-            });
-            setShowWizard(false);
-            setPendingTemplateId(null);
-            refresh();
-          }}
-        />
+        <Suspense fallback={<AgentPanelFallback label="Loading launch wizard..." />}>
+          <LaunchWizard
+            templates={templates}
+            initialTemplateId={pendingTemplateId}
+            onClose={() => {
+              setShowWizard(false);
+              setPendingTemplateId(null);
+            }}
+            onLaunched={(agent) => {
+              setLaunchSuccess({
+                id: agent.id,
+                name: agent.name,
+                watcher: isPersonalWatcherAgent(agent) || pendingTemplateId === PERSONAL_WATCHER_TEMPLATE.id,
+              });
+              setShowWizard(false);
+              setPendingTemplateId(null);
+              refresh();
+            }}
+          />
+        </Suspense>
       )}
 
       <div className="flex justify-between items-center mb-6">

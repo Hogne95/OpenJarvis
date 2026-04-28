@@ -31,6 +31,25 @@ import type { ConnectorAccount } from '../lib/connectors-api';
 import type { ConnectorProviderRuntimeInfo } from '../types/connectors';
 
 const isDocumentHidden = () => typeof document !== 'undefined' && document.hidden;
+type ConnectorSummary = { connector_id: string; display_name: string; connected: boolean; chunks: number };
+const CONNECTOR_SUMMARY_CACHE_KEY = 'openjarvis-connector-summary-cache';
+
+function readConnectorSummaryCache(): ConnectorSummary[] {
+  try {
+    const raw = localStorage.getItem(CONNECTOR_SUMMARY_CACHE_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function writeConnectorSummaryCache(connectors: ConnectorSummary[]) {
+  try {
+    localStorage.setItem(CONNECTOR_SUMMARY_CACHE_KEY, JSON.stringify(connectors));
+  } catch {}
+}
 
 // ---------------------------------------------------------------------------
 // Inline connect form (reused from AgentsPage pattern)
@@ -738,9 +757,7 @@ function DataSourcesSection({ focusProviders = false }: { focusProviders?: boole
   const [accounts, setAccounts] = useState<ConnectorAccount[]>([]);
   const [accountsLoading, setAccountsLoading] = useState(false);
   const [accountsHydrated, setAccountsHydrated] = useState(false);
-  const [connectors, setConnectors] = useState<
-    Array<{ connector_id: string; display_name: string; connected: boolean; chunks: number }>
-  >([]);
+  const [connectors, setConnectors] = useState<ConnectorSummary[]>(() => readConnectorSummaryCache());
   const [syncStatuses, setSyncStatuses] = useState<Record<string, SyncStatus>>({});
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -786,16 +803,16 @@ function DataSourcesSection({ focusProviders = false }: { focusProviders?: boole
       return;
     }
     listConnectors(effectiveAccountId || undefined)
-      .then((list) =>
-        setConnectors(
-          list.map((c) => ({
+      .then((list) => {
+        const next = list.map((c) => ({
             connector_id: c.connector_id,
             display_name: c.display_name,
             connected: c.connected,
             chunks: (c as any).chunks || 0,
-          })),
-        ),
-      )
+          }));
+        setConnectors(next);
+        writeConnectorSummaryCache(next);
+      })
       .catch(() => {});
   }, [effectiveAccountId, needsAccountSelection]);
 
@@ -2015,6 +2032,16 @@ export function DataSourcesPage() {
       setActiveTab('messaging');
     }
   }, [location.search]);
+
+  useEffect(() => {
+    const handleTabSwitch = (event: Event) => {
+      const tab = (event as CustomEvent<string>).detail;
+      if (tab === 'messaging' || tab === 'reach-me') setActiveTab('messaging');
+      if (tab === 'sources' || tab === 'connected-apps') setActiveTab('sources');
+    };
+    window.addEventListener('switch-tab', handleTabSwitch as EventListener);
+    return () => window.removeEventListener('switch-tab', handleTabSwitch as EventListener);
+  }, []);
 
   const params = new URLSearchParams(location.search);
   const focusProviders = params.get('focus') === 'providers';

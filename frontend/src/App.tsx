@@ -56,6 +56,17 @@ function RouteFallback() {
   );
 }
 
+function runWhenIdle(task: () => void, timeout = 1200): () => void {
+  if (typeof window === 'undefined') return () => {};
+  const idleCallback = window.requestIdleCallback;
+  if (idleCallback) {
+    const id = idleCallback(task, { timeout });
+    return () => window.cancelIdleCallback?.(id);
+  }
+  const timer = window.setTimeout(task, Math.min(timeout, 700));
+  return () => window.clearTimeout(timer);
+}
+
 export default function App() {
   const [setupDone, setSetupDone] = useState(!isTauri());
   const [startupPhase, setStartupPhase] = useState<'idle' | 'checking' | 'arming' | 'ready' | 'warning'>('idle');
@@ -67,6 +78,7 @@ export default function App() {
   const serverInfoBootstrapRanRef = useRef(false);
   const optInBootstrapRanRef = useRef(false);
   const startupRanRef = useRef(false);
+  const chatSurfacePreloadRanRef = useRef(false);
   const setModels = useAppStore((s) => s.setModels);
   const setModelsLoading = useAppStore((s) => s.setModelsLoading);
   const setSelectedModel = useAppStore((s) => s.setSelectedModel);
@@ -105,6 +117,7 @@ export default function App() {
     warmedModelsRef.current.clear();
     serverInfoBootstrapRanRef.current = false;
     startupRanRef.current = false;
+    chatSurfacePreloadRanRef.current = false;
     setStartupPhase('idle');
     setStartupDetail('');
     setStartupDismissed(false);
@@ -184,12 +197,27 @@ export default function App() {
       void preloadModel(selectedModel).catch(() => {
         warmedModelsRef.current.delete(selectedModel);
       });
-    }, 500);
+    }, 150);
 
     return () => {
       window.clearTimeout(timer);
     };
   }, [currentUser, selectedModel]);
+
+  useEffect(() => {
+    if (!currentUser || chatSurfacePreloadRanRef.current) return;
+    chatSurfacePreloadRanRef.current = true;
+    return runWhenIdle(() => {
+      void Promise.all([
+        import('./pages/ChatPage'),
+        import('./components/Chat/ChatArea'),
+        import('./components/Chat/InputArea'),
+        import('./components/Chat/MessageBubble'),
+      ]).catch(() => {
+        chatSurfacePreloadRanRef.current = false;
+      });
+    }, 1800);
+  }, [currentUser]);
 
   useEffect(() => {
     if (!currentUser) return;
