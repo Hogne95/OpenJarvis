@@ -14,9 +14,6 @@ import {
   fetchManagedAgent,
   fetchAvailableTools,
   saveToolCredentials,
-  fetchModels,
-  updateManagedAgent,
-  fetchWithTimeout,
 } from '../lib/api';
 import type { AgentTask, ChannelBinding, AgentTemplate, ManagedAgent, ToolInfo } from '../lib/api';
 import {
@@ -36,15 +33,11 @@ import {
   FileText,
   Wifi,
   Database,
-  Check,
-  Pencil,
 } from 'lucide-react';
 import {
   AGENTS_LIST_DESCRIPTION,
   AGENTS_LIST_GUIDANCE_ACTIVE,
   AGENTS_LIST_GUIDANCE_EMPTY,
-  AGENTS_LIST_NEXT_STEPS_ACTIVE,
-  AGENTS_LIST_NEXT_STEPS_EMPTY,
   PERSONAL_WATCHER_TEMPLATE,
   dedupeTemplatesList,
   dedupeVisibleAgents,
@@ -53,8 +46,6 @@ import {
   isPersonalWatcherAgent,
   isRecommendedTemplate,
   normalizeAgentName,
-  recommendedConnectorsForAgent,
-  recommendedNextSteps,
   setupHeadlineForTemplate,
   statusGuidance,
   templateBestForLabel,
@@ -66,7 +57,10 @@ import { InteractTab } from '../components/Agents/InteractTab';
 import { LaunchWizard } from '../components/Agents/LaunchWizard';
 import { LearningTab } from '../components/Agents/LearningTab';
 import { LogsTab } from '../components/Agents/LogsTab';
+import { MemoryTab } from '../components/Agents/MemoryTab';
 import { MessagingTab } from '../components/Agents/MessagingTab';
+import { OverviewTab } from '../components/Agents/OverviewTab';
+import { TasksTab } from '../components/Agents/TasksTab';
 
 const isDocumentHidden = () => typeof document !== 'undefined' && document.hidden;
 
@@ -108,279 +102,6 @@ function StatusBadge({ status }: { status: string }) {
     >
       {status.replace('_', ' ')}
     </span>
-  );
-}
-
-function formatCost(cost?: number): string {
-  if (cost === undefined || cost === null) return '—';
-  return `$${cost.toFixed(4)}`;
-}
-
-function formatRelativeTime(ts?: number | null): string {
-  if (!ts) return 'Never';
-  const diff = Date.now() - ts * 1000;
-  const mins = Math.floor(diff / 60000);
-  if (mins < 1) return 'Just now';
-  if (mins < 60) return `${mins}m ago`;
-  const hours = Math.floor(mins / 60);
-  if (hours < 24) return `${hours}h ago`;
-  return `${Math.floor(hours / 24)}d ago`;
-}
-
-function formatSchedule(type?: string, value?: string): string {
-  if (!type || type === 'manual') return 'Manual';
-  if (type === 'cron' && value) {
-    // Try to display human-readable for common cron patterns
-    const parts = value.trim().split(/\s+/);
-    if (parts.length === 5) {
-      const [min, hour, , , dow] = parts;
-      const hourNum = parseInt(hour, 10);
-      const formatHour = (h: number) => {
-        if (h === 0) return '12:00 AM';
-        if (h < 12) return `${h}:00 AM`;
-        if (h === 12) return '12:00 PM';
-        return `${h - 12}:00 PM`;
-      };
-      // Daily pattern: 0 H * * *
-      if (min === '0' && !isNaN(hourNum) && parts[2] === '*' && parts[3] === '*' && dow === '*') {
-        return `Daily at ${formatHour(hourNum)}`;
-      }
-      // Weekly pattern: 0 H * * days
-      if (min === '0' && !isNaN(hourNum) && parts[2] === '*' && parts[3] === '*' && dow !== '*') {
-        const DAY_NAMES: Record<string, string> = { '1': 'Mon', '2': 'Tue', '3': 'Wed', '4': 'Thu', '5': 'Fri', '6': 'Sat', '7': 'Sun' };
-        const dayList = dow.split(',').map(d => DAY_NAMES[d] || d).join(', ');
-        return `Weekly on ${dayList} at ${formatHour(hourNum)}`;
-      }
-    }
-    return `Cron: ${value}`;
-  }
-  if (type === 'cron') return 'Cron';
-  if (type === 'interval' && value) {
-    const total = parseInt(value);
-    if (!isNaN(total) && total > 0) {
-      const h = Math.floor(total / 3600);
-      const m = Math.floor((total % 3600) / 60);
-      const s = total % 60;
-      const parts: string[] = [];
-      if (h > 0) parts.push(`${h}h`);
-      if (m > 0) parts.push(`${m}m`);
-      if (s > 0) parts.push(`${s}s`);
-      return `Every ${parts.join(' ') || '0s'}`;
-    }
-    return `Every ${value}`;
-  }
-  return type || 'Manual';
-}
-
-// ---------------------------------------------------------------------------
-// Detail view — Configuration grid with editable model
-// ---------------------------------------------------------------------------
-
-function AgentInstructionSection({ agent, onAgentUpdated }: { agent: ManagedAgent; onAgentUpdated: () => void }) {
-  const [editing, setEditing] = useState(false);
-  const [draft, setDraft] = useState('');
-  const currentInstruction = (agent.config?.instruction as string) || '';
-
-  async function save() {
-    try {
-      const newConfig = { ...(agent.config || {}), instruction: draft.trim() };
-      await updateManagedAgent(agent.id, { config: newConfig });
-      onAgentUpdated();
-    } catch { /* ignore */ }
-    setEditing(false);
-  }
-
-  return (
-    <div
-      className="p-3 rounded-lg"
-      style={{ background: 'var(--color-bg-secondary)', border: '1px solid var(--color-border)' }}
-    >
-      <div className="flex items-center gap-2 mb-2">
-        <h3 className="text-sm font-semibold" style={{ color: 'var(--color-text)' }}>Instruction</h3>
-        {!editing && (
-          <button
-            onClick={() => { setDraft(currentInstruction); setEditing(true); }}
-            className="text-xs px-2 py-0.5 rounded cursor-pointer"
-            style={{ color: 'var(--color-accent)', border: '1px solid var(--color-accent)', opacity: 0.8 }}
-          >
-            Edit
-          </button>
-        )}
-      </div>
-      {editing ? (
-        <div className="space-y-2">
-          <textarea
-            autoFocus
-            value={draft}
-            onChange={(e) => setDraft(e.target.value)}
-            rows={3}
-            className="w-full px-3 py-2 rounded-lg text-sm bg-transparent resize-none"
-            style={{ border: '1px solid var(--color-border)', color: 'var(--color-text)' }}
-          />
-          <div className="flex gap-2">
-            <button onClick={save} className="text-xs px-3 py-1 rounded font-medium cursor-pointer" style={{ background: 'var(--color-accent)', color: '#fff' }}>Save</button>
-            <button onClick={() => setEditing(false)} className="text-xs px-3 py-1 rounded cursor-pointer" style={{ color: 'var(--color-text-tertiary)', border: '1px solid var(--color-border)' }}>Cancel</button>
-          </div>
-        </div>
-      ) : (
-        <p className="text-sm" style={{ color: currentInstruction ? 'var(--color-text)' : 'var(--color-text-tertiary)' }}>
-          {currentInstruction || '(No instruction set — click Edit to add one)'}
-        </p>
-      )}
-    </div>
-  );
-}
-
-function AgentConfigGrid({ agent, onAgentUpdated }: { agent: ManagedAgent; onAgentUpdated: () => void }) {
-  const [editingModel, setEditingModel] = useState(false);
-  const [changingModel, setChangingModel] = useState(false);
-  const [models, setModels] = useState<string[]>([]);
-  const currentModel = (agent.config?.model as string) || '(default)';
-
-  // Model availability status: 'available' | 'unavailable' | 'unknown'
-  const [modelAvailable, setModelAvailable] = useState<'available' | 'unavailable' | 'unknown'>('unknown');
-  const [ollamaModels, setOllamaModels] = useState<string[]>([]);
-
-  useEffect(() => {
-    let cancelled = false;
-    async function checkModel() {
-      try {
-        const res = await fetchWithTimeout('http://localhost:11434/api/tags', {}, 5000);
-        if (!res.ok) { setModelAvailable('unknown'); return; }
-        const data = await res.json();
-        const loadedNames: string[] = (data.models || []).map((m: { name: string }) => m.name);
-        if (!cancelled) {
-          setOllamaModels(loadedNames);
-          if (currentModel === '(default)') {
-            setModelAvailable(loadedNames.length > 0 ? 'available' : 'unknown');
-          } else {
-            const isLoaded = loadedNames.some(
-              (n) => n === currentModel || n.startsWith(currentModel + ':') || currentModel.startsWith(n.split(':')[0])
-            );
-            setModelAvailable(isLoaded ? 'available' : 'unavailable');
-          }
-        }
-      } catch {
-        if (!cancelled) setModelAvailable('unknown');
-      }
-    }
-    checkModel();
-    return () => { cancelled = true; };
-  }, [currentModel]);
-
-  async function startEditingModel() {
-    try {
-      const fetched = await fetchModels();
-      setModels(fetched.map((m) => m.id));
-    } catch { /* ignore */ }
-    // Also refresh Ollama models for availability indication
-    try {
-      const res = await fetchWithTimeout('http://localhost:11434/api/tags', {}, 5000);
-      if (res.ok) {
-        const data = await res.json();
-        setOllamaModels((data.models || []).map((m: { name: string }) => m.name));
-      }
-    } catch { /* ignore */ }
-    setEditingModel(true);
-  }
-
-  function isModelLoaded(modelId: string): boolean {
-    return ollamaModels.some(
-      (n) => n === modelId || n.startsWith(modelId + ':') || modelId.startsWith(n.split(':')[0])
-    );
-  }
-
-  async function changeModel(newModel: string) {
-    setChangingModel(true);
-    try {
-      const newConfig = { ...(agent.config || {}), model: newModel };
-      await updateManagedAgent(agent.id, { config: newConfig });
-      onAgentUpdated();
-      toast.success(`Model changed to ${newModel}`);
-    } catch { /* ignore */ }
-    setEditingModel(false);
-    setChangingModel(false);
-  }
-
-  const modelStatusDot = modelAvailable === 'available'
-    ? '#22c55e'
-    : modelAvailable === 'unavailable'
-      ? '#ef4444'
-      : '#888';
-
-  const rows: [string, React.ReactNode][] = [
-    ['Intelligence', editingModel ? (
-      changingModel ? (
-        <span className="text-sm" style={{ color: 'var(--color-text-tertiary)' }}>Switching model...</span>
-      ) : (
-        <select
-          autoFocus
-          defaultValue={currentModel}
-          onChange={(e) => changeModel(e.target.value)}
-          onBlur={() => setEditingModel(false)}
-          className="text-sm rounded px-1 py-0.5"
-          style={{ background: 'var(--color-bg)', border: '1px solid var(--color-border)', color: 'var(--color-text)' }}
-        >
-          {models.map((m) => {
-            const loaded = isModelLoaded(m);
-            return (
-              <option key={m} value={m} style={!loaded ? { color: '#888' } : undefined}>
-                {m}{!loaded ? ' (not loaded)' : ''}
-              </option>
-            );
-          })}
-        </select>
-      )
-    ) : (
-      <span className="flex items-center gap-2">
-        <span
-          style={{
-            width: 8,
-            height: 8,
-            borderRadius: '50%',
-            background: modelStatusDot,
-            display: 'inline-block',
-            flexShrink: 0,
-          }}
-          title={
-            modelAvailable === 'available' ? 'Model running'
-              : modelAvailable === 'unavailable' ? 'Model not available'
-                : 'Could not check model status'
-          }
-        />
-        <span style={{ color: 'var(--color-text)' }}>{currentModel}</span>
-        {modelAvailable === 'unavailable' && (
-          <span className="text-xs" style={{ color: '#ef4444' }}>Not available</span>
-        )}
-        <button
-          onClick={startEditingModel}
-          className="text-xs px-2 py-0.5 rounded cursor-pointer"
-          style={{
-            color: modelAvailable === 'unavailable' ? '#ef4444' : 'var(--color-accent)',
-            border: `1px solid ${modelAvailable === 'unavailable' ? '#ef4444' : 'var(--color-accent)'}`,
-            opacity: 0.8,
-          }}
-        >
-          Change
-        </button>
-      </span>
-    )],
-    ['Agent Type', <span key="at">{agent.agent_type}</span>],
-    ['Schedule', <span key="sc">{formatSchedule(agent.schedule_type, agent.schedule_value)}</span>],
-    ['Last Run', <span key="lr">{formatRelativeTime(agent.last_run_at)}</span>],
-    ['Budget', <span key="bg">{agent.budget ? formatCost(agent.budget) : 'Unlimited'}</span>],
-    ['Learning', <span key="le">{agent.learning_enabled ? 'Enabled' : 'Disabled'}</span>],
-  ];
-
-  return (
-    <div className="grid grid-cols-2 gap-x-6 gap-y-1.5">
-      {rows.map(([label, value]) => (
-        <div key={label as string} className="flex gap-2 items-center text-sm">
-          <span className="font-medium" style={{ color: 'var(--color-text-secondary)', minWidth: 110 }}>{label}</span>
-          <span style={{ color: 'var(--color-text)' }}>{value}</span>
-        </div>
-      ))}
-    </div>
   );
 }
 
@@ -625,14 +346,9 @@ export function AgentsPage() {
   // ── Detail View ─────────────────────────────────────────────────────────
 
   if (selectedAgent) {
-    const successRate =
-      tasks.length > 0
-        ? Math.round((tasks.filter((t) => t.status === 'completed').length / tasks.length) * 100)
-        : null;
     const isWatcherAgent = isPersonalWatcherAgent(selectedAgent);
     const selectedAgentDescription = describeManagedAgent(selectedAgent);
     const selectedAgentGuidance = statusGuidance(selectedAgent);
-    const selectedAgentNextSteps = recommendedNextSteps(selectedAgent);
     const selectedAgentUseCases = useCasesForAgent(selectedAgent);
 
       const DETAIL_TABS = [
@@ -759,283 +475,18 @@ export function AgentsPage() {
             </button>
           ))}
         </div>
-
         {/* Tab: Overview */}
         {detailTab === 'overview' && (
-          <div className="space-y-3">
-            {/* Instruction */}
-            <AgentInstructionSection agent={selectedAgent} onAgentUpdated={refresh} />
-
-            {/* Configuration */}
-            <div
-              className="p-3 rounded-lg"
-              style={{ background: 'var(--color-bg-secondary)', border: '1px solid var(--color-border)' }}
-            >
-              <h3 className="text-sm font-semibold mb-2" style={{ color: 'var(--color-text)' }}>
-                Configuration
-              </h3>
-              <p className="text-xs mb-3" style={{ color: 'var(--color-text-secondary)' }}>
-                These are the main operating settings for this agent. You usually only need to change them after you have seen a real run.
-              </p>
-              <AgentConfigGrid agent={selectedAgent} onAgentUpdated={refresh} />
-              <div className="mt-2 pt-2" style={{ borderTop: '1px solid var(--color-border)' }}>
-                <span className="text-xs font-mono" style={{ color: 'var(--color-text-tertiary)' }}>
-                  ID: {selectedAgent.id}
-                </span>
-              </div>
-            </div>
-
-            {/* Hint for deep research agents */}
-            {selectedAgent.agent_type === 'deep_research' && (
-              <div
-                className="flex items-start gap-3 p-3 rounded-lg text-sm"
-                style={{
-                  background: 'var(--color-accent-subtle)',
-                  border: '1px solid var(--color-border)',
-                }}
-              >
-                <Database size={16} style={{ color: 'var(--color-accent)', flexShrink: 0, marginTop: 2 }} />
-                <div style={{ color: 'var(--color-text-secondary)' }}>
-                  <strong>Tip:</strong> Connect your personal data in the{' '}
-                  <button
-                    onClick={() => setDetailTab('channels')}
-                    className="cursor-pointer underline"
-                    style={{ color: 'var(--color-accent)', background: 'none', border: 'none', padding: 0, font: 'inherit' }}
-                  >Connected Apps</button>{' '}
-                  tab, then set up{' '}
-                  <button
-                    onClick={() => setDetailTab('messaging')}
-                    className="cursor-pointer underline"
-                    style={{ color: 'var(--color-accent)', background: 'none', border: 'none', padding: 0, font: 'inherit' }}
-                  >Reach Me</button>{' '}
-                    to talk to this agent from your phone.
-                </div>
-              </div>
-            )}
-
-            <div
-              className="p-4 rounded-lg"
-              style={{ background: 'var(--color-bg-secondary)', border: '1px solid var(--color-border)' }}
-            >
-              <div className="text-[11px] font-semibold uppercase tracking-[0.24em] mb-3" style={{ color: 'var(--color-text-tertiary)' }}>
-                Good First Tasks
-              </div>
-              <div className="grid gap-2 md:grid-cols-3">
-                {selectedAgentUseCases.map((item) => (
-                  <button
-                    key={item}
-                    type="button"
-                    onClick={() => setDetailTab('interact')}
-                    className="rounded-lg px-3 py-2 text-left text-sm leading-5 transition-colors"
-                    style={{ background: 'var(--color-bg)', border: '1px solid var(--color-border)', color: 'var(--color-text-secondary)' }}
-                  >
-                    {item}
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            {/* Usage stats + savings — single compact row */}
-            {(() => {
-              const inTok = selectedAgent.input_tokens ?? 0;
-              const outTok = selectedAgent.output_tokens ?? 0;
-              const modelName = (selectedAgent.config?.model as string) || '';
-              const paramMatch = modelName.match(/:(\d+(?:\.\d+)?)b/i);
-              const paramsB = paramMatch ? parseFloat(paramMatch[1]) : 9;
-              const flops = 2 * paramsB * 1e9 * (inTok + outTok);
-              const providers = [
-                { label: 'GPT-5.3', inPer1M: 2.0, outPer1M: 10.0 },
-                { label: 'Claude Opus 4.6', inPer1M: 5.0, outPer1M: 25.0 },
-                { label: 'Gemini 3.1 Pro', inPer1M: 2.0, outPer1M: 12.0 },
-              ];
-              const energyWh = (inTok + outTok) / 1000 * 0.4;
-              const energyKj = energyWh * 3.6;
-              const fmtFlops = flops >= 1e15 ? `${(flops / 1e15).toFixed(1)} PFLOPs` : `${(flops / 1e12).toFixed(1)} TFLOPs`;
-              const hasSavings = inTok + outTok > 0;
-              const sectionTitle = { fontSize: 11, fontWeight: 600, color: 'var(--color-text-tertiary)', textTransform: 'uppercase' as const, letterSpacing: '0.05em', marginBottom: 8 };
-              return (
-                <div className="p-4 rounded-xl" style={{ background: 'var(--color-bg-secondary)', border: '1px solid var(--color-border)' }}>
-                  <div className="flex gap-0 flex-wrap items-stretch">
-                    {/* Agent Statistics */}
-                    <div className="pr-5">
-                      <p style={sectionTitle}>Agent Statistics</p>
-                      <div className="flex gap-5">
-                        <div>
-                          <p className="text-xl font-bold leading-none" style={{ color: 'var(--color-text)' }}>{selectedAgent.total_runs ?? 0}</p>
-                          <p className="text-xs mt-1" style={{ color: 'var(--color-text-tertiary)' }}>Total Queries</p>
-                        </div>
-                        <div>
-                          <p className="text-xl font-bold leading-none" style={{ color: 'var(--color-text)' }}>{inTok.toLocaleString()}</p>
-                          <p className="text-xs mt-1" style={{ color: 'var(--color-text-tertiary)' }}>Input Tokens</p>
-                        </div>
-                        <div>
-                          <p className="text-xl font-bold leading-none" style={{ color: 'var(--color-text)' }}>{outTok.toLocaleString()}</p>
-                          <p className="text-xs mt-1" style={{ color: 'var(--color-text-tertiary)' }}>Output Tokens</p>
-                        </div>
-                      </div>
-                    </div>
-                    {hasSavings && (<>
-                      <div style={{ width: 1, background: 'var(--color-border)' }} />
-                      {/* Local Utilization */}
-                      <div className="px-5">
-                        <p style={sectionTitle}>Local Utilization</p>
-                        <div className="flex gap-5">
-                          <div>
-                            <p className="text-xl font-bold leading-none" style={{ color: '#22c55e' }}>{fmtFlops}</p>
-                            <p className="text-xs mt-1" style={{ color: 'var(--color-text-tertiary)' }}>Compute</p>
-                          </div>
-                          <div>
-                            <p className="text-xl font-bold leading-none" style={{ color: '#22c55e' }}>{energyKj.toFixed(2)} kJ</p>
-                            <p className="text-xs mt-1" style={{ color: 'var(--color-text-tertiary)' }}>Energy</p>
-                          </div>
-                        </div>
-                      </div>
-                      <div style={{ width: 1, background: 'var(--color-border)' }} />
-                      {/* Dollars Saved */}
-                      <div className="pl-5">
-                        <p style={sectionTitle}>Dollars Saved vs.</p>
-                        <div className="flex gap-5">
-                          {providers.map((p) => {
-                            const cost = (inTok / 1e6) * p.inPer1M + (outTok / 1e6) * p.outPer1M;
-                            return (
-                              <div key={p.label}>
-                                <p className="text-xl font-bold leading-none" style={{ color: '#22c55e' }}>${cost.toFixed(4)}</p>
-                                <p className="text-xs mt-1" style={{ color: 'var(--color-text-tertiary)' }}>{p.label}</p>
-                              </div>
-                            );
-                          })}
-                        </div>
-                      </div>
-                    </>)}
-                  </div>
-                </div>);
-            })()}
-
-            {isWatcherAgent && (
-              <div
-                className="p-4 rounded-lg"
-                style={{ background: 'var(--color-bg-secondary)', border: '1px solid var(--color-border)' }}
-              >
-                <div className="text-[11px] font-semibold uppercase tracking-[0.24em] mb-3" style={{ color: 'var(--color-text-tertiary)' }}>
-                  Watcher Setup Path
-                </div>
-                <div className="grid gap-3 md:grid-cols-3">
-                  <div
-                    className="rounded-lg p-3"
-                    style={{ background: 'var(--color-bg)', border: '1px solid var(--color-border)' }}
-                  >
-                    <div className="text-sm font-medium mb-1" style={{ color: 'var(--color-text)' }}>
-                      1. Connect inbox
-                    </div>
-                    <div className="text-sm mb-3" style={{ color: 'var(--color-text-secondary)' }}>
-                      Start with personal email so this watcher can actually see meeting changes and action-needed messages.
-                    </div>
-                    <button
-                      onClick={() => setDetailTab('channels')}
-                      className="inline-flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium cursor-pointer"
-                      style={{ background: 'var(--color-bg-secondary)', border: '1px solid var(--color-border)', color: 'var(--color-text)' }}
-                    >
-                      <Database size={14} /> Connected Apps
-                    </button>
-                  </div>
-                  <div
-                    className="rounded-lg p-3"
-                    style={{ background: 'var(--color-bg)', border: '1px solid var(--color-border)' }}
-                  >
-                    <div className="text-sm font-medium mb-1" style={{ color: 'var(--color-text)' }}>
-                      2. Choose how JARVIS reaches you
-                    </div>
-                    <div className="text-sm mb-3" style={{ color: 'var(--color-text-secondary)' }}>
-                      Pick one route you already check often. One good route is better than three noisy ones.
-                    </div>
-                    <button
-                      onClick={() => setDetailTab('messaging')}
-                      className="inline-flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium cursor-pointer"
-                      style={{ background: 'var(--color-bg-secondary)', border: '1px solid var(--color-border)', color: 'var(--color-text)' }}
-                    >
-                      <Wifi size={14} /> Reach Me
-                    </button>
-                  </div>
-                  <div
-                    className="rounded-lg p-3"
-                    style={{ background: 'var(--color-bg)', border: '1px solid var(--color-border)' }}
-                  >
-                    <div className="text-sm font-medium mb-1" style={{ color: 'var(--color-text)' }}>
-                      3. Run one calm test
-                    </div>
-                    <div className="text-sm mb-3" style={{ color: 'var(--color-text-secondary)' }}>
-                      Keep it manual first so you can see whether the watcher is useful before it becomes part of your daily routine.
-                    </div>
-                    <button
-                      onClick={() => handleRun(selectedAgent.id)}
-                      className="inline-flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium cursor-pointer"
-                      style={{ background: 'var(--color-accent)', color: '#fff' }}
-                    >
-                      <Zap size={14} /> Run Agent
-                    </button>
-                  </div>
-                </div>
-              </div>
-            )}
-
-            <div
-              className="p-4 rounded-lg"
-              style={{ background: 'var(--color-bg-secondary)', border: '1px solid var(--color-border)' }}
-            >
-              <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
-                <div>
-                  <h3 className="text-sm font-medium mb-2" style={{ color: 'var(--color-text-secondary)' }}>
-                    Next best move
-                  </h3>
-                  <div className="text-sm" style={{ color: 'var(--color-text-tertiary)' }}>
-                    Start with a chat or one run. If you want more context, connect {recommendedConnectorsForAgent(selectedAgent).slice(0, 3).map((source) => source.display_name).join(', ')} next.
-                  </div>
-                </div>
-                <div className="flex flex-wrap gap-2">
-                  <button
-                    onClick={() => setDetailTab('interact')}
-                    className="inline-flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium cursor-pointer"
-                    style={{ background: 'var(--color-bg)', border: '1px solid var(--color-border)', color: 'var(--color-text)' }}
-                  >
-                    <MessageSquare size={14} /> Chat
-                  </button>
-                  <button
-                    onClick={() => handleRun(selectedAgent.id)}
-                    className="inline-flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium cursor-pointer"
-                    style={{ background: 'var(--color-accent)', color: '#fff' }}
-                  >
-                    <Zap size={14} /> Run Agent
-                  </button>
-                  <button
-                    onClick={() => setDetailTab('channels')}
-                    className="inline-flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium cursor-pointer"
-                    style={{ background: 'var(--color-bg)', border: '1px solid var(--color-border)', color: 'var(--color-text)' }}
-                  >
-                    <Database size={14} /> Connected Apps
-                  </button>
-                </div>
-              </div>
-            </div>
-
-            {/* Channels summary */}
-            {channels.length > 0 && (
-              <div
-                className="p-4 rounded-lg"
-                style={{ background: 'var(--color-bg-secondary)', border: '1px solid var(--color-border)' }}
-              >
-                  <h3 className="text-sm font-medium mb-2" style={{ color: 'var(--color-text-secondary)' }}>
-                    Reach Me
-                  </h3>
-                {channels.map((b) => (
-                  <div key={b.id} className="text-sm py-1" style={{ color: 'var(--color-text)' }}>
-                    {b.channel_type}: {b.routing_mode}
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
+          <OverviewTab
+            agent={selectedAgent}
+            channels={channels}
+            isWatcherAgent={isWatcherAgent}
+            useCases={selectedAgentUseCases}
+            onTabChange={setDetailTab}
+            onRun={handleRun}
+            onAgentUpdated={refresh}
+          />
         )}
-
         {/* Tab: Interact */}
         {detailTab === 'interact' && (
           <InteractTab
@@ -1057,74 +508,17 @@ export function AgentsPage() {
 
         {/* Tab: Tasks */}
         {detailTab === 'tasks' && (
-          <div className="space-y-2">
-            {tasks.map((t) => (
-              <div
-                key={t.id}
-                className="p-3 rounded-lg"
-                style={{ background: 'var(--color-bg-secondary)', border: '1px solid var(--color-border)' }}
-              >
-                <div className="flex justify-between items-start gap-3">
-                  <span className="text-sm" style={{ color: 'var(--color-text)' }}>
-                    {t.description}
-                  </span>
-                  <span
-                    className="text-xs px-2 py-0.5 rounded flex-shrink-0"
-                    style={{
-                      background: statusColor(t.status) + '20',
-                      color: statusColor(t.status),
-                    }}
-                  >
-                    {t.status}
-                  </span>
-                </div>
-              </div>
-            ))}
-            {tasks.length === 0 && (
-              <div
-                className="rounded-xl p-5 text-center"
-                style={{ background: 'var(--color-bg-secondary)', border: '1px solid var(--color-border)' }}
-              >
-                <div className="text-sm font-medium mb-2" style={{ color: 'var(--color-text)' }}>
-                  No runs yet
-                </div>
-                <div className="text-sm mb-4" style={{ color: 'var(--color-text-tertiary)' }}>
-                  Start the agent once and JARVIS will show its recent work here.
-                </div>
-                <div className="flex flex-wrap justify-center gap-2">
-                  <button
-                    onClick={() => handleRun(selectedAgent.id)}
-                    className="inline-flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium cursor-pointer"
-                    style={{ background: 'var(--color-accent)', color: '#fff' }}
-                  >
-                    <Zap size={14} /> Run Agent
-                  </button>
-                  <button
-                    onClick={() => setDetailTab('interact')}
-                    className="inline-flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium cursor-pointer"
-                    style={{ background: 'var(--color-bg)', border: '1px solid var(--color-border)', color: 'var(--color-text)' }}
-                  >
-                    <MessageSquare size={14} /> Chat First
-                  </button>
-                </div>
-              </div>
-            )}
-          </div>
+          <TasksTab
+            tasks={tasks}
+            agentId={selectedAgent.id}
+            onRun={handleRun}
+            onTabChange={setDetailTab}
+          />
         )}
 
         {/* Tab: Memory */}
         {detailTab === 'memory' && (
-          <div
-            className="p-4 rounded-lg"
-            style={{ background: 'var(--color-bg-secondary)', border: '1px solid var(--color-border)' }}
-          >
-            <h3 className="text-sm font-medium mb-3 flex items-center gap-2" style={{ color: 'var(--color-text-secondary)' }}>
-              <Brain size={14} /> Summary Memory
-            </h3>
-            <p className="whitespace-pre-wrap text-sm" style={{ color: 'var(--color-text)' }}>
-              {selectedAgent.summary_memory || 'No stored memory yet. Once the agent runs, JARVIS will keep a compact summary here.'}
-            </p>
-          </div>
+          <MemoryTab summaryMemory={selectedAgent.summary_memory} />
         )}
 
         {/* Tab: Learning */}
