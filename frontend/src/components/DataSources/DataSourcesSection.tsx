@@ -13,11 +13,25 @@ import type { ConnectorAccount } from '../../lib/connectors-api';
 import type { ConnectRequest, ConnectorProviderRuntimeInfo, SyncStatus } from '../../types/connectors';
 import { ConnectorAccountsPanel } from './ConnectorAccountsPanel';
 import { ConnectorSourceGrids } from './ConnectorSourceGrids';
+import type { ConnectorSummary } from './dataSourceTypes';
 import { ProviderConnectPanel } from './ProviderConnectPanel';
 
 const isDocumentHidden = () => typeof document !== 'undefined' && document.hidden;
-type ConnectorSummary = { connector_id: string; display_name: string; connected: boolean; chunks: number };
 const CONNECTOR_SUMMARY_CACHE_KEY = 'openjarvis-connector-summary-cache';
+
+function toConnectorSummary(connector: {
+  connector_id: string;
+  display_name: string;
+  connected: boolean;
+  chunks?: number;
+}): ConnectorSummary {
+  return {
+    connector_id: connector.connector_id,
+    display_name: connector.display_name,
+    connected: connector.connected,
+    chunks: connector.chunks || 0,
+  };
+}
 
 function readConnectorSummaryCache(): ConnectorSummary[] {
   try {
@@ -93,12 +107,7 @@ export function DataSourcesSection({ focusProviders = false }: { focusProviders?
     }
     listConnectors(effectiveAccountId || undefined)
       .then((list) => {
-        const next = list.map((c) => ({
-            connector_id: c.connector_id,
-            display_name: c.display_name,
-            connected: c.connected,
-            chunks: (c as any).chunks || 0,
-          }));
+        const next = list.map(toConnectorSummary);
         setConnectors(next);
         writeConnectorSummaryCache(next);
       })
@@ -196,12 +205,7 @@ export function DataSourcesSection({ focusProviders = false }: { focusProviders?
         const updated = await listConnectors(effectiveAccountId || undefined);
         const target = updated.find((c) => c.connector_id === id);
         if (target?.connected) {
-          setConnectors(updated.map((c) => ({
-            connector_id: c.connector_id,
-            display_name: c.display_name,
-            connected: c.connected,
-            chunks: (c as any).chunks || 0,
-          })));
+          setConnectors(updated.map(toConnectorSummary));
           break;
         }
         setConnectStage(i < 5 ? 'Authenticating...' : 'Waiting for connection...');

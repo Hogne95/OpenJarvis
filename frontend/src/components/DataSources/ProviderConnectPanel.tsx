@@ -1,8 +1,7 @@
 import type { RefObject } from 'react';
 import { PROVIDER_CATALOG } from '../../types/connectors';
 import type { ConnectorProviderRuntimeInfo } from '../../types/connectors';
-
-type ConnectorSummary = { connector_id: string; display_name: string; connected: boolean; chunks: number };
+import type { ConnectorSummary } from './dataSourceTypes';
 
 interface ProviderConnectPanelProps {
   focusProviders: boolean;

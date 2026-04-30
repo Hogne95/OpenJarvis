@@ -2,8 +2,8 @@ import type { ConnectRequest, SyncStatus } from '../../types/connectors';
 import {
   AvailableSourceCard,
   ConnectedSourceCard,
-  type ConnectorSummary,
 } from './ConnectorSourceCards';
+import type { ConnectorSummary } from './dataSourceTypes';
 
 interface ConnectorSourceGridsProps {
   connected: ConnectorSummary[];

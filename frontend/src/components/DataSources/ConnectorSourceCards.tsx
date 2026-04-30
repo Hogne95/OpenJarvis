@@ -1,33 +1,8 @@
-import { SOURCE_CATALOG } from '../../types/connectors';
 import type { ConnectRequest, SyncStatus } from '../../types/connectors';
 import { InlineConnectForm, UploadForm } from './DataSourceForms';
 import { SyncStatusDisplay } from './SyncStatusDisplay';
-
-export type ConnectorSummary = {
-  connector_id: string;
-  display_name: string;
-  connected: boolean;
-  chunks: number;
-};
-
-const iconMap: Record<string, string> = {
-  gmail: '\u2709\uFE0F',
-  gmail_imap: '\u2709\uFE0F',
-  gmail_api: '\u2709\uFE0F',
-  slack: '#',
-  imessage: '\uD83D\uDCAC',
-  gdrive: '\uD83D\uDCC1',
-  notion: '\uD83D\uDCC4',
-  obsidian: '\uD83D\uDCC1',
-  granola: '\uD83C\uDF99\uFE0F',
-  gcalendar: '\uD83D\uDCC5',
-  gcontacts: '\uD83D\uDCC7',
-  outlook: '\u2709\uFE0F',
-  apple_notes: '\uD83C\uDF4E',
-  dropbox: '\uD83D\uDCE6',
-  whatsapp: '\uD83D\uDCF1',
-  upload: '\uD83D\uDCC2',
-};
+import type { ConnectorSummary } from './dataSourceTypes';
+import { SOURCE_CATALOG_BY_ID, SOURCE_ICON_BY_ID } from './sourceCatalogLookup';
 
 function SetupSteps({ steps }: { steps: Array<{ label: string; url?: string; urlLabel?: string }> }) {
   return (
@@ -82,7 +57,7 @@ export function ConnectedSourceCard({
   onConnect: (connectorId: string, request: ConnectRequest) => void;
   onLoadConnectors: () => void;
 }) {
-  const meta = SOURCE_CATALOG.find((source) => source.connector_id === connector.connector_id);
+  const meta = SOURCE_CATALOG_BY_ID.get(connector.connector_id);
   const unit = meta?.unitLabel || 'items';
   const hasError = !!sync?.error;
 
@@ -97,7 +72,7 @@ export function ConnectedSourceCard({
       }}
     >
       <div style={{ padding: '12px 14px', display: 'flex', alignItems: 'center', gap: 8 }}>
-        <span style={{ fontSize: 20 }}>{iconMap[connector.connector_id] || '\uD83D\uDD17'}</span>
+        <span style={{ fontSize: 20 }}>{SOURCE_ICON_BY_ID[connector.connector_id] || '\uD83D\uDD17'}</span>
         <div style={{ flex: 1 }}>
           <div style={{ fontSize: 14, fontWeight: 600 }}>{connector.display_name}</div>
           <SyncStatusDisplay
@@ -166,7 +141,7 @@ export function AvailableSourceCard({
   onConnect: (connectorId: string, request: ConnectRequest) => void;
   onLoadConnectors: () => void;
 }) {
-  const meta = SOURCE_CATALOG.find((source) => source.connector_id === connector.connector_id);
+  const meta = SOURCE_CATALOG_BY_ID.get(connector.connector_id);
 
   return (
     <div
@@ -183,7 +158,7 @@ export function AvailableSourceCard({
         style={{ padding: '12px 14px', display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}
         onClick={() => onToggleExpanded(isExpanded ? null : connector.connector_id)}
       >
-        <span style={{ fontSize: 20 }}>{iconMap[connector.connector_id] || '\uD83D\uDD17'}</span>
+        <span style={{ fontSize: 20 }}>{SOURCE_ICON_BY_ID[connector.connector_id] || '\uD83D\uDD17'}</span>
         <div style={{ flex: 1 }}>
           <div style={{ fontSize: 14, fontWeight: 600, color: 'var(--color-text-secondary)' }}>
             {connector.display_name}
