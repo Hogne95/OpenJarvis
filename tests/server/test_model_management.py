@@ -41,6 +41,7 @@ def _make_ollama_engine(models=None):
     """Create a mock engine that looks like OllamaEngine."""
     engine = _make_engine(engine_id="ollama", models=models)
     engine._host = "http://localhost:11434"
+    engine._client = MagicMock()
     return engine
 
 
@@ -101,6 +102,54 @@ class TestModelPull:
             resp = client.post("/v1/models/pull", json={"model": "foo"})
 
         assert resp.status_code == 502
+
+
+# ---------------------------------------------------------------------------
+# Model preload endpoint
+# ---------------------------------------------------------------------------
+
+
+class TestModelPreload:
+    def test_preload_requires_model_field(self):
+        engine = _make_ollama_engine()
+        client = TestClient(_app(engine, engine_name="ollama"))
+        resp = client.post("/v1/models/preload", json={})
+        assert resp.status_code == 400
+        assert "model" in resp.json()["detail"].lower()
+
+    def test_preload_skips_cloud_models(self):
+        engine = _make_ollama_engine()
+        client = TestClient(_app(engine, engine_name="ollama"))
+        resp = client.post("/v1/models/preload", json={"model": "gpt-4o"})
+        assert resp.status_code == 200
+        assert resp.json()["status"] == "skipped"
+        engine._client.post.assert_not_called()
+
+    def test_preload_warms_ollama_model(self):
+        engine = _make_ollama_engine()
+        mock_resp = MagicMock()
+        mock_resp.raise_for_status = MagicMock()
+        mock_resp.json.return_value = {"load_duration": 123}
+        engine._client.post.return_value = mock_resp
+        client = TestClient(_app(engine, engine_name="ollama"))
+
+        resp = client.post(
+            "/v1/models/preload",
+            json={"model": "qwen3.5:4b", "keep_alive": "10m"},
+        )
+
+        assert resp.status_code == 200
+        assert resp.json()["status"] == "ok"
+        engine._client.post.assert_called_once_with(
+            "/api/generate",
+            json={
+                "model": "qwen3.5:4b",
+                "prompt": "",
+                "stream": False,
+                "keep_alive": "10m",
+            },
+            timeout=20.0,
+        )
 
 
 # ---------------------------------------------------------------------------

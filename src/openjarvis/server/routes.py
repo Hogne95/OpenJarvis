@@ -7,6 +7,7 @@ import uuid
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request
+from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import StreamingResponse
 
 from openjarvis.assistant import build_assistant_system_context
@@ -30,6 +31,52 @@ from openjarvis.server.models import (
 )
 
 router = APIRouter()
+
+
+def _unwrap_engine(engine):
+    """Peel telemetry wrappers so model management can reach the real backend."""
+    seen: set[int] = set()
+    current = engine
+    while hasattr(current, "_inner") and id(current) not in seen:
+        seen.add(id(current))
+        current = getattr(current, "_inner")
+    return current
+
+
+def _preload_ollama_model(engine, model_name: str, keep_alive: str) -> dict[str, Any]:
+    """Warm an Ollama model without producing a visible chat response."""
+    inner = _unwrap_engine(engine)
+    target = inner
+    try:
+        from openjarvis.engine.multi import MultiEngine
+
+        if isinstance(inner, MultiEngine):
+            target = inner._engine_for(model_name) or inner
+    except Exception:
+        target = inner
+
+    client = getattr(target, "_client", None)
+    if client is None:
+        raise RuntimeError("Selected engine does not expose an Ollama client")
+
+    resp = client.post(
+        "/api/generate",
+        json={
+            "model": model_name,
+            "prompt": "",
+            "stream": False,
+            "keep_alive": keep_alive,
+        },
+        timeout=20.0,
+    )
+    resp.raise_for_status()
+    data = resp.json() if hasattr(resp, "json") else {}
+    return {
+        "status": "ok",
+        "model": model_name,
+        "backend": "ollama",
+        "load_duration": data.get("load_duration", 0) if isinstance(data, dict) else 0,
+    }
 
 
 def _to_messages(chat_messages) -> list[Message]:
@@ -580,6 +627,31 @@ async def pull_model(request: Request):
         client.close()
 
     return {"status": "ok", "model": model_name}
+
+
+@router.post("/v1/models/preload")
+async def preload_model(request: Request):
+    """Warm a local model so the first chat turn feels responsive."""
+    from openjarvis.server.cloud_router import is_cloud_model
+
+    body = await request.json()
+    model_name = body.get("model", "").strip()
+    keep_alive = body.get("keep_alive", "10m") or "10m"
+    if not model_name:
+        raise HTTPException(status_code=400, detail="'model' field is required")
+    if is_cloud_model(model_name):
+        return {"status": "skipped", "model": model_name, "backend": "cloud"}
+
+    engine = request.app.state.engine
+    try:
+        return await run_in_threadpool(
+            _preload_ollama_model,
+            engine,
+            model_name,
+            str(keep_alive),
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Model preload failed: {exc}")
 
 
 @router.delete("/v1/models/{model_name:path}")

@@ -1,5 +1,5 @@
 import { Suspense, lazy, useEffect, useState, useCallback, useRef } from 'react';
-import { Routes, Route } from 'react-router';
+import { Routes, Route, useLocation } from 'react-router';
 import { Layout } from './components/Layout';
 import { CommandPalette } from './components/CommandPalette';
 import { SetupScreen } from './components/SetupScreen';
@@ -68,6 +68,7 @@ function runWhenIdle(task: () => void, timeout = 1200): () => void {
 }
 
 export default function App() {
+  const location = useLocation();
   const [setupDone, setSetupDone] = useState(!isTauri());
   const [startupPhase, setStartupPhase] = useState<'idle' | 'checking' | 'arming' | 'ready' | 'warning'>('idle');
   const [startupDetail, setStartupDetail] = useState('');
@@ -190,6 +191,10 @@ export default function App() {
 
   useEffect(() => {
     if (!currentUser || !selectedModel) return;
+    if (!location.pathname.includes('/chat')) {
+      // A model warmup loads the model into RAM. Keep that for Chat only.
+      return;
+    }
     if (warmedModelsRef.current.has(selectedModel)) return;
     warmedModelsRef.current.add(selectedModel);
 
@@ -197,12 +202,12 @@ export default function App() {
       void preloadModel(selectedModel).catch(() => {
         warmedModelsRef.current.delete(selectedModel);
       });
-    }, 150);
+    }, 800);
 
     return () => {
       window.clearTimeout(timer);
     };
-  }, [currentUser, selectedModel]);
+  }, [currentUser, selectedModel, location.pathname]);
 
   useEffect(() => {
     if (!currentUser || chatSurfacePreloadRanRef.current) return;

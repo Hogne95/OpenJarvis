@@ -259,18 +259,28 @@ export async function preloadModel(modelName: string): Promise<void> {
   if (_CLOUD_PREFIXES.some(p => modelName.startsWith(p))) {
     return;
   }
+  try {
+    const res = await authFetch('/v1/models/preload', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ model: modelName, keep_alive: '3m' }),
+    }, 25_000);
+    if (res.ok) return;
+  } catch {
+    // Fall back to direct Ollama for older servers or dev-mode restarts.
+  }
   // Trigger Ollama to load the model into memory (empty prompt, no generation).
   const ollamaUrl = 'http://127.0.0.1:11434';
   try {
     const res = await fetch(`${ollamaUrl}/api/generate`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ model: modelName, prompt: '', keep_alive: '5m' }),
-      signal: AbortSignal.timeout(120_000),
+      body: JSON.stringify({ model: modelName, prompt: '', keep_alive: '3m' }),
+      signal: AbortSignal.timeout(25_000),
     });
     if (!res.ok) throw new Error(`Preload failed: ${res.status}`);
   } catch (e: any) {
-    if (e.name === 'TimeoutError') throw new Error('Model load timed out (120s)');
+    if (e.name === 'TimeoutError') throw new Error('Model load timed out (25s)');
     throw e;
   }
 }
