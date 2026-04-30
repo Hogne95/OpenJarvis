@@ -38,6 +38,18 @@ interface WizardState {
   temperature: number;
 }
 
+const templateString = (tpl: AgentTemplate, key: string, fallback = '') => {
+  const value = tpl[key];
+  return typeof value === 'string' ? value : fallback;
+};
+
+const templateNumber = (tpl: AgentTemplate, key: string, fallback: number) => {
+  const value = tpl[key];
+  return typeof value === 'number' ? value : fallback;
+};
+
+const templateTools = (tpl: AgentTemplate) =>
+  Array.isArray(tpl.tools) ? tpl.tools.filter((tool): tool is string => typeof tool === 'string') : [];
 
 function Tooltip({ text }: { text: string }) {
   return <span className="inline-block ml-1 cursor-help" style={{ color: 'var(--color-text-tertiary)', fontSize: 10 }} title={text}>(?)</span>;
@@ -113,17 +125,17 @@ export function LaunchWizard({
         templateId: tpl.id,
         templateData: tpl,
         name: defaultAgentNameForTemplate(tpl),
-        instruction: (tpl as any).instruction || TEMPLATE_INSTRUCTIONS[tpl.id] || '',
+        instruction: templateString(tpl, 'instruction', TEMPLATE_INSTRUCTIONS[tpl.id] || ''),
         model: recommendedModel || w.model,
-        scheduleType: (tpl as any).schedule_type || 'manual',
-        scheduleValue: (tpl as any).schedule_value || '',
-        selectedTools: (tpl as any).tools || [],
-        memoryExtraction: (tpl as any).memory_extraction || UNIVERSAL_DEFAULTS.memoryExtraction,
-        observationCompression: (tpl as any).observation_compression || UNIVERSAL_DEFAULTS.observationCompression,
-        retrievalStrategy: (tpl as any).retrieval_strategy || UNIVERSAL_DEFAULTS.retrievalStrategy,
-        taskDecomposition: (tpl as any).task_decomposition || UNIVERSAL_DEFAULTS.taskDecomposition,
-        maxTurns: (tpl as any).max_turns || UNIVERSAL_DEFAULTS.maxTurns,
-        temperature: (tpl as any).temperature ?? UNIVERSAL_DEFAULTS.temperature,
+        scheduleType: templateString(tpl, 'schedule_type', 'manual'),
+        scheduleValue: templateString(tpl, 'schedule_value'),
+        selectedTools: templateTools(tpl),
+        memoryExtraction: templateString(tpl, 'memory_extraction', UNIVERSAL_DEFAULTS.memoryExtraction),
+        observationCompression: templateString(tpl, 'observation_compression', UNIVERSAL_DEFAULTS.observationCompression),
+        retrievalStrategy: templateString(tpl, 'retrieval_strategy', UNIVERSAL_DEFAULTS.retrievalStrategy),
+        taskDecomposition: templateString(tpl, 'task_decomposition', UNIVERSAL_DEFAULTS.taskDecomposition),
+        maxTurns: templateNumber(tpl, 'max_turns', UNIVERSAL_DEFAULTS.maxTurns),
+        temperature: templateNumber(tpl, 'temperature', UNIVERSAL_DEFAULTS.temperature),
       }));
     } else {
       setWizard((w) => ({
@@ -291,13 +303,13 @@ export function LaunchWizard({
                     <div className="text-[11px] mt-2 leading-5" style={{ color: 'var(--color-text-secondary)', textAlign: 'left' }}>
                       {setupHeadlineForTemplate(tpl)}
                     </div>
-                    {(tpl as any).tools && (
+                    {templateTools(tpl).length > 0 && (
                       <div className="flex flex-wrap gap-1 mt-2">
-                        {((tpl as any).tools as string[]).slice(0, 4).map((t: string) => (
+                        {templateTools(tpl).slice(0, 4).map((t) => (
                           <span key={t} className="text-xs px-1.5 py-0.5 rounded" style={{ background: 'rgba(124,58,237,0.12)', color: '#a78bfa' }}>{t}</span>
                         ))}
-                        {((tpl as any).tools as string[]).length > 4 && (
-                          <span className="text-xs px-1.5 py-0.5 rounded" style={{ color: 'var(--color-text-tertiary)' }}>+{((tpl as any).tools as string[]).length - 4}</span>
+                        {templateTools(tpl).length > 4 && (
+                          <span className="text-xs px-1.5 py-0.5 rounded" style={{ color: 'var(--color-text-tertiary)' }}>+{templateTools(tpl).length - 4}</span>
                         )}
                       </div>
                     )}
@@ -330,13 +342,13 @@ export function LaunchWizard({
                 <div className="text-[11px] mt-2 leading-5" style={{ color: 'var(--color-text-secondary)', textAlign: 'left' }}>
                   {setupHeadlineForTemplate(tpl)}
                 </div>
-                {(tpl as any).tools && (
+                {templateTools(tpl).length > 0 && (
                   <div className="flex flex-wrap gap-1 mt-2">
-                    {((tpl as any).tools as string[]).slice(0, 4).map((t: string) => (
+                    {templateTools(tpl).slice(0, 4).map((t) => (
                       <span key={t} className="text-xs px-1.5 py-0.5 rounded" style={{ background: 'rgba(124,58,237,0.12)', color: '#a78bfa' }}>{t}</span>
                     ))}
-                    {((tpl as any).tools as string[]).length > 4 && (
-                      <span className="text-xs px-1.5 py-0.5 rounded" style={{ color: 'var(--color-text-tertiary)' }}>+{((tpl as any).tools as string[]).length - 4}</span>
+                    {templateTools(tpl).length > 4 && (
+                      <span className="text-xs px-1.5 py-0.5 rounded" style={{ color: 'var(--color-text-tertiary)' }}>+{templateTools(tpl).length - 4}</span>
                     )}
                   </div>
                 )}

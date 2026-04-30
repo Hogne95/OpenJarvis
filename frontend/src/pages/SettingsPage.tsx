@@ -550,6 +550,13 @@ const themeOptions: { value: ThemeMode; label: string; icon: typeof Sun }[] = [
   { value: 'system', label: 'System', icon: Monitor },
 ];
 
+const fontSizeOptions = ['small', 'default', 'large'] as const;
+type FontSizeOption = (typeof fontSizeOptions)[number];
+
+function isFontSizeOption(value: string): value is FontSizeOption {
+  return fontSizeOptions.includes(value as FontSizeOption);
+}
+
 export function SettingsPage() {
   const settings = useAppStore((s) => s.settings);
   const updateSettings = useAppStore((s) => s.updateSettings);
@@ -672,7 +679,11 @@ export function SettingsPage() {
             <SettingRow label="Font size">
               <select
                 value={settings.fontSize}
-                onChange={(e) => { updateSettings({ fontSize: e.target.value as any }); showSaved(); }}
+                onChange={(e) => {
+                  if (!isFontSizeOption(e.target.value)) return;
+                  updateSettings({ fontSize: e.target.value });
+                  showSaved();
+                }}
                 className="text-sm px-3 py-1.5 rounded-lg outline-none cursor-pointer"
                 style={{
                   background: 'var(--color-bg-secondary)',

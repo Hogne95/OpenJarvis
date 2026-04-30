@@ -107,16 +107,18 @@ export function CommandPalette() {
 
   const installedIds = new Set(models.map((m) => m.id));
 
+  const installedFiltered = query
+    ? models.filter((model) => model.id.toLowerCase().includes(query.toLowerCase()))
+    : models;
+  const catalogueFiltered = CATALOGUE_MODELS.filter((model) =>
+    !installedIds.has(model.id) &&
+    (!query || model.id.toLowerCase().includes(query.toLowerCase()) || model.desc.toLowerCase().includes(query.toLowerCase()))
+  );
   const filtered = tab === 'installed'
-    ? (query
-        ? models.filter((m) => m.id.toLowerCase().includes(query.toLowerCase()))
-        : models)
+    ? installedFiltered
     : tab === 'catalogue'
-    ? CATALOGUE_MODELS.filter((m) =>
-        !installedIds.has(m.id) &&
-        (!query || m.id.toLowerCase().includes(query.toLowerCase()) || m.desc.toLowerCase().includes(query.toLowerCase()))
-      )
-    : []; // cloud tab doesn't use filtered
+      ? catalogueFiltered
+      : []; // cloud tab doesn't use filtered
 
   useEffect(() => {
     inputRef.current?.focus();
@@ -241,7 +243,8 @@ export function CommandPalette() {
       setSelectedIdx((i) => Math.max(i - 1, 0));
     } else if (e.key === 'Enter' && tab === 'installed' && filtered.length > 0) {
       e.preventDefault();
-      handleSelect((filtered[selectedIdx] as any).id);
+      const selected = installedFiltered[selectedIdx];
+      if (selected) handleSelect(selected.id);
     }
   };
 
@@ -334,7 +337,7 @@ export function CommandPalette() {
                   : 'No matching models'}
               </div>
             ) : (
-              (filtered as typeof models).map((model, idx) => {
+              installedFiltered.map((model, idx) => {
                 const isActive = model.id === selectedModel;
                 const isSelected = idx === selectedIdx;
                 const isDeleting = deleting === model.id;
@@ -379,7 +382,7 @@ export function CommandPalette() {
             )
           ) : tab === 'catalogue' ? (
             <>
-              {(filtered as typeof CATALOGUE_MODELS).map((model) => {
+              {catalogueFiltered.map((model) => {
                 const isPulling = pulling === model.id;
                 const justInstalled = pullSuccess === model.id;
                 return (

@@ -4,7 +4,9 @@ import { ChevronRight } from 'lucide-react';
 import type { ManagedAgent } from '../../lib/api';
 import { connectSource, listConnectors } from '../../lib/connectors-api';
 import type { ConnectRequest } from '../../types/connectors';
-import { SOURCE_CATALOG } from '../../types/connectors';
+import type { ConnectorSummary } from '../DataSources/dataSourceTypes';
+import { InlineConnectForm } from '../DataSources/DataSourceForms';
+import { SOURCE_CATALOG_BY_ID, SOURCE_ICON_BY_ID } from '../DataSources/sourceCatalogLookup';
 import {
   recommendedConnectorsForAgent,
   recommendedProvidersForAgent,
@@ -12,95 +14,23 @@ import {
 
 const isDocumentHidden = () => typeof document !== 'undefined' && document.hidden;
 
-const iconMap: Record<string, string> = {
-  gmail: '\u2709\uFE0F',
-  gmail_imap: '\u2709\uFE0F',
-  slack: '#',
-  imessage: '\uD83D\uDCAC',
-  gdrive: '\uD83D\uDCC1',
-  notion: '\uD83D\uDCC4',
-  obsidian: '\uD83D\uDCC1',
-  granola: '\uD83C\uDF99\uFE0F',
-  gcalendar: '\uD83D\uDCC5',
-  gcontacts: '\uD83D\uDCC7',
-  outlook: '\u2709\uFE0F',
-  apple_notes: '\uD83C\uDF4E',
-  dropbox: '\uD83D\uDCE6',
-  whatsapp: '\uD83D\uDCF1',
-};
-
-function InlineConnectForm({
-  fields,
-  loading,
-  onSubmit,
-}: {
-  fields: Array<{ name: string; placeholder: string; type?: string }>;
-  loading: boolean;
-  onSubmit: (req: ConnectRequest) => void;
-}) {
-  const [inputs, setInputs] = useState<Record<string, string>>({});
-
-  const update = (name: string, value: string) =>
-    setInputs((p) => ({ ...p, [name]: value }));
-
-  const allFilled = fields.every((f) => inputs[f.name]?.trim());
-
-  const submit = () => {
-    const req: ConnectRequest = {};
-    for (const f of fields) {
-      if (f.name === 'email') req.email = inputs.email;
-      else if (f.name === 'password') req.password = inputs.password;
-      else if (f.name === 'token') req.token = inputs.token;
-      else if (f.name === 'path') req.path = inputs.path;
-    }
-    if (req.email && req.password) {
-      req.token = `${req.email}:${req.password}`;
-      req.code = req.token;
-    }
-    if (req.token && !req.code) req.code = req.token;
-    onSubmit(req);
+function toConnectorSummary(connector: {
+  connector_id: string;
+  display_name: string;
+  connected: boolean;
+  chunks?: number;
+}): ConnectorSummary {
+  return {
+    connector_id: connector.connector_id,
+    display_name: connector.display_name,
+    connected: connector.connected,
+    chunks: connector.chunks || 0,
   };
-
-  return (
-    <div>
-      {fields.map((f) => (
-        <input
-          key={f.name}
-          value={inputs[f.name] || ''}
-          onChange={(e) => update(f.name, e.target.value)}
-          placeholder={f.placeholder}
-          type={f.type || 'text'}
-          style={{
-            width: '100%', padding: '7px 10px',
-            background: 'var(--color-bg)',
-            border: '1px solid var(--color-border)',
-            borderRadius: 4, color: 'var(--color-text)',
-            fontSize: 12, marginBottom: 6,
-            boxSizing: 'border-box',
-          }}
-        />
-      ))}
-      <button
-        onClick={submit}
-        disabled={loading || !allFilled}
-        style={{
-          width: '100%', padding: 8,
-          background: loading || !allFilled ? '#444' : '#7c3aed',
-          color: 'white', border: 'none',
-          borderRadius: 6, fontSize: 12, cursor: 'pointer',
-        }}
-      >
-        {loading ? 'Connecting...' : 'Connect'}
-      </button>
-    </div>
-  );
 }
 
 export function ChannelsTab({ agentId, agent }: { agentId: string; agent: ManagedAgent }) {
   const navigate = useNavigate();
-  const [connectors, setConnectors] = useState<
-    Array<{ connector_id: string; display_name: string; connected: boolean; chunks: number }>
-  >([]);
+  const [connectors, setConnectors] = useState<ConnectorSummary[]>([]);
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
@@ -109,14 +39,7 @@ export function ChannelsTab({ agentId, agent }: { agentId: string; agent: Manage
   const loadConnectors = useCallback(() => {
     listConnectors()
       .then((list) =>
-        setConnectors(
-          list.map((c) => ({
-            connector_id: c.connector_id,
-            display_name: c.display_name,
-            connected: c.connected,
-            chunks: (c as any).chunks || 0,
-          })),
-        ),
+        setConnectors(list.map(toConnectorSummary)),
       )
       .catch(() => {});
   }, []);
@@ -156,8 +79,7 @@ export function ChannelsTab({ agentId, agent }: { agentId: string; agent: Manage
     .slice(0, 3);
   const recommendedProviders = recommendedProvidersForAgent(agent);
 
-  const getMeta = (id: string) =>
-    SOURCE_CATALOG.find((s) => s.connector_id === id);
+  const getMeta = (id: string) => SOURCE_CATALOG_BY_ID.get(id);
 
   return (
     <div style={{ padding: 16 }}>
@@ -271,7 +193,7 @@ export function ChannelsTab({ agentId, agent }: { agentId: string; agent: Manage
                 style={{ background: 'var(--color-bg)', border: '1px solid var(--color-border)' }}
               >
                 <div className="flex items-center gap-2 mb-2">
-                  <span style={{ fontSize: 18 }}>{iconMap[source.connector_id] || 'Link'}</span>
+                  <span style={{ fontSize: 18 }}>{SOURCE_ICON_BY_ID[source.connector_id] || 'Link'}</span>
                   <span className="text-sm font-semibold" style={{ color: 'var(--color-text)' }}>
                     {source.display_name}
                   </span>
@@ -309,7 +231,7 @@ export function ChannelsTab({ agentId, agent }: { agentId: string; agent: Manage
           gap: 6, marginBottom: 12,
         }}>
           {connected.map((c) => {
-            const meta = SOURCE_CATALOG.find(s => s.connector_id === c.connector_id);
+            const meta = getMeta(c.connector_id);
             const unit = meta?.unitLabel || 'items';
             const isReconnecting = expandedId === c.connector_id;
             return (
@@ -327,7 +249,7 @@ export function ChannelsTab({ agentId, agent }: { agentId: string; agent: Manage
                   padding: '12px 14px',
                   display: 'flex', alignItems: 'center', gap: 8,
                 }}>
-                  <span style={{ fontSize: 20 }}>{iconMap[c.connector_id] || '\uD83D\uDD17'}</span>
+                  <span style={{ fontSize: 20 }}>{SOURCE_ICON_BY_ID[c.connector_id] || '\uD83D\uDD17'}</span>
                   <div style={{ flex: 1 }}>
                     <div style={{ fontSize: 14, fontWeight: 600 }}>
                       {c.display_name}
@@ -442,7 +364,7 @@ export function ChannelsTab({ agentId, agent }: { agentId: string; agent: Manage
                     setExpandedId(isExpanded ? null : c.connector_id)
                   }
                 >
-                  <span style={{ fontSize: 20 }}>{iconMap[c.connector_id] || '\uD83D\uDD17'}</span>
+                  <span style={{ fontSize: 20 }}>{SOURCE_ICON_BY_ID[c.connector_id] || '\uD83D\uDD17'}</span>
                   <div style={{ flex: 1 }}>
                     <div style={{ fontSize: 14, fontWeight: 600,
                       color: 'var(--color-text-secondary)' }}>
